@@ -18,5 +18,11 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="floating_character_overlay" />
         </service>
+        <service android:name=".ShotService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating_game_overlay" />
+        </service>
     </application>
 </manifest>

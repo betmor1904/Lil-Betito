@@ -10,15 +10,20 @@ import android.provider.Settings
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 class MainActivity : Activity() {
-    private fun send(action: String?) {
+    private fun send(cls: Class<*>, action: String?) {
         if (!Settings.canDrawOverlays(this)) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
-        startForegroundService(Intent(this, OverlayService::class.java).setAction(action))
+        startForegroundService(Intent(this, cls).setAction(action))
+    }
+
+    private fun LinearLayout.btn(label: String, onClick: () -> Unit) {
+        addView(Button(this@MainActivity).apply { text = label; setOnClickListener { onClick() } })
     }
 
     override fun onCreate(b: Bundle?) {
@@ -27,20 +32,27 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(48, 48, 48, 48)
         }
         box.addView(TextView(this).apply { text = "Screen Skater"; textSize = 26f })
-        box.addView(Button(this).apply { text = "Start skater"; setOnClickListener { send(null) } })
-        box.addView(Button(this).apply { text = "Add rail"; setOnClickListener { send("ADD_RAIL") } })
-        box.addView(Button(this).apply {
-            text = "Stop"
-            setOnClickListener { stopService(Intent(this@MainActivity, OverlayService::class.java)) }
-        })
+
+        box.addView(TextView(this).apply { text = "\nSKATER MODE"; textSize = 16f })
+        box.btn("Start skater") { send(OverlayService::class.java, null) }
+        box.btn("Add rail") { send(OverlayService::class.java, "ADD_RAIL") }
+        box.btn("Stop skater") { stopService(Intent(this, OverlayService::class.java)) }
+
+        box.addView(TextView(this).apply { text = "\nSHOT GAME"; textSize = 16f })
+        box.btn("Start shot game") { send(ShotService::class.java, null) }
+        box.btn("Add barrier") { send(ShotService::class.java, "SHOT_ADD") }
+        box.btn("Reset game") { send(ShotService::class.java, "SHOT_RESET") }
+        box.btn("Stop game") { stopService(Intent(this, ShotService::class.java)) }
+
         box.addView(TextView(this).apply {
-            text = "\nTap: ollie\nDouble tap: kickflip\nSwipe sideways: shove-it\nSwipe up: 360 flip\n" +
-                "Hold skater: pick up and place\nDrag rail: move it\nHold rail: remove it"
+            text = "\nShot game: drag the skater back and let go to shoot. " +
+                "Reach the yellow GOAL line at the top in 3 shots. " +
+                "Drag red barriers over your apps. Tap a barrier to resize it, hold it to remove it."
         })
-        setContentView(box)
+        setContentView(ScrollView(this).apply { addView(box) })
     }
 }
