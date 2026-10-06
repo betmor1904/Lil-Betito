@@ -195,15 +195,33 @@ class ShotService : Service(), Choreographer.FrameCallback {
         var dx0 = 0f
         var dy0 = 0f
         v.setOnTouchListener { _, e ->
-            if (!flying && !over && phase == phasePlay) {
-                when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { dx0 = e.rawX; dy0 = e.rawY }
-                    MotionEvent.ACTION_MOVE -> aim(dx0 - e.rawX, dy0 - e.rawY)
-                    MotionEvent.ACTION_UP -> fire(dx0 - e.rawX, dy0 - e.rawY)
-                    MotionEvent.ACTION_CANCEL -> clearAim()
+    if (!flying && !over && phase == phasePlay) {
+        when (e.action) {
+            MotionEvent.ACTION_DOWN -> { dx0 = e.rawX; dy0 = e.rawY }
+            MotionEvent.ACTION_MOVE -> {
+                val dragX = dx0 - e.rawX
+                val dragY = dy0 - e.rawY
+                if (abs(dragX) > abs(dragY) && abs(dragY) < 40 * d) {
+                    moveBeto(e.rawX)
+                    dx0 = e.rawX
+                    dy0 = e.rawY
+                } else {
+                    aim(dragX, dragY)
                 }
             }
-            true
+            MotionEvent.ACTION_UP -> {
+                val dragX = dx0 - e.rawX
+                val dragY = dy0 - e.rawY
+                if (abs(dragX) > abs(dragY) && abs(dragY) < 40 * d) {
+                    moveBeto(e.rawX)
+                } else {
+                    fire(dragX, dragY)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> clearAim()
+        }
+    }
+    true
         }
         cx = sw / 2f
         cy = floorY - r
@@ -721,7 +739,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
         slp.y = (cy - 56 * d).toInt()
         wm.updateViewLayout(s, slp)
     }
-
+private fun moveBeto(x: Float) {
+    val minX = r + 20 * d
+    val maxX = sw - r - 20 * d
+    cx = x.coerceIn(minX, maxX)
+    cy = floorY - r
+    applyPos()
+}
     private fun resetBall() {
         cx = sw / 2f
         cy = floorY - r
