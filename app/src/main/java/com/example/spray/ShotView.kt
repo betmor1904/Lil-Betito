@@ -14,6 +14,8 @@ class ShotView(ctx: Context) : View(ctx) {
     var angle = 0f        // tilt in degrees (positive = nose down)
     var boost = false     // true while the boosters are firing
     var mirror = false    // true = facing left
+    var rockets = 3       // 0..3 special rockets strapped on
+    private val slotY = floatArrayOf(-9f, -17f, -1f)
 
     private val shellDark = Color.parseColor("#2E7D32")
     private val shellLight = Color.parseColor("#66BB6A")
@@ -29,8 +31,8 @@ class ShotView(ctx: Context) : View(ctx) {
         p.style = Paint.Style.FILL
 
         // rocket boosters (strapped to the back of the shell)
-        for (yOff in floatArrayOf(-13f, -5f)) {
-            val y = cy + yOff * d
+        for (k in 0 until rockets.coerceIn(0, 3)) {
+            val y = cy + slotY[k] * d
             if (boost) {
                 val len = (8 + Random.nextFloat() * 8) * d
                 p.color = Color.parseColor("#FF9800")
@@ -50,7 +52,7 @@ class ShotView(ctx: Context) : View(ctx) {
             }
             p.color = Color.parseColor("#455A64")
             c.drawRect(cx - 37 * d, y - 3 * d, cx - 34 * d, y + 3 * d, p)
-            p.color = Color.parseColor("#B0BEC5")
+            p.color = Color.parseColor("#FFD54F")
             c.drawRoundRect(cx - 34 * d, y - 4 * d, cx - 12 * d, y + 4 * d, 3 * d, 3 * d, p)
             p.color = Color.parseColor("#E53935")
             c.drawRect(cx - 26 * d, y - 4 * d, cx - 22 * d, y + 4 * d, p)

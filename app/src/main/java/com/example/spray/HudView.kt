@@ -14,6 +14,8 @@ class HudView(ctx: Context) : View(ctx) {
     var message: String? = null
     var banner: String? = null
     var score: String? = null
+    var rockets = 3
+    private val path = Path()
 
     private fun fitText(c: Canvas, t: String, x: Float, y: Float, size: Float, maxW: Float) {
         p.textSize = size
@@ -44,6 +46,31 @@ class HudView(ctx: Context) : View(ctx) {
         for (i in 0 until 3) {
             p.color = if (i < shotsLeft) Color.parseColor("#FF2D6F") else Color.argb(90, 255, 255, 255)
             c.drawCircle(w / 2 + (i - 1) * 26 * d, goalY + 24 * d, 8 * d, p)
+        }
+
+        // rocket icons (earned boosters)
+        for (i in 0 until 3) {
+            val rx = w - 110 * d + i * 30 * d
+            val ry = goalY + 24 * d
+            p.style = Paint.Style.FILL
+            p.color = if (i < rockets) Color.parseColor("#FFD54F") else Color.argb(90, 255, 255, 255)
+            c.drawRoundRect(rx - 4 * d, ry - 6 * d, rx + 4 * d, ry + 9 * d, 3 * d, 3 * d, p)
+            path.reset()
+            path.moveTo(rx - 4 * d, ry - 5 * d)
+            path.lineTo(rx, ry - 13 * d)
+            path.lineTo(rx + 4 * d, ry - 5 * d)
+            path.close()
+            c.drawPath(path, p)
+            path.reset()
+            path.moveTo(rx - 4 * d, ry + 3 * d)
+            path.lineTo(rx - 8 * d, ry + 10 * d)
+            path.lineTo(rx - 4 * d, ry + 9 * d)
+            path.close()
+            path.moveTo(rx + 4 * d, ry + 3 * d)
+            path.lineTo(rx + 8 * d, ry + 10 * d)
+            path.lineTo(rx + 4 * d, ry + 9 * d)
+            path.close()
+            c.drawPath(path, p)
         }
 
         // banner + score

@@ -62,6 +62,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
     // game mode
     private val phaseSetup = 0
     private val phasePlay = 1
+    private val phaseQuiz = 2
+    private val purposeBarriers = 0
+    private val purposeRockets = 1
+    private var quizPurpose = 0
+    private var quizWho = ""
+    private var rockets = 3
     private var twoPlayer = false
     private var phase = phasePlay
     private var setterIdx = 0
@@ -179,18 +185,21 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun startSolo() {
         handler.removeCallbacksAndMessages(null)
         dismissQuiz()
+        mathMode = getSharedPreferences("betito", MODE_PRIVATE).getBoolean("math", true)
         twoPlayer = false
         phase = phasePlay
         lockBarriers(false)
         setControl(null)
         resetBall()
-        hud?.let {
-            it.banner = "LIL BETITO"
-            it.score = null
-            it.message = "LIL BETITO"
-            it.invalidate()
+        hud?.let { it.score = null; it.banner = "LIL BETITO"; it.invalidate() }
+        if (mathMode) {
+            phase = phaseQuiz
+            hud?.let { it.banner = "ANSWER TO EARN ROCKETS"; it.invalidate() }
+            startQuiz(purposeRockets, "LIL BETITO")
+        } else {
+            hud?.let { it.message = "LIL BETITO"; it.invalidate() }
+            handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1500)
         }
-        handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1500)
     }
 
     private fun start2P() {
@@ -223,11 +232,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         if (mathMode) {
             removeAllBarriers()
             setControl(null)
-            earned = 0
-            quizIdx = 0
             hud?.let { it.banner = "${names[setterIdx]}: ANSWER TO EARN BARRIERS"; it.invalidate() }
-            showQuiz()
-            nextQuestion()
+            startQuiz(purposeBarriers, names[setterIdx])
         } else {
             lockBarriers(false)
             setControl("DONE")
@@ -237,7 +243,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     // ---------- math quiz ----------
 
+    private fun startQuiz(purpose: Int, who: String) {
+        quizPurpose = purpose
+        quizWho = who
+        earned = 0
+        quizIdx = 0
+        showQuiz()
+        nextQuestion()
+    }
+
     private fun showQuiz() {
+        dismissQuiz()
         val q = QuizView(this)
         val lp = params(sw - (32 * d).toInt(), (300 * d).toInt())
         lp.x = (16 * d).toInt()
@@ -270,7 +286,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
         val list = opts.toMutableList()
         list.shuffle()
-        q.title = "${names[setterIdx]}: question ${quizIdx + 1} of 3   (${earned} earned)"
+        q.reward = if (quizPurpose == purposeRockets) "rocket" else "barrier"
+        q.title = "$quizWho: question ${quizIdx + 1} of 3   ($earned earned)"
         q.question = "$a \u00D7 $b = ?"
         q.options = list.map { it.toString() }
         q.correct = list.indexOf(ans)
@@ -280,7 +297,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun onAnswer(i: Int) {
         val q = quiz ?: return
-        if (i == q.correct) { earned++; snd("correct") } else snd("wrong")
+        if (i == q.correct) {
+            earned++
+            snd("correct")
+            if (quizPurpose == purposeRockets) {
+                rockets = earned
+                sv?.let { it.rockets = rockets; it.invalidate() }
+                hud?.let { it.rockets = rockets; it.invalidate() }
+            }
+        } else {
+            snd("wrong")
+        }
         handler.postDelayed({
             if (quizIdx >= 2) {
                 finishQuiz()
@@ -295,16 +322,25 @@ class ShotService : Service(), Choreographer.FrameCallback {
         dismissQuiz()
         val n = earned
         if (n > 0) snd("pop")
-        for (k in 0 until n) addBarrier(forced = true, slot = k)
-        hud?.let {
-            it.banner = if (n > 0) {
-                "${names[setterIdx]}: PLACE YOUR $n BARRIER" + (if (n == 1) "" else "S")
-            } else {
-                "${names[setterIdx]}: NO BARRIERS EARNED"
+        if (quizPurpose == purposeBarriers) {
+            for (k in 0 until n) addBarrier(forced = true, slot = k)
+            hud?.let {
+                it.banner = if (n > 0) {
+                    "${names[setterIdx]}: PLACE YOUR $n BARRIER" + (if (n == 1) "" else "S")
+                } else {
+                    "${names[setterIdx]}: NO BARRIERS EARNED"
+                }
+                it.invalidate()
             }
-            it.invalidate()
+            setControl("DONE")
+        } else {
+            phase = phasePlay
+            val who = if (twoPlayer) "${names[1 - setterIdx]}: " else ""
+            hud?.let {
+                it.banner = who + "REACH THE TOP - $n ROCKET" + (if (n == 1) "" else "S")
+                it.invalidate()
+            }
         }
-        setControl("DONE")
     }
 
     private fun removeAllBarriers() {
@@ -318,13 +354,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
     }
 
     private fun startPlay() {
-        phase = phasePlay
         lockBarriers(true)
         snd("click")
         setControl(null)
-        hud?.let {
-            it.banner = "${names[1 - setterIdx]}: REACH THE TOP"
-            it.invalidate()
+        val shooter = names[1 - setterIdx]
+        if (mathMode) {
+            phase = phaseQuiz
+            hud?.let { it.banner = "$shooter: ANSWER TO EARN ROCKETS"; it.invalidate() }
+            startQuiz(purposeRockets, shooter)
+        } else {
+            phase = phasePlay
+            hud?.let { it.banner = "$shooter: REACH THE TOP"; it.invalidate() }
         }
     }
 
@@ -383,12 +423,19 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun launchV(px: Float, py: Float): FloatArray? {
         val len = hypot(px, py)
         if (len < 20 * d) return null
-        val k = min(len, 150 * d) / len * 0.2f
+        val k = min(len, 150 * d) / len * vmax() / (150 * d)
         return floatArrayOf(px * k, py * k)
     }
 
     private fun tiltOf(x: Float, y: Float): Float =
         Math.toDegrees(atan2(y.toDouble(), max(abs(x), 0.1f * d).toDouble())).toFloat()
+
+    /** Top launch speed. 0 rockets = about half way up; 2 rockets = just enough to reach the top. */
+    private fun vmax(): Float {
+        val dist = floorY - 2 * r - goalY
+        val vNeed = sqrt(2f * 0.55f * d * dist)
+        return vNeed * (0.72f + 0.17f * rockets)
+    }
 
     private fun clearAim() {
         hud?.let { it.dots = FloatArray(0); it.invalidate() }
@@ -434,7 +481,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         shotsLeft--
         hud?.let { it.shotsLeft = shotsLeft; it.invalidate() }
         flying = true
-        snd("launch")
+        snd("launch", 0.35f + 0.22f * rockets)
         boostFrames = 50
         restFrames = 0
     }
@@ -464,8 +511,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         over = false
         restFrames = 0
         boostFrames = 0
-        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false }
-        hud?.let { it.shotsLeft = 3; it.message = null; it.dots = FloatArray(0); it.invalidate() }
+        rockets = if (mathMode) 0 else 3
+        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false; it.rockets = rockets }
+        hud?.let { it.shotsLeft = 3; it.rockets = rockets; it.message = null; it.dots = FloatArray(0); it.invalidate() }
         applyPos()
         sv?.invalidate()
     }
@@ -503,7 +551,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     // ---------- barriers ----------
 
     private fun addBarrier(forced: Boolean = false, slot: Int = 0) {
-        if (!forced && twoPlayer && (phase == phasePlay || mathMode)) return
+        if (!forced && twoPlayer && (phase != phaseSetup || mathMode)) return
         val v = BarrierView(this)
         val lp = params((150 * d).toInt(), (40 * d).toInt())
         lp.x = (sw / 2f - 75 * d).toInt()
@@ -617,7 +665,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 if (abs(vx) > 0.5f * d) s.mirror = vx < 0f
                 s.angle = tiltOf(vx, vy)
                 if (boostFrames > 0) boostFrames--
-                s.boost = boostFrames > 0
+                s.boost = boostFrames > 0 && rockets > 0
                 if (grounded && hypot(vx, vy) < 0.8f * d) {
                     restFrames++
                 } else {

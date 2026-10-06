@@ -25,14 +25,13 @@ class MainActivity : Activity() {
     private val pickCode = 7
     private lateinit var n1: EditText
     private lateinit var n2: EditText
-    private lateinit var mathBox: CheckBox
 
-    private fun send(cls: Class<*>, action: String?) {
+    private fun send(action: String?) {
         if (!Settings.canDrawOverlays(this)) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
-        startForegroundService(Intent(this, cls).setAction(action))
+        startForegroundService(Intent(this, ShotService::class.java).setAction(action))
     }
 
     private fun LinearLayout.btn(title: String, onClick: () -> Unit) {
@@ -46,7 +45,7 @@ class MainActivity : Activity() {
     private fun saveNames() {
         val a = n1.text.toString().trim().take(12).ifEmpty { "Player 1" }
         val b = n2.text.toString().trim().take(12).ifEmpty { "Player 2" }
-        getSharedPreferences("betito", MODE_PRIVATE).edit().putString("p1", a).putString("p2", b).putBoolean("math", mathBox.isChecked).apply()
+        getSharedPreferences("betito", MODE_PRIVATE).edit().putString("p1", a).putString("p2", b).apply()
     }
 
     override fun onCreate(b: Bundle?) {
@@ -61,31 +60,30 @@ class MainActivity : Activity() {
         }
         box.addView(TextView(this).apply { text = "Lil Betito"; textSize = 30f })
 
-        val soundBox = CheckBox(this).apply {
+        box.addView(CheckBox(this).apply {
             text = "Sound effects"
             isChecked = sp.getBoolean("sound", true)
             setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("sound", on).apply() }
-        }
-        box.addView(soundBox)
+        })
+        box.addView(CheckBox(this).apply {
+            text = "Math quiz: earn rockets (and barriers)"
+            isChecked = sp.getBoolean("math", true)
+            setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("math", on).apply() }
+        })
 
         box.section("SOLO")
-        box.btn("Start solo game") { send(ShotService::class.java, "SHOT_SOLO") }
+        box.btn("Start solo game") { send("SHOT_SOLO") }
 
         box.section("2 PLAYERS (one phone)")
         n1 = EditText(this).apply { hint = "Player 1 name"; setSingleLine(); setText(sp.getString("p1", "Player 1")) }
         n2 = EditText(this).apply { hint = "Player 2 name"; setSingleLine(); setText(sp.getString("p2", "Player 2")) }
         box.addView(n1)
         box.addView(n2)
-        mathBox = CheckBox(this).apply {
-            text = "Setter answers 3 math questions to earn barriers"
-            isChecked = sp.getBoolean("math", true)
-        }
-        box.addView(mathBox)
-        box.btn("Start 2 player game") { saveNames(); send(ShotService::class.java, "SHOT_2P") }
+        box.btn("Start 2 player game") { saveNames(); send("SHOT_2P") }
 
         box.section("GAME CONTROLS")
-        box.btn("Add barrier") { send(ShotService::class.java, "SHOT_ADD") }
-        box.btn("Reset game") { send(ShotService::class.java, "SHOT_RESET") }
+        box.btn("Add barrier") { send("SHOT_ADD") }
+        box.btn("Reset game") { send("SHOT_RESET") }
         box.btn("Stop game") { stopService(Intent(this, ShotService::class.java)) }
 
         box.section("BETO")
@@ -97,15 +95,13 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Photo removed. Add new barriers to update them.", Toast.LENGTH_LONG).show()
         }
 
-        box.section("EXTRA: SKATER MODE")
-        box.btn("Start skater") { send(OverlayService::class.java, null) }
-        box.btn("Add rail") { send(OverlayService::class.java, "ADD_RAIL") }
-        box.btn("Stop skater") { stopService(Intent(this, OverlayService::class.java)) }
-
         box.addView(TextView(this).apply {
             text = "\nHow to play: drag Lil Betito back and let go to shoot. Reach the yellow GOAL line " +
-                "in 3 shots. In 2 player mode one person sets the traps, taps DONE, and the other shoots. " +
-                "Then you swap. First to 3 wins. Tap a barrier to resize it, hold it to remove it."
+                "in 3 shots. Answer the math questions to earn special rockets: with no rockets Lil Betito " +
+                "only flies about half way up, and more rockets means more power. " +
+                "In 2 player mode one person answers to earn barriers, places them, and taps DONE. " +
+                "The other answers to earn rockets and shoots. Then you swap. First to 3 wins. " +
+                "Tap a barrier to resize it, hold it to remove it."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

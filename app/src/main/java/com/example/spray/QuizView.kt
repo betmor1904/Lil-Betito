@@ -14,6 +14,7 @@ class QuizView(ctx: Context) : View(ctx) {
     var options: List<String> = listOf("", "", "", "")
     var correct = 0
     var selected = -1
+    var reward = "barrier"
     var onPick: ((Int) -> Unit)? = null
 
     private fun rectOf(i: Int): RectF {
@@ -81,7 +82,7 @@ class QuizView(ctx: Context) : View(ctx) {
         if (selected >= 0) {
             if (selected == correct) {
                 p.color = Color.parseColor("#A5D6A7")
-                fit(c, "Correct! +1 barrier", w / 2, h - 12 * d, 15 * d, w - 32 * d)
+                fit(c, "Correct! +1 $reward", w / 2, h - 12 * d, 15 * d, w - 32 * d)
             } else {
                 p.color = Color.parseColor("#EF9A9A")
                 fit(c, "Not quite! The answer is ${options[correct]}", w / 2, h - 12 * d, 15 * d, w - 32 * d)
