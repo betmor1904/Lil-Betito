@@ -17,9 +17,12 @@ import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -33,10 +36,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private var sv: ShotView? = null
     private var hud: HudView? = null
+    private var control: ControlView? = null
     private lateinit var slp: WindowManager.LayoutParams
+    private lateinit var clp: WindowManager.LayoutParams
     private val barriers = ArrayList<Barrier>()
     private val handler = Handler(Looper.getMainLooper())
 
+    // ball physics
     private var cx = 0f
     private var cy = 0f
     private var vx = 0f
@@ -45,12 +51,21 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var floorY = 0f
     private var goalY = 0f
     private val bounce = 0.5f
-
     private var shotsLeft = 3
     private var flying = false
     private var over = false
     private var restFrames = 0
+    private var boostFrames = 0
     private var lastNs = 0L
+
+    // game mode
+    private val phaseSetup = 0
+    private val phasePlay = 1
+    private var twoPlayer = false
+    private var phase = phasePlay
+    private var setterIdx = 0
+    private val scores = IntArray(2)
+    private var names = arrayOf("Player 1", "Player 2")
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -69,18 +84,23 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
         startAsForeground()
-        when (i?.action) {
-            "SHOT_STOP" -> { stopSelf(); return START_NOT_STICKY }
-            "SHOT_ADD" -> { if (sv == null) setup(); addBarrier() }
-            "SHOT_RESET" -> { if (sv == null) setup() else reset() }
-            else -> { if (sv == null) setup() }
+        val a = i?.action
+        if (a == "SHOT_STOP") { stopSelf(); return START_NOT_STICKY }
+        val fresh = sv == null
+        if (fresh) setup()
+        when (a) {
+            "SHOT_2P" -> start2P()
+            "SHOT_SOLO" -> startSolo()
+            "SHOT_ADD" -> { if (fresh) startSolo(); addBarrier() }
+            "SHOT_RESET" -> { if (fresh) startSolo() else resetMatch() }
+            else -> { if (fresh) startSolo() }
         }
         return START_STICKY
     }
 
     private fun startAsForeground() {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel("shot", "Shot Game", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel("shot", "Lil Betito", NotificationManager.IMPORTANCE_LOW))
         fun action(name: String, label: String, icon: Int, code: Int): Notification.Action {
             val pi = PendingIntent.getService(
                 this, code, Intent(this, ShotService::class.java).setAction(name),
@@ -89,7 +109,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             return Notification.Action.Builder(Icon.createWithResource(this, icon), label, pi).build()
         }
         val n = Notification.Builder(this, "shot")
-            .setContentTitle("Shot game is running")
+            .setContentTitle("Lil Betito is running")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .addAction(action("SHOT_ADD", "Add barrier", android.R.drawable.ic_input_add, 11))
             .addAction(action("SHOT_RESET", "Reset", android.R.drawable.ic_menu_revert, 12))
@@ -114,14 +134,20 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(h, params(sw, sh, touchable = false))
         hud = h
 
-        val v = ShotView(this)
-        slp = params((80 * d).toInt(), (80 * d).toInt())
-        sv = v
+        val cv = ControlView(this)
+        clp = params((100 * d).toInt(), (44 * d).toInt())
+        clp.x = (12 * d).toInt()
+        clp.y = (goalY + 10 * d).toInt()
+        cv.setOnClickListener { if (twoPlayer && phase == phaseSetup) startPlay() }
+        wm.addView(cv, clp)
+        control = cv
 
+        val v = ShotView(this)
+        slp = params((112 * d).toInt(), (112 * d).toInt())
         var dx0 = 0f
         var dy0 = 0f
         v.setOnTouchListener { _, e ->
-            if (!flying && !over) {
+            if (!flying && !over && phase == phasePlay) {
                 when (e.action) {
                     MotionEvent.ACTION_DOWN -> { dx0 = e.rawX; dy0 = e.rawY }
                     MotionEvent.ACTION_MOVE -> aim(dx0 - e.rawX, dy0 - e.rawY)
@@ -133,11 +159,122 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
         cx = sw / 2f
         cy = floorY - r
-        slp.x = (cx - 40 * d).toInt()
-        slp.y = (cy - 40 * d).toInt()
+        slp.x = (cx - 56 * d).toInt()
+        slp.y = (cy - 56 * d).toInt()
         wm.addView(v, slp)
+        sv = v
         Choreographer.getInstance().postFrameCallback(this)
     }
+
+    // ---------- game modes ----------
+
+    private fun startSolo() {
+        handler.removeCallbacksAndMessages(null)
+        twoPlayer = false
+        phase = phasePlay
+        lockBarriers(false)
+        setControl(null)
+        resetBall()
+        hud?.let {
+            it.banner = "LIL BETITO"
+            it.score = null
+            it.message = "LIL BETITO"
+            it.invalidate()
+        }
+        handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1500)
+    }
+
+    private fun start2P() {
+        handler.removeCallbacksAndMessages(null)
+        val sp = getSharedPreferences("betito", MODE_PRIVATE)
+        names = arrayOf(sp.getString("p1", "Player 1") ?: "Player 1", sp.getString("p2", "Player 2") ?: "Player 2")
+        twoPlayer = true
+        scores[0] = 0
+        scores[1] = 0
+        setterIdx = 0
+        startSetup()
+    }
+
+    private fun resetMatch() {
+        if (twoPlayer) start2P() else startSolo()
+    }
+
+    private fun scoreText() = "${names[0]} ${scores[0]} - ${scores[1]} ${names[1]}"
+
+    private fun startSetup() {
+        handler.removeCallbacksAndMessages(null)
+        phase = phaseSetup
+        resetBall()
+        lockBarriers(false)
+        setControl("DONE")
+        hud?.let {
+            it.banner = "${names[setterIdx]}: SET TRAPS"
+            it.score = scoreText()
+            it.message = null
+            it.invalidate()
+        }
+    }
+
+    private fun startPlay() {
+        phase = phasePlay
+        lockBarriers(true)
+        setControl(null)
+        hud?.let {
+            it.banner = "${names[1 - setterIdx]}: REACH THE TOP"
+            it.invalidate()
+        }
+    }
+
+    private fun roundOver(shooterWon: Boolean) {
+        val winner = if (shooterWon) 1 - setterIdx else setterIdx
+        scores[winner]++
+        val matchOver = scores[winner] >= 3
+        hud?.let {
+            it.score = scoreText()
+            it.message = when {
+                matchOver -> "${names[winner]} WINS THE MATCH!"
+                shooterWon -> "${names[winner]} MADE IT!"
+                else -> "${names[winner]} BLOCKED IT!"
+            }
+            it.invalidate()
+        }
+        handler.postDelayed({
+            if (matchOver) {
+                start2P()
+            } else {
+                setterIdx = 1 - setterIdx
+                startSetup()
+            }
+        }, if (matchOver) 4500L else 3000L)
+    }
+
+    private fun lockBarriers(locked: Boolean) {
+        for (b in barriers) {
+            if (b.removed) continue
+            b.lp.flags = if (locked) {
+                b.lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                b.lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            wm.updateViewLayout(b.view, b.lp)
+        }
+    }
+
+    private fun setControl(label: String?) {
+        val c = control ?: return
+        if (label == null) {
+            c.visibility = View.INVISIBLE
+            clp.flags = clp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            c.label = label
+            c.visibility = View.VISIBLE
+            clp.flags = clp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        }
+        wm.updateViewLayout(c, clp)
+        c.invalidate()
+    }
+
+    // ---------- aiming and shooting ----------
 
     private fun launchV(px: Float, py: Float): FloatArray? {
         val len = hypot(px, py)
@@ -146,17 +283,21 @@ class ShotService : Service(), Choreographer.FrameCallback {
         return floatArrayOf(px * k, py * k)
     }
 
+    private fun tiltOf(x: Float, y: Float): Float =
+        Math.toDegrees(atan2(y.toDouble(), max(abs(x), 0.1f * d).toDouble())).toFloat()
+
     private fun clearAim() {
-        val h = hud ?: return
-        h.dots = FloatArray(0)
-        h.invalidate()
+        hud?.let { it.dots = FloatArray(0); it.invalidate() }
+        sv?.let { it.angle = 0f; it.invalidate() }
     }
 
     private fun aim(px: Float, py: Float) {
         val h = hud ?: return
+        val s = sv
         val v = launchV(px, py)
         if (v == null) {
             h.dots = FloatArray(0)
+            s?.angle = 0f
         } else {
             var x = cx
             var y = cy
@@ -170,32 +311,37 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 if (i % 2 == 0) { pts.add(x); pts.add(y) }
             }
             h.dots = pts.toFloatArray()
+            s?.mirror = v[0] < 0f
+            s?.angle = tiltOf(v[0], v[1])
         }
         h.invalidate()
+        s?.invalidate()
     }
 
     private fun fire(px: Float, py: Float) {
         val v = launchV(px, py)
-        clearAim()
-        if (v == null) return
+        hud?.let { it.dots = FloatArray(0); it.invalidate() }
+        if (v == null) {
+            sv?.let { it.angle = 0f; it.invalidate() }
+            return
+        }
         vx = v[0]
         vy = v[1]
         shotsLeft--
         hud?.let { it.shotsLeft = shotsLeft; it.invalidate() }
         flying = true
-        sv?.tucked = true
+        boostFrames = 50
         restFrames = 0
     }
 
     private fun applyPos() {
         val s = sv ?: return
-        slp.x = (cx - 40 * d).toInt()
-        slp.y = (cy - 40 * d).toInt()
+        slp.x = (cx - 56 * d).toInt()
+        slp.y = (cy - 56 * d).toInt()
         wm.updateViewLayout(s, slp)
     }
 
-    private fun reset() {
-        handler.removeCallbacksAndMessages(null)
+    private fun resetBall() {
         cx = sw / 2f
         cy = floorY - r
         vx = 0f
@@ -204,8 +350,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         flying = false
         over = false
         restFrames = 0
-        sv?.angle = 0f
-        sv?.tucked = false
+        boostFrames = 0
+        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false }
         hud?.let { it.shotsLeft = 3; it.message = null; it.dots = FloatArray(0); it.invalidate() }
         applyPos()
         sv?.invalidate()
@@ -213,28 +359,36 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun win() {
         flying = false
-        sv?.tucked = false
-        sv?.angle = 0f
         over = true
         vx = 0f
         vy = 0f
-        hud?.let { it.message = "YOU MADE IT!"; it.invalidate() }
-        handler.postDelayed({ reset() }, 3000)
+        sv?.let { it.boost = false; it.angle = 0f }
+        if (twoPlayer) {
+            roundOver(true)
+        } else {
+            hud?.let { it.message = "YOU MADE IT!"; it.invalidate() }
+            handler.postDelayed({ startSolo() }, 3000)
+        }
     }
 
     private fun endShot() {
         flying = false
-        sv?.tucked = false
-        sv?.angle = 0f
-        sv?.invalidate()
+        sv?.let { it.boost = false; it.angle = 0f; it.invalidate() }
         if (shotsLeft <= 0) {
             over = true
-            hud?.let { it.message = "OUT OF SHOTS"; it.invalidate() }
-            handler.postDelayed({ reset() }, 2500)
+            if (twoPlayer) {
+                roundOver(false)
+            } else {
+                hud?.let { it.message = "OUT OF SHOTS"; it.invalidate() }
+                handler.postDelayed({ startSolo() }, 2500)
+            }
         }
     }
 
+    // ---------- barriers ----------
+
     private fun addBarrier() {
+        if (twoPlayer && phase == phasePlay) return
         val v = BarrierView(this)
         val lp = params((150 * d).toInt(), (40 * d).toInt())
         lp.x = (sw / 2f - 75 * d).toInt()
@@ -279,6 +433,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(v, lp)
         barriers.add(b)
     }
+
+    // ---------- physics loop ----------
 
     override fun doFrame(ns: Long) {
         val s = sv ?: return
@@ -342,7 +498,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
 
             if (!over) {
-                s.angle += vx / d * 1.5f
+                if (abs(vx) > 0.5f * d) s.mirror = vx < 0f
+                s.angle = tiltOf(vx, vy)
+                if (boostFrames > 0) boostFrames--
+                s.boost = boostFrames > 0
                 if (grounded && hypot(vx, vy) < 0.8f * d) {
                     restFrames++
                 } else {
@@ -363,9 +522,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
             for (b in barriers) if (!b.removed) wm.removeView(b.view)
             barriers.clear()
             sv?.let { wm.removeView(it) }
+            control?.let { wm.removeView(it) }
             hud?.let { wm.removeView(it) }
         }
         sv = null
+        control = null
         hud = null
         super.onDestroy()
     }

@@ -12,6 +12,15 @@ class HudView(ctx: Context) : View(ctx) {
     var shotsLeft = 3
     var dots = FloatArray(0)
     var message: String? = null
+    var banner: String? = null
+    var score: String? = null
+
+    private fun fitText(c: Canvas, t: String, x: Float, y: Float, size: Float, maxW: Float) {
+        p.textSize = size
+        val mw = p.measureText(t)
+        if (mw > maxW) p.textSize = size * maxW / mw
+        c.drawText(t, x, y, p)
+    }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
@@ -37,6 +46,20 @@ class HudView(ctx: Context) : View(ctx) {
             c.drawCircle(w / 2 + (i - 1) * 26 * d, goalY + 24 * d, 8 * d, p)
         }
 
+        // banner + score
+        p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
+        val b = banner
+        if (b != null) {
+            p.color = Color.WHITE
+            fitText(c, b, w / 2, goalY + 58 * d, 15 * d, w * 0.9f)
+        }
+        val s = score
+        if (s != null) {
+            p.color = Color.parseColor("#FFEB3B")
+            fitText(c, s, w / 2, goalY + 80 * d, 14 * d, w * 0.9f)
+        }
+        p.clearShadowLayer()
+
         // aim dots
         p.color = Color.WHITE
         var i = 0
@@ -45,13 +68,12 @@ class HudView(ctx: Context) : View(ctx) {
             i += 2
         }
 
-        // message
+        // big message
         val m = message
         if (m != null) {
             p.color = Color.WHITE
-            p.textSize = 34 * d
             p.setShadowLayer(8f, 3f, 3f, Color.BLACK)
-            c.drawText(m, w / 2, h * 0.4f, p)
+            fitText(c, m, w / 2, h * 0.4f, 34 * d, w * 0.92f)
             p.clearShadowLayer()
         }
     }
