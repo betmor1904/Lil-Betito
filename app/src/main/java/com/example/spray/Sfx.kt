@@ -30,6 +30,13 @@ class Sfx(ctx: Context) {
         ids["wrong"] = pool.load(ctx, R.raw.wrong, 1)
         ids["win"] = pool.load(ctx, R.raw.win, 1)
         ids["lose"] = pool.load(ctx, R.raw.lose, 1)
+        ids["carrot"] = pool.load(ctx, R.raw.carrot, 1)
+        ids["bust"] = pool.load(ctx, R.raw.bust, 1)
+        ids["jackpot"] = pool.load(ctx, R.raw.jackpot, 1)
+        ids["bonk"] = pool.load(ctx, R.raw.bonk, 1)
+        ids["wee"] = pool.load(ctx, R.raw.wee, 1)
+        ids["wee2"] = pool.load(ctx, R.raw.wee2, 1)
+        ids["letsgo"] = pool.load(ctx, R.raw.letsgo, 1)
     }
 
     fun play(name: String, volume: Float = 1f, minGapMs: Long = 0L) {

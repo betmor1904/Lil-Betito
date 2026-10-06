@@ -15,6 +15,7 @@ class HudView(ctx: Context) : View(ctx) {
     var banner: String? = null
     var score: String? = null
     var rockets = 3
+    var buster = false
     private val path = Path()
 
     private fun fitText(c: Canvas, t: String, x: Float, y: Float, size: Float, maxW: Float) {
@@ -43,9 +44,10 @@ class HudView(ctx: Context) : View(ctx) {
         c.drawText("GOAL", w / 2, goalY - 8 * d, p)
 
         // shots left
-        for (i in 0 until 3) {
+        val n = max(3, shotsLeft)
+        for (i in 0 until n) {
             p.color = if (i < shotsLeft) Color.parseColor("#FF2D6F") else Color.argb(90, 255, 255, 255)
-            c.drawCircle(w / 2 + (i - 1) * 26 * d, goalY + 24 * d, 8 * d, p)
+            c.drawCircle(w / 2 + (i - (n - 1) / 2f) * 26 * d, goalY + 24 * d, 8 * d, p)
         }
 
         // rocket icons (earned boosters)
@@ -84,6 +86,10 @@ class HudView(ctx: Context) : View(ctx) {
         if (s != null) {
             p.color = Color.parseColor("#FFEB3B")
             fitText(c, s, w / 2, goalY + 80 * d, 14 * d, w * 0.9f)
+        }
+        if (buster) {
+            p.color = Color.parseColor("#FF9800")
+            fitText(c, "BUSTER READY - SMASH THROUGH BARRIERS", w / 2, goalY + 102 * d, 13 * d, w * 0.9f)
         }
         p.clearShadowLayer()
 

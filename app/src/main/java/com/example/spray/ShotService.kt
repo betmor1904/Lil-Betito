@@ -68,6 +68,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var quizPurpose = 0
     private var quizWho = ""
     private var rockets = 3
+    private var buster = false
+    private var busterArmed = false
+    private var fx: FxView? = null
+    private var carrot: CarrotView? = null
+    private var carrotX = 0f
+    private var carrotY = 0f
     private var twoPlayer = false
     private var phase = phasePlay
     private var setterIdx = 0
@@ -78,6 +84,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var earned = 0
     private var quiz: QuizView? = null
     private var sfx: Sfx? = null
+    private val voices = arrayOf("wee", "wee2", "letsgo")
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -185,6 +192,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun startSolo() {
         handler.removeCallbacksAndMessages(null)
         dismissQuiz()
+        stopFx()
+        removeCarrot()
         mathMode = getSharedPreferences("betito", MODE_PRIVATE).getBoolean("math", true)
         twoPlayer = false
         phase = phasePlay
@@ -198,6 +207,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             startQuiz(purposeRockets, "LIL BETITO")
         } else {
             hud?.let { it.message = "LIL BETITO"; it.invalidate() }
+            spawnCarrot()
             handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1500)
         }
     }
@@ -223,6 +233,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun startSetup() {
         handler.removeCallbacksAndMessages(null)
         dismissQuiz()
+        stopFx()
+        removeCarrot()
         phase = phaseSetup
         resetBall()
         hud?.let {
@@ -335,12 +347,77 @@ class ShotService : Service(), Choreographer.FrameCallback {
             setControl("DONE")
         } else {
             phase = phasePlay
+            spawnCarrot()
             val who = if (twoPlayer) "${names[1 - setterIdx]}: " else ""
             hud?.let {
                 it.banner = who + "REACH THE TOP - $n ROCKET" + (if (n == 1) "" else "S")
                 it.invalidate()
             }
         }
+    }
+
+    // ---------- buster carrot + jackpot celebration ----------
+
+    private fun spawnCarrot() {
+        removeCarrot()
+        var px = sw / 2f
+        var py = sh / 2f
+        for (attempt in 0 until 25) {
+            val margin = r + 16 * d
+            px = Random.nextFloat() * (sw - 2 * margin) + margin
+            val top = goalY + 100 * d
+            py = top + Random.nextFloat() * (floorY - 3 * r - top)
+            var clear = true
+            for (b in barriers) {
+                if (b.removed) continue
+                val l = b.lp.x - 30 * d
+                val t = b.lp.y - 30 * d
+                if (px > l && px < l + b.lp.width + 60 * d && py > t && py < t + b.lp.height + 60 * d) clear = false
+            }
+            if (clear) break
+        }
+        val v = CarrotView(this)
+        val lp = params((56 * d).toInt(), (56 * d).toInt(), touchable = false)
+        lp.x = (px - 28 * d).toInt()
+        lp.y = (py - 28 * d).toInt()
+        wm.addView(v, lp)
+        carrot = v
+        carrotX = px
+        carrotY = py
+    }
+
+    private fun removeCarrot() {
+        carrot?.let { wm.removeView(it) }
+        carrot = null
+    }
+
+    private fun collectCarrot() {
+        removeCarrot()
+        snd("carrot")
+        shotsLeft++
+        buster = true
+        sv?.let { it.buster = true; it.invalidate() }
+        hud?.let {
+            it.shotsLeft = shotsLeft
+            it.buster = true
+            it.message = "BUSTER CARROT! +1 TRY"
+            it.invalidate()
+        }
+        handler.postDelayed({ if (!over) hud?.let { it.message = null; it.invalidate() } }, 1500)
+    }
+
+    private fun showFx() {
+        stopFx()
+        val f = FxView(this)
+        f.durationMs = 3600L
+        f.onFinished = { stopFx() }
+        wm.addView(f, params(sw, sh, touchable = false))
+        fx = f
+    }
+
+    private fun stopFx() {
+        fx?.let { wm.removeView(it) }
+        fx = null
     }
 
     private fun removeAllBarriers() {
@@ -365,6 +442,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         } else {
             phase = phasePlay
             hud?.let { it.banner = "$shooter: REACH THE TOP"; it.invalidate() }
+            spawnCarrot()
         }
     }
 
@@ -372,7 +450,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val winner = if (shooterWon) 1 - setterIdx else setterIdx
         scores[winner]++
         val matchOver = scores[winner] >= 3
-        snd(if (matchOver || shooterWon) "win" else "lose")
+        if (!shooterWon) snd(if (matchOver) "win" else "lose")
         hud?.let {
             it.score = scoreText()
             it.message = when {
@@ -389,7 +467,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 setterIdx = 1 - setterIdx
                 startSetup()
             }
-        }, if (matchOver) 4500L else 3000L)
+        }, if (matchOver) 4500L else if (shooterWon) 3800L else 3000L)
     }
 
     private fun lockBarriers(locked: Boolean) {
@@ -430,11 +508,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun tiltOf(x: Float, y: Float): Float =
         Math.toDegrees(atan2(y.toDouble(), max(abs(x), 0.1f * d).toDouble())).toFloat()
 
-    /** Top launch speed. 0 rockets = about half way up; 2 rockets = just enough to reach the top. */
+    /** Top launch speed. 1 rocket = full power (reaches the top on a straight shot). 0 rockets = 60%. */
     private fun vmax(): Float {
         val dist = floorY - 2 * r - goalY
         val vNeed = sqrt(2f * 0.55f * d * dist)
-        return vNeed * (0.72f + 0.17f * rockets)
+        val factor = floatArrayOf(0.60f, 1.04f, 1.08f, 1.12f)[rockets.coerceIn(0, 3)]
+        return vNeed * factor
     }
 
     private fun clearAim() {
@@ -481,7 +560,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         shotsLeft--
         hud?.let { it.shotsLeft = shotsLeft; it.invalidate() }
         flying = true
-        snd("launch", 0.35f + 0.22f * rockets)
+        snd("launch", 0.2f + 0.12f * rockets)
+        snd(voices.random(), 1f)
+        busterArmed = buster
         boostFrames = 50
         restFrames = 0
     }
@@ -490,8 +571,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sfx?.play(name, vol, gap)
     }
 
-    private fun impactSound(name: String, speed: Float) {
-        if (speed > 2.5f * d) snd(name, (speed / (14f * d)).coerceIn(0.25f, 1f), 90L)
+    /** Every wall / floor / barrier hit goes "bonk bonk". */
+    private fun impactSound(@Suppress("UNUSED_PARAMETER") name: String, speed: Float) {
+        if (speed > 2.5f * d) snd("bonk", (speed / (14f * d)).coerceIn(0.35f, 1f), 280L)
     }
 
     private fun applyPos() {
@@ -512,8 +594,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         restFrames = 0
         boostFrames = 0
         rockets = if (mathMode) 0 else 3
-        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false; it.rockets = rockets }
-        hud?.let { it.shotsLeft = 3; it.rockets = rockets; it.message = null; it.dots = FloatArray(0); it.invalidate() }
+        buster = false
+        busterArmed = false
+        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false; it.rockets = rockets; it.buster = false }
+        hud?.let { it.shotsLeft = 3; it.rockets = rockets; it.buster = false; it.message = null; it.dots = FloatArray(0); it.invalidate() }
         applyPos()
         sv?.invalidate()
     }
@@ -524,18 +608,26 @@ class ShotService : Service(), Choreographer.FrameCallback {
         vx = 0f
         vy = 0f
         sv?.let { it.boost = false; it.angle = 0f }
+        removeCarrot()
+        snd("jackpot")
+        showFx()
         if (twoPlayer) {
             roundOver(true)
         } else {
-            snd("win")
             hud?.let { it.message = "YOU MADE IT!"; it.invalidate() }
-            handler.postDelayed({ startSolo() }, 3000)
+            handler.postDelayed({ startSolo() }, 3800)
         }
     }
 
     private fun endShot() {
         flying = false
         sv?.let { it.boost = false; it.angle = 0f; it.invalidate() }
+        if (busterArmed) {
+            buster = false
+            busterArmed = false
+            sv?.let { it.buster = false; it.invalidate() }
+            hud?.let { it.buster = false; it.invalidate() }
+        }
         if (shotsLeft <= 0) {
             over = true
             if (twoPlayer) {
@@ -632,6 +724,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     val dx = cx - qx
                     val dy = cy - qy
                     val d2 = dx * dx + dy * dy
+                    if (buster) {
+                        if (d2 < r * r) snd("bust", 1f, 300L)
+                        continue
+                    }
                     if (d2 < r * r) {
                         var nx = 0f
                         var ny = -1f
@@ -662,6 +758,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
 
             if (!over) {
+                if (carrot != null && hypot(cx - carrotX, cy - carrotY) < r + 18 * d) collectCarrot()
                 if (abs(vx) > 0.5f * d) s.mirror = vx < 0f
                 s.angle = tiltOf(vx, vy)
                 if (boostFrames > 0) boostFrames--
@@ -684,6 +781,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         if (::wm.isInitialized) {
             dismissQuiz()
+            stopFx()
+            removeCarrot()
             for (b in barriers) if (!b.removed) wm.removeView(b.view)
             barriers.clear()
             sv?.let { wm.removeView(it) }

@@ -2,7 +2,9 @@ package com.example.spray
 
 import android.content.Context
 import android.graphics.*
+import android.os.SystemClock
 import android.view.View
+import kotlin.math.sin
 import kotlin.random.Random
 
 /** Lil Betito: a turtle with rocket boosters. Faces right; mirror flips it to face left. */
@@ -15,6 +17,10 @@ class ShotView(ctx: Context) : View(ctx) {
     var boost = false     // true while the boosters are firing
     var mirror = false    // true = facing left
     var rockets = 3       // 0..3 special rockets strapped on
+    var buster = false    // Buster Carrot power: glow + smash through barriers
+    private val aura = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 40 * d, intArrayOf(Color.argb(170, 255, 152, 0), Color.argb(0, 255, 152, 0)), null, Shader.TileMode.CLAMP)
+    }
     private val slotY = floatArrayOf(-9f, -17f, -1f)
 
     private val shellDark = Color.parseColor("#2E7D32")
@@ -30,19 +36,27 @@ class ShotView(ctx: Context) : View(ctx) {
         c.rotate(angle, cx, cy)
         p.style = Paint.Style.FILL
 
+        if (buster) {
+            aura.alpha = (200 + 55 * sin(SystemClock.uptimeMillis() / 110.0)).toInt().coerceIn(0, 255)
+            c.save()
+            c.translate(cx, cy)
+            c.drawCircle(0f, 0f, 40 * d, aura)
+            c.restore()
+        }
+
         // rocket boosters (strapped to the back of the shell)
         for (k in 0 until rockets.coerceIn(0, 3)) {
             val y = cy + slotY[k] * d
             if (boost) {
                 val len = (8 + Random.nextFloat() * 8) * d
-                p.color = Color.parseColor("#FF9800")
+                p.color = Color.parseColor(if (buster) "#FF4081" else "#FF9800")
                 path.reset()
                 path.moveTo(cx - 37 * d, y - 4 * d)
                 path.lineTo(cx - 37 * d - len, y)
                 path.lineTo(cx - 37 * d, y + 4 * d)
                 path.close()
                 c.drawPath(path, p)
-                p.color = Color.parseColor("#FFEB3B")
+                p.color = Color.parseColor(if (buster) "#FFFF8D" else "#FFEB3B")
                 path.reset()
                 path.moveTo(cx - 37 * d, y - 2 * d)
                 path.lineTo(cx - 37 * d - len * 0.6f, y)
@@ -140,5 +154,6 @@ class ShotView(ctx: Context) : View(ctx) {
         c.drawRoundRect(hx + 0.3f * d, hy + 3 * d, hx + 4 * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
         p.style = Paint.Style.FILL
         c.restore()
+        if (buster) postInvalidateOnAnimation()
     }
 }

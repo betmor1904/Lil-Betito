@@ -101,7 +101,7 @@ class MainActivity : Activity() {
                 "only flies about half way up, and more rockets means more power. " +
                 "In 2 player mode one person answers to earn barriers, places them, and taps DONE. " +
                 "The other answers to earn rockets and shoots. Then you swap. First to 3 wins. " +
-                "Tap a barrier to resize it, hold it to remove it."
+                "Grab the Buster Carrot for an extra try and to smash through barriers. Tap a barrier to resize it, hold it to remove it."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }
