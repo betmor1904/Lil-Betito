@@ -71,6 +71,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var quizIdx = 0
     private var earned = 0
     private var quiz: QuizView? = null
+    private var sfx: Sfx? = null
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -93,6 +94,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         if (a == "SHOT_STOP") { stopSelf(); return START_NOT_STICKY }
         val fresh = sv == null
         if (fresh) setup()
+        sfx?.enabled = getSharedPreferences("betito", MODE_PRIVATE).getBoolean("sound", true)
         when (a) {
             "SHOT_2P" -> start2P()
             "SHOT_SOLO" -> startSolo()
@@ -127,6 +129,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun setup() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        sfx = Sfx(this)
         d = resources.displayMetrics.density
         sw = resources.displayMetrics.widthPixels
         sh = resources.displayMetrics.heightPixels
@@ -277,7 +280,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun onAnswer(i: Int) {
         val q = quiz ?: return
-        if (i == q.correct) earned++
+        if (i == q.correct) { earned++; snd("correct") } else snd("wrong")
         handler.postDelayed({
             if (quizIdx >= 2) {
                 finishQuiz()
@@ -291,6 +294,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun finishQuiz() {
         dismissQuiz()
         val n = earned
+        if (n > 0) snd("pop")
         for (k in 0 until n) addBarrier(forced = true, slot = k)
         hud?.let {
             it.banner = if (n > 0) {
@@ -316,6 +320,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun startPlay() {
         phase = phasePlay
         lockBarriers(true)
+        snd("click")
         setControl(null)
         hud?.let {
             it.banner = "${names[1 - setterIdx]}: REACH THE TOP"
@@ -327,6 +332,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val winner = if (shooterWon) 1 - setterIdx else setterIdx
         scores[winner]++
         val matchOver = scores[winner] >= 3
+        snd(if (matchOver || shooterWon) "win" else "lose")
         hud?.let {
             it.score = scoreText()
             it.message = when {
@@ -428,8 +434,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
         shotsLeft--
         hud?.let { it.shotsLeft = shotsLeft; it.invalidate() }
         flying = true
+        snd("launch")
         boostFrames = 50
         restFrames = 0
+    }
+
+    private fun snd(name: String, vol: Float = 1f, gap: Long = 0L) {
+        sfx?.play(name, vol, gap)
+    }
+
+    private fun impactSound(name: String, speed: Float) {
+        if (speed > 2.5f * d) snd(name, (speed / (14f * d)).coerceIn(0.25f, 1f), 90L)
     }
 
     private fun applyPos() {
@@ -464,6 +479,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         if (twoPlayer) {
             roundOver(true)
         } else {
+            snd("win")
             hud?.let { it.message = "YOU MADE IT!"; it.invalidate() }
             handler.postDelayed({ startSolo() }, 3000)
         }
@@ -477,6 +493,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             if (twoPlayer) {
                 roundOver(false)
             } else {
+                snd("lose")
                 hud?.let { it.message = "OUT OF SHOTS"; it.invalidate() }
                 handler.postDelayed({ startSolo() }, 2500)
             }
@@ -547,11 +564,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 cx += vx * hdt
                 cy += vy * hdt
 
-                if (cx < r) { cx = r; vx = abs(vx) * bounce }
-                if (cx > sw - r) { cx = sw - r; vx = -abs(vx) * bounce }
+                if (cx < r) { impactSound("bounce", abs(vx)); cx = r; vx = abs(vx) * bounce }
+                if (cx > sw - r) { impactSound("bounce", abs(vx)); cx = sw - r; vx = -abs(vx) * bounce }
                 if (cy > floorY - r) {
                     cy = floorY - r
-                    if (vy > 0f) vy = -vy * bounce
+                    if (vy > 0f) { impactSound("thud", vy); vy = -vy * bounce }
                     if (abs(vy) < 1.2f * d) vy = 0f
                     vx *= 0.97f
                     grounded = true
@@ -581,6 +598,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                         }
                         val vn = vx * nx + vy * ny
                         if (vn < 0f) {
+                            impactSound("bounce", -vn)
                             vx -= (1 + bounce) * vn * nx
                             vy -= (1 + bounce) * vn * ny
                         }
@@ -624,6 +642,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
             control?.let { wm.removeView(it) }
             hud?.let { wm.removeView(it) }
         }
+        sfx?.release()
+        sfx = null
         sv = null
         control = null
         hud = null

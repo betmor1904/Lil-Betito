@@ -61,6 +61,13 @@ class MainActivity : Activity() {
         }
         box.addView(TextView(this).apply { text = "Lil Betito"; textSize = 30f })
 
+        val soundBox = CheckBox(this).apply {
+            text = "Sound effects"
+            isChecked = sp.getBoolean("sound", true)
+            setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("sound", on).apply() }
+        }
+        box.addView(soundBox)
+
         box.section("SOLO")
         box.btn("Start solo game") { send(ShotService::class.java, "SHOT_SOLO") }
 
