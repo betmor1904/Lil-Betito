@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.*
 import android.view.View
 import kotlin.math.max
+import kotlin.math.min
 
 class HudView(ctx: Context) : View(ctx) {
     private val d = resources.displayMetrics.density
@@ -15,8 +16,14 @@ class HudView(ctx: Context) : View(ctx) {
     var banner: String? = null
     var score: String? = null
     var rockets = 3
-    var buster = false
+    var powerLabel: String? = null
+    var powerColor = Color.parseColor("#FF9800")
+    var combo = 0
     private val path = Path()
+    private val neon = intArrayOf(
+        Color.parseColor("#FFEB3B"), Color.parseColor("#FF4081"), Color.parseColor("#00E5FF"),
+        Color.parseColor("#76FF03"), Color.parseColor("#E040FB")
+    )
 
     private fun fitText(c: Canvas, t: String, x: Float, y: Float, size: Float, maxW: Float) {
         p.textSize = size
@@ -87,9 +94,10 @@ class HudView(ctx: Context) : View(ctx) {
             p.color = Color.parseColor("#FFEB3B")
             fitText(c, s, w / 2, goalY + 80 * d, 14 * d, w * 0.9f)
         }
-        if (buster) {
-            p.color = Color.parseColor("#FF9800")
-            fitText(c, "BUSTER READY - SMASH THROUGH BARRIERS", w / 2, goalY + 102 * d, 13 * d, w * 0.9f)
+        val pl = powerLabel
+        if (pl != null) {
+            p.color = powerColor
+            fitText(c, "READY - $pl", w / 2, goalY + 102 * d, 13 * d, w * 0.9f)
         }
         p.clearShadowLayer()
 
@@ -99,6 +107,22 @@ class HudView(ctx: Context) : View(ctx) {
         while (i + 1 < dots.size) {
             c.drawCircle(dots[i], dots[i + 1], max(2 * d, 5 * d - (i / 2) * 0.25f * d), p)
             i += 2
+        }
+
+        // combo counter
+        if (combo >= 2) {
+            val txt = "COMBO x$combo"
+            val size = (26 + min(combo, 10) * 2.5f) * d
+            p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
+            p.style = Paint.Style.STROKE
+            p.strokeJoin = Paint.Join.ROUND
+            p.strokeWidth = 6 * d
+            p.color = Color.parseColor("#4A148C")
+            fitText(c, txt, w / 2, h * 0.30f, size, w * 0.9f)
+            p.style = Paint.Style.FILL
+            p.color = neon[combo % neon.size]
+            fitText(c, txt, w / 2, h * 0.30f, size, w * 0.9f)
+            p.typeface = Typeface.DEFAULT_BOLD
         }
 
         // big message

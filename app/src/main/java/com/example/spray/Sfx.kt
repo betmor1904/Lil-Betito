@@ -8,7 +8,7 @@ import android.os.SystemClock
 /** Tiny sound-effect player. Sounds live in res/raw. */
 class Sfx(ctx: Context) {
     private val pool: SoundPool = SoundPool.Builder()
-        .setMaxStreams(6)
+        .setMaxStreams(12)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_GAME)
@@ -37,15 +37,18 @@ class Sfx(ctx: Context) {
         ids["wee"] = pool.load(ctx, R.raw.wee, 1)
         ids["wee2"] = pool.load(ctx, R.raw.wee2, 1)
         ids["letsgo"] = pool.load(ctx, R.raw.letsgo, 1)
+        ids["ding"] = pool.load(ctx, R.raw.ding, 1)
+        ids["coin"] = pool.load(ctx, R.raw.coin, 1)
+        ids["woo"] = pool.load(ctx, R.raw.woo, 1)
     }
 
-    fun play(name: String, volume: Float = 1f, minGapMs: Long = 0L) {
+    fun play(name: String, volume: Float = 1f, minGapMs: Long = 0L, rate: Float = 1f) {
         if (!enabled) return
         val id = ids[name] ?: return
         val now = SystemClock.uptimeMillis()
         if (now - (last[name] ?: 0L) < minGapMs) return
         last[name] = now
-        pool.play(id, volume, volume, 1, 0, 1f)
+        pool.play(id, volume, volume, 1, 0, rate.coerceIn(0.5f, 2f))
     }
 
     fun release() {

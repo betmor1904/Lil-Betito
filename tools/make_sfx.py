@@ -114,4 +114,31 @@ dbl[:len(b1)] += b1
 off = int(0.15 * SR)
 dbl[off:off + len(b2)] += 0.9 * b2
 save("bonk", dbl)
+
+# ---------- CASINO DING (pitched up in the game for combos) ----------
+def ding(f=523.25, dur=0.7):
+    n = int(dur * SR); t = np.arange(n) / SR
+    x = np.zeros(n)
+    for ratio, amp, dec in [(1, 1.0, 5), (2.0, .5, 8), (2.76, .35, 11), (5.4, .15, 22)]:
+        x += amp * np.sin(2 * np.pi * f * ratio * t) * np.exp(-t * dec)
+    k = int(.002 * SR); x[:k] *= np.linspace(0, 1, k)
+    return x
+save("ding", ding())
+
+# ---------- COIN "ka-ching" ----------
+def tone(f, dur, dec):
+    n = int(dur * SR); t = np.arange(n) / SR
+    return (np.sin(2*np.pi*f*t) + .4*np.sin(2*np.pi*f*2.01*t) + .2*np.sin(2*np.pi*f*3.02*t)) * np.exp(-t * dec)
+ta = tone(1318.5, 0.07, 18); tb = tone(1760, 0.4, 7)
+coin = np.zeros(int(0.5 * SR)); coin[:len(ta)] += ta
+off = int(0.065 * SR); coin[off:off + len(tb)] += tb
+save("coin", coin)
+
+# ---------- "WOOO!" ----------
+def woo():
+    w = voiced(0.06, [(0, 300), (1, 330)], [[(0, 300*K), (1, 300*K)], [(0, 700*K), (1, 870*K)], [(0, 2300), (1, 2400)]], gains=(1, .6, .3))
+    oo = voiced(0.5, [(0, 330), (.4, 620), (1, 520)], [[(0, 300*K), (1, 320*K)], [(0, 870*K), (1, 900*K)], [(0, 2400), (1, 2400)]], vib=(7, 0.03), gains=(1, .8, .3))
+    return np.concatenate([w, oo])
+save("woo", woo())
+
 print("done")

@@ -66,9 +66,9 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("sound", on).apply() }
         })
         box.addView(CheckBox(this).apply {
-            text = "Math quiz: earn rockets (and barriers)"
-            isChecked = sp.getBoolean("math", true)
-            setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("math", on).apply() }
+            text = "Math quiz (paused for testing)"
+            isChecked = sp.getBoolean("math_on", false)
+            setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("math_on", on).apply() }
         })
 
         box.section("SOLO")
@@ -101,7 +101,9 @@ class MainActivity : Activity() {
                 "only flies about half way up, and more rockets means more power. " +
                 "In 2 player mode one person answers to earn barriers, places them, and taps DONE. " +
                 "The other answers to earn rockets and shoots. Then you swap. First to 3 wins. " +
-                "Grab the Buster Carrot for an extra try and to smash through barriers. Tap a barrier to resize it, hold it to remove it."
+                "One jump can't reach the goal now: land on the platforms and jump from there. Grab bombs in the air: " +
+                "BUSTER breaks through the next wall, WARP wraps you around the screen sides, " +
+                "STICKY sticks you exactly where you land. Tap a barrier to resize it, hold it to remove it."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.Icon
 import android.os.Build
@@ -68,12 +69,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var quizPurpose = 0
     private var quizWho = ""
     private var rockets = 3
-    private var buster = false
-    private var busterArmed = false
+    private var power = 0          // ready power: 0 none, 1 buster, 2 warp, 3 sticky
+    private var armedPower = 0     // the power that was ready when this shot was fired
+    private var stickNow = false
+    private var stickGrace = 0
     private var fx: FxView? = null
-    private var carrot: CarrotView? = null
-    private var carrotX = 0f
-    private var carrotY = 0f
+    private class Pickup(val view: PickupView, val type: Int, val x: Float, val y: Float)
+    private val pickups = ArrayList<Pickup>()
+    private val platforms = ArrayList<Barrier>()
     private var twoPlayer = false
     private var phase = phasePlay
     private var setterIdx = 0
@@ -85,6 +88,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var quiz: QuizView? = null
     private var sfx: Sfx? = null
     private val voices = arrayOf("wee", "wee2", "letsgo")
+    private var closeBtn: CloseView? = null
+    private var parts: PartsView? = null
+    private var mascot: MascotView? = null
+    private var combo = 0
+    private val pent = intArrayOf(0, 2, 4, 7, 9, 12)   // happy notes the ding climbs through
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -155,6 +163,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(h, params(sw, sh, touchable = false))
         hud = h
 
+        val mv = MascotView(this)
+        val mlp = params((150 * d).toInt(), (150 * d).toInt(), touchable = false)
+        mlp.x = 0
+        mlp.y = (floorY - 130 * d).toInt()
+        wm.addView(mv, mlp)
+        mascot = mv
+
+        val pv = PartsView(this)
+        wm.addView(pv, params(sw, sh, touchable = false))
+        parts = pv
+
         val cv = ControlView(this)
         clp = params((100 * d).toInt(), (44 * d).toInt())
         clp.x = (12 * d).toInt()
@@ -162,6 +181,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
         cv.setOnClickListener { if (twoPlayer && phase == phaseSetup) startPlay() }
         wm.addView(cv, clp)
         control = cv
+
+        val xv = CloseView(this)
+        val xlp = params((40 * d).toInt(), (40 * d).toInt())
+        xlp.x = sw - (50 * d).toInt()
+        xlp.y = (goalY + 40 * d).toInt()
+        xv.setOnClickListener { stopSelf() }
+        wm.addView(xv, xlp)
+        closeBtn = xv
 
         val v = ShotView(this)
         slp = params((112 * d).toInt(), (112 * d).toInt())
@@ -193,21 +220,22 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         dismissQuiz()
         stopFx()
-        removeCarrot()
-        mathMode = getSharedPreferences("betito", MODE_PRIVATE).getBoolean("math", true)
+        removePickups()
+        mathMode = getSharedPreferences("betito", MODE_PRIVATE).getBoolean("math_on", false)
         twoPlayer = false
         phase = phasePlay
         lockBarriers(false)
         setControl(null)
         resetBall()
         hud?.let { it.score = null; it.banner = "LIL BETITO"; it.invalidate() }
+        spawnPlatforms()
         if (mathMode) {
             phase = phaseQuiz
             hud?.let { it.banner = "ANSWER TO EARN ROCKETS"; it.invalidate() }
             startQuiz(purposeRockets, "LIL BETITO")
         } else {
             hud?.let { it.message = "LIL BETITO"; it.invalidate() }
-            spawnCarrot()
+            spawnPickups()
             handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1500)
         }
     }
@@ -216,7 +244,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         val sp = getSharedPreferences("betito", MODE_PRIVATE)
         names = arrayOf(sp.getString("p1", "Player 1") ?: "Player 1", sp.getString("p2", "Player 2") ?: "Player 2")
-        mathMode = sp.getBoolean("math", true)
+        mathMode = sp.getBoolean("math_on", false)
         twoPlayer = true
         scores[0] = 0
         scores[1] = 0
@@ -234,7 +262,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         dismissQuiz()
         stopFx()
-        removeCarrot()
+        removePickups()
         phase = phaseSetup
         resetBall()
         hud?.let {
@@ -251,6 +279,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             setControl("DONE")
             hud?.let { it.banner = "${names[setterIdx]}: SET TRAPS"; it.invalidate() }
         }
+        spawnPlatforms()
     }
 
     // ---------- math quiz ----------
@@ -347,7 +376,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             setControl("DONE")
         } else {
             phase = phasePlay
-            spawnCarrot()
+            spawnPickups()
             val who = if (twoPlayer) "${names[1 - setterIdx]}: " else ""
             hud?.let {
                 it.banner = who + "REACH THE TOP - $n ROCKET" + (if (n == 1) "" else "S")
@@ -356,54 +385,106 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
     }
 
-    // ---------- buster carrot + jackpot celebration ----------
+    // ---------- bomb pickups, platforms + jackpot celebration ----------
 
-    private fun spawnCarrot() {
-        removeCarrot()
-        var px = sw / 2f
-        var py = sh / 2f
-        for (attempt in 0 until 25) {
-            val margin = r + 16 * d
-            px = Random.nextFloat() * (sw - 2 * margin) + margin
-            val top = goalY + 100 * d
-            py = top + Random.nextFloat() * (floorY - 3 * r - top)
-            var clear = true
-            for (b in barriers) {
-                if (b.removed) continue
-                val l = b.lp.x - 30 * d
-                val t = b.lp.y - 30 * d
-                if (px > l && px < l + b.lp.width + 60 * d && py > t && py < t + b.lp.height + 60 * d) clear = false
+    private fun spawnPickups() {
+        removePickups()
+        val margin = r + 16 * d
+        val top = goalY + 100 * d
+        val placed = ArrayList<FloatArray>()
+        for (type in 1..3) {
+            var px = sw / 2f
+            var py = sh / 2f
+            for (attempt in 0 until 40) {
+                px = Random.nextFloat() * (sw - 2 * margin) + margin
+                py = top + Random.nextFloat() * (floorY - 3 * r - top)
+                var clear = true
+                for (b in barriers) {
+                    if (b.removed) continue
+                    val l = b.lp.x - 30 * d
+                    val t = b.lp.y - 30 * d
+                    if (px > l && px < l + b.lp.width + 60 * d && py > t && py < t + b.lp.height + 60 * d) clear = false
+                }
+                for (o in placed) if (hypot(px - o[0], py - o[1]) < 90 * d) clear = false
+                if (clear) break
             }
-            if (clear) break
+            placed.add(floatArrayOf(px, py))
+            val v = PickupView(this, type)
+            val lp = params((56 * d).toInt(), (56 * d).toInt(), touchable = false)
+            lp.x = (px - 28 * d).toInt()
+            lp.y = (py - 28 * d).toInt()
+            wm.addView(v, lp)
+            pickups.add(Pickup(v, type, px, py))
         }
-        val v = CarrotView(this)
-        val lp = params((56 * d).toInt(), (56 * d).toInt(), touchable = false)
-        lp.x = (px - 28 * d).toInt()
-        lp.y = (py - 28 * d).toInt()
-        wm.addView(v, lp)
-        carrot = v
-        carrotX = px
-        carrotY = py
     }
 
-    private fun removeCarrot() {
-        carrot?.let { wm.removeView(it) }
-        carrot = null
+    private fun removePickups() {
+        for (pk in pickups) wm.removeView(pk.view)
+        pickups.clear()
     }
 
-    private fun collectCarrot() {
-        removeCarrot()
+    private fun collectPickup(pk: Pickup) {
+        wm.removeView(pk.view)
+        pickups.remove(pk)
         snd("carrot")
-        shotsLeft++
-        buster = true
-        sv?.let { it.buster = true; it.invalidate() }
+        setPower(pk.type)
+        mascot?.play(MascotView.Move.CHEER, when (pk.type) { 1 -> "BUSTER!"; 2 -> "WARP!"; else -> "STICKY!" })
         hud?.let {
-            it.shotsLeft = shotsLeft
-            it.buster = true
-            it.message = "BUSTER CARROT! +1 TRY"
+            it.message = when (pk.type) { 1 -> "BUSTER BOMB!"; 2 -> "WARP BOMB!"; else -> "STICKY BOMB!" }
             it.invalidate()
         }
-        handler.postDelayed({ if (!over) hud?.let { it.message = null; it.invalidate() } }, 1500)
+        handler.postDelayed({ if (!over) hud?.let { it.message = null; it.invalidate() } }, 1200)
+    }
+
+    /** The ready power shows as a glow on the turtle and a line under the goal. */
+    private fun setPower(p: Int) {
+        power = p
+        sv?.let { it.power = p; it.invalidate() }
+        hud?.let {
+            it.powerLabel = when (p) {
+                1 -> "BUSTER: BREAKS THE NEXT WALL"
+                2 -> "WARP: SIDES WRAP AROUND"
+                3 -> "STICKY: STICKS WHERE YOU LAND"
+                else -> null
+            }
+            it.powerColor = when (p) {
+                1 -> Color.parseColor("#FF9800")
+                2 -> Color.parseColor("#B388FF")
+                else -> Color.parseColor("#76FF03")
+            }
+            it.invalidate()
+        }
+    }
+
+    /** Two platforms (one low, one high, on opposite sides). One jump can't reach the goal, so use them. */
+    private fun clearPlatforms() {
+        for (b in platforms) {
+            if (!b.removed) {
+                b.removed = true
+                wm.removeView(b.view)
+            }
+            barriers.remove(b)
+        }
+        platforms.clear()
+    }
+
+    private fun spawnPlatforms() {
+        clearPlatforms()
+        val dist = floorY - 2 * r - goalY
+        val lowOnLeft = Random.nextBoolean()
+        for (i in 0 until 2) {
+            val b = addBarrier(forced = true) ?: continue
+            val w = ((if (i == 0) 170f else 110f) * d).toInt()
+            val frac = if (i == 0) 0.38f + Random.nextFloat() * 0.08f else 0.72f + Random.nextFloat() * 0.06f
+            val onLeft = (i == 0) == lowOnLeft
+            val center = sw * (if (onLeft) 0.22f + Random.nextFloat() * 0.2f else 0.58f + Random.nextFloat() * 0.2f)
+            b.lp.width = w
+            b.lp.x = (center - w / 2f).toInt().coerceIn((4 * d).toInt(), sw - w - (4 * d).toInt())
+            b.lp.y = (floorY - frac * dist).toInt()
+            b.lp.flags = b.lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            wm.updateViewLayout(b.view, b.lp)
+            platforms.add(b)
+        }
     }
 
     private fun showFx() {
@@ -442,7 +523,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         } else {
             phase = phasePlay
             hud?.let { it.banner = "$shooter: REACH THE TOP"; it.invalidate() }
-            spawnCarrot()
+            spawnPickups()
         }
     }
 
@@ -508,11 +589,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun tiltOf(x: Float, y: Float): Float =
         Math.toDegrees(atan2(y.toDouble(), max(abs(x), 0.1f * d).toDouble())).toFloat()
 
-    /** Top launch speed. 1 rocket = full power (reaches the top on a straight shot). 0 rockets = 60%. */
+    /** Top launch speed. Even full power only rises about 64% of the way up, so you need a platform. */
     private fun vmax(): Float {
         val dist = floorY - 2 * r - goalY
         val vNeed = sqrt(2f * 0.55f * d * dist)
-        val factor = floatArrayOf(0.60f, 1.04f, 1.08f, 1.12f)[rockets.coerceIn(0, 3)]
+        val factor = floatArrayOf(0.60f, 0.76f, 0.78f, 0.80f)[rockets.coerceIn(0, 3)]
         return vNeed * factor
     }
 
@@ -558,11 +639,16 @@ class ShotService : Service(), Choreographer.FrameCallback {
         vx = v[0]
         vy = v[1]
         shotsLeft--
-        hud?.let { it.shotsLeft = shotsLeft; it.invalidate() }
+        hud?.let { it.shotsLeft = shotsLeft; it.combo = 0; it.invalidate() }
+        combo = 0
         flying = true
         snd("launch", 0.2f + 0.12f * rockets)
-        snd(voices.random(), 1f)
-        busterArmed = buster
+        val voice = voices.random()
+        snd(voice, 1f)
+        mascot?.play(MascotView.randomFunny(), if (voice == "letsgo") "LET'S GOOO!" else "WEEEE!")
+        armedPower = power
+        stickGrace = 8
+        stickNow = false
         boostFrames = 50
         restFrames = 0
     }
@@ -571,9 +657,62 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sfx?.play(name, vol, gap)
     }
 
-    /** Every wall / floor / barrier hit goes "bonk bonk". */
-    private fun impactSound(@Suppress("UNUSED_PARAMETER") name: String, speed: Float) {
-        if (speed > 2.5f * d) snd("bonk", (speed / (14f * d)).coerceIn(0.35f, 1f), 280L)
+    /**
+     * Every wall / floor / barrier hit: bonk + a casino ding that climbs in pitch
+     * with the combo + flying chunks. (x, y) is the hit point, (nx, ny) points away from the wall.
+     */
+    private fun hit(speed: Float, x: Float, y: Float, nx: Float, ny: Float, barrier: Boolean) {
+        if (speed <= 2.5f * d) return
+        combo++
+        val vol = (speed / (14f * d)).coerceIn(0.4f, 1f)
+        snd("bonk", vol, 150L)
+        val semis = pent[min(combo - 1, pent.size - 1)]
+        val rate = Math.pow(2.0, semis / 12.0).toFloat()
+        sfx?.play("ding", vol, 60L, rate)
+        if (combo >= 3) sfx?.play("coin", 0.7f, 120L)
+        hud?.let { it.combo = combo; it.invalidate() }
+        parts?.burst(x, y, nx, ny, speed, barrier, combo)
+        if (combo == 3 || combo == 5 || combo == 8) {
+            snd("woo", 0.9f)
+            val dance = arrayOf(MascotView.Move.TWERK, MascotView.Move.FLOSS, MascotView.Move.SPIN).random()
+            mascot?.play(dance, if (combo == 3) "WOO!" else if (combo == 5) "COMBO!" else "UNREAL!")
+        }
+    }
+
+    /** BUSTER: the wall explodes and the power is used up. */
+    private fun breakBarrier(b: Barrier) {
+        val mx = b.lp.x + b.lp.width / 2f
+        val my = b.lp.y + b.lp.height / 2f
+        b.removed = true
+        wm.removeView(b.view)
+        barriers.remove(b)
+        platforms.remove(b)
+        snd("bust", 1f)
+        parts?.smash(mx, my)
+        parts?.smash(mx - b.lp.width / 4f, my)
+        parts?.smash(mx + b.lp.width / 4f, my)
+        mascot?.play(MascotView.Move.BACKFLIP, "SMASH!")
+        armedPower = 0
+        if (power == 1) setPower(0)
+    }
+
+    /** WARP: flash at the edge the turtle leaves and the edge he comes out of. */
+    private fun warpFx(x: Float, dirX: Float) {
+        snd("pop", 0.7f, 150L)
+        parts?.burst(x, cy, dirX, 0f, 8f * d, false, 4)
+    }
+
+    /** STICKY: freeze exactly where he touched, then he can shoot again from there. */
+    private fun stickBall() {
+        stickNow = false
+        vx = 0f
+        vy = 0f
+        snd("pop", 1f)
+        parts?.goo(cx, cy)
+        mascot?.play(MascotView.Move.CHEER, "STUCK IT!")
+        armedPower = 0
+        if (power == 3) setPower(0)
+        endShot()
     }
 
     private fun applyPos() {
@@ -594,10 +733,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
         restFrames = 0
         boostFrames = 0
         rockets = if (mathMode) 0 else 3
-        buster = false
-        busterArmed = false
-        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false; it.rockets = rockets; it.buster = false }
-        hud?.let { it.shotsLeft = 3; it.rockets = rockets; it.buster = false; it.message = null; it.dots = FloatArray(0); it.invalidate() }
+        power = 0
+        armedPower = 0
+        stickNow = false
+        combo = 0
+        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false; it.rockets = rockets; it.power = 0 }
+        hud?.let { it.combo = 0; it.shotsLeft = 3; it.rockets = rockets; it.powerLabel = null; it.message = null; it.dots = FloatArray(0); it.invalidate() }
         applyPos()
         sv?.invalidate()
     }
@@ -608,8 +749,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         vx = 0f
         vy = 0f
         sv?.let { it.boost = false; it.angle = 0f }
-        removeCarrot()
+        removePickups()
         snd("jackpot")
+        mascot?.play(MascotView.Move.BACKFLIP, "JACKPOT!")
         showFx()
         if (twoPlayer) {
             roundOver(true)
@@ -621,15 +763,16 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun endShot() {
         flying = false
+        if (combo >= 2) handler.postDelayed({ hud?.let { it.combo = 0; it.invalidate() } }, 1400)
+        combo = 0
         sv?.let { it.boost = false; it.angle = 0f; it.invalidate() }
-        if (busterArmed) {
-            buster = false
-            busterArmed = false
-            sv?.let { it.buster = false; it.invalidate() }
-            hud?.let { it.buster = false; it.invalidate() }
+        if (armedPower != 0) {
+            if (power == armedPower) setPower(0)
+            armedPower = 0
         }
         if (shotsLeft <= 0) {
             over = true
+            mascot?.play(MascotView.Move.FACEPALM, "OOF!")
             if (twoPlayer) {
                 roundOver(false)
             } else {
@@ -642,8 +785,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     // ---------- barriers ----------
 
-    private fun addBarrier(forced: Boolean = false, slot: Int = 0) {
-        if (!forced && twoPlayer && (phase != phaseSetup || mathMode)) return
+    private fun addBarrier(forced: Boolean = false, slot: Int = 0): Barrier? {
+        if (!forced && twoPlayer && (phase != phaseSetup || mathMode)) return null
         val v = BarrierView(this)
         val lp = params((150 * d).toInt(), (40 * d).toInt())
         lp.x = (sw / 2f - 75 * d).toInt()
@@ -687,6 +830,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
         wm.addView(v, lp)
         barriers.add(b)
+        return b
     }
 
     // ---------- physics loop ----------
@@ -704,16 +848,37 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 cx += vx * hdt
                 cy += vy * hdt
 
-                if (cx < r) { impactSound("bounce", abs(vx)); cx = r; vx = abs(vx) * bounce }
-                if (cx > sw - r) { impactSound("bounce", abs(vx)); cx = sw - r; vx = -abs(vx) * bounce }
+                if (armedPower == 2) {
+                    // WARP: sides are portals instead of walls
+                    if (cx < -r) { warpFx(0f, 1f); cx += sw + 2 * r; warpFx(sw.toFloat(), -1f) }
+                    else if (cx > sw + r) { warpFx(sw.toFloat(), -1f); cx -= sw + 2 * r; warpFx(0f, 1f) }
+                } else {
+                    if (cx < r) {
+                        hit(abs(vx), 0f, cy, 1f, 0f, false)
+                        if (armedPower == 3 && stickGrace <= 0) stickNow = true
+                        cx = r
+                        vx = abs(vx) * bounce
+                    }
+                    if (cx > sw - r) {
+                        hit(abs(vx), sw.toFloat(), cy, -1f, 0f, false)
+                        if (armedPower == 3 && stickGrace <= 0) stickNow = true
+                        cx = sw - r
+                        vx = -abs(vx) * bounce
+                    }
+                }
                 if (cy > floorY - r) {
                     cy = floorY - r
-                    if (vy > 0f) { impactSound("thud", vy); vy = -vy * bounce }
+                    if (vy > 0f) {
+                        hit(vy, cx, floorY, 0f, -1f, false)
+                        if (armedPower == 3 && stickGrace <= 0) stickNow = true
+                        vy = -vy * bounce
+                    }
                     if (abs(vy) < 1.2f * d) vy = 0f
                     vx *= 0.97f
                     grounded = true
                 }
 
+                var toBreak: Barrier? = null
                 for (b in barriers) {
                     val l = b.lp.x.toFloat()
                     val t = b.lp.y.toFloat()
@@ -724,8 +889,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     val dx = cx - qx
                     val dy = cy - qy
                     val d2 = dx * dx + dy * dy
-                    if (buster) {
-                        if (d2 < r * r) snd("bust", 1f, 300L)
+                    if (armedPower == 1) {
+                        // BUSTER: the first wall he touches breaks
+                        // (a real hit only: resting on a platform or sliding along it doesn't break it)
+                        if (d2 < r * r && toBreak == null && stickGrace <= 0) {
+                            val dist = sqrt(d2)
+                            val vn = if (dist > 0.01f) (vx * dx + vy * dy) / dist else -999f
+                            if (vn < -2.5f * d) toBreak = b
+                        }
                         continue
                     }
                     if (d2 < r * r) {
@@ -742,7 +913,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                         }
                         val vn = vx * nx + vy * ny
                         if (vn < 0f) {
-                            impactSound("bounce", -vn)
+                            hit(-vn, qx, qy, nx, ny, true)
+                            if (armedPower == 3 && stickGrace <= 0) stickNow = true
                             vx -= (1 + bounce) * vn * nx
                             vy -= (1 + bounce) * vn * ny
                         }
@@ -754,11 +926,19 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     }
                 }
 
+                toBreak?.let { breakBarrier(it) }
+
                 if (cy - r <= goalY) { win(); break }
+                if (stickNow) { stickBall(); break }
             }
 
-            if (!over) {
-                if (carrot != null && hypot(cx - carrotX, cy - carrotY) < r + 18 * d) collectCarrot()
+            if (stickGrace > 0) stickGrace--
+            if (!over && flying) {
+                var got: Pickup? = null
+                for (pk in pickups) {
+                    if (hypot(cx - pk.x, cy - pk.y) < r + 18 * d) { got = pk; break }
+                }
+                got?.let { collectPickup(it) }
                 if (abs(vx) > 0.5f * d) s.mirror = vx < 0f
                 s.angle = tiltOf(vx, vy)
                 if (boostFrames > 0) boostFrames--
@@ -782,17 +962,23 @@ class ShotService : Service(), Choreographer.FrameCallback {
         if (::wm.isInitialized) {
             dismissQuiz()
             stopFx()
-            removeCarrot()
+            removePickups()
             for (b in barriers) if (!b.removed) wm.removeView(b.view)
             barriers.clear()
             sv?.let { wm.removeView(it) }
             control?.let { wm.removeView(it) }
+            closeBtn?.let { wm.removeView(it) }
+            parts?.let { wm.removeView(it) }
+            mascot?.let { wm.removeView(it) }
             hud?.let { wm.removeView(it) }
         }
         sfx?.release()
         sfx = null
         sv = null
         control = null
+        closeBtn = null
+        parts = null
+        mascot = null
         hud = null
         super.onDestroy()
     }

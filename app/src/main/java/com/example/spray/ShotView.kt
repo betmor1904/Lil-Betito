@@ -17,10 +17,12 @@ class ShotView(ctx: Context) : View(ctx) {
     var boost = false     // true while the boosters are firing
     var mirror = false    // true = facing left
     var rockets = 3       // 0..3 special rockets strapped on
-    var buster = false    // Buster Carrot power: glow + smash through barriers
-    private val aura = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = RadialGradient(0f, 0f, 40 * d, intArrayOf(Color.argb(170, 255, 152, 0), Color.argb(0, 255, 152, 0)), null, Shader.TileMode.CLAMP)
+    var power = 0         // ready power: 0 none, 1 buster (orange), 2 warp (purple), 3 sticky (green)
+    private val buster: Boolean get() = power != 0
+    private fun mkAura(r: Int, g: Int, b: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 40 * d, intArrayOf(Color.argb(170, r, g, b), Color.argb(0, r, g, b)), null, Shader.TileMode.CLAMP)
     }
+    private val auras = arrayOf(mkAura(255, 152, 0), mkAura(171, 71, 255), mkAura(118, 255, 3))
     private val slotY = floatArrayOf(-9f, -17f, -1f)
 
     private val shellDark = Color.parseColor("#2E7D32")
@@ -37,6 +39,7 @@ class ShotView(ctx: Context) : View(ctx) {
         p.style = Paint.Style.FILL
 
         if (buster) {
+            val aura = auras[(power - 1).coerceIn(0, 2)]
             aura.alpha = (200 + 55 * sin(SystemClock.uptimeMillis() / 110.0)).toInt().coerceIn(0, 255)
             c.save()
             c.translate(cx, cy)
