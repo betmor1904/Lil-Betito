@@ -70,19 +70,6 @@ class ShotView(ctx: Context) : View(ctx) {
             c.drawPath(path, p)
         }
 
-        // head
-        p.color = skin
-        c.drawCircle(cx + 24 * d, cy - 3 * d, 9 * d, p)
-        p.color = Color.WHITE
-        c.drawCircle(cx + 27 * d, cy - 6 * d, 3.2f * d, p)
-        p.color = Color.BLACK
-        c.drawCircle(cx + 28 * d, cy - 6 * d, 1.6f * d, p)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.5f * d
-        p.strokeCap = Paint.Cap.ROUND
-        c.drawArc(cx + 20 * d, cy - 4 * d, cx + 30 * d, cy + 5 * d, 20f, 90f, false, p)
-        p.style = Paint.Style.FILL
-
         // belly
         p.color = Color.parseColor("#D7CCC8")
         c.drawRoundRect(cx - 22 * d, cy + 1 * d, cx + 22 * d, cy + 8 * d, 3 * d, 3 * d, p)
@@ -95,6 +82,61 @@ class ShotView(ctx: Context) : View(ctx) {
         c.drawCircle(cx, cy - 9 * d, 6 * d, p)
         c.drawCircle(cx - 12 * d, cy - 4 * d, 4 * d, p)
         c.drawCircle(cx + 12 * d, cy - 4 * d, 4 * d, p)
+
+        // goofy face (drawn last so it sits in front of the shell)
+        val hx = cx + 27 * d
+        val hy = cy - 4 * d
+        p.style = Paint.Style.FILL
+        p.color = skin
+        c.drawCircle(hx, hy, 12 * d, p)
+        // big bulging eyes with blue irises
+        for (ex in floatArrayOf(-5f, 5f)) {
+            val x = hx + ex * d
+            val y = hy - 5 * d
+            p.style = Paint.Style.FILL
+            p.color = Color.WHITE
+            c.drawCircle(x, y, 4.8f * d, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1f * d
+            p.color = Color.parseColor("#33691E")
+            c.drawCircle(x, y, 4.8f * d, p)
+            p.style = Paint.Style.FILL
+            p.color = Color.parseColor("#1E88E5")
+            c.drawCircle(x + 0.8f * d, y, 2.6f * d, p)
+            p.color = Color.BLACK
+            c.drawCircle(x + 1f * d, y, 1.2f * d, p)
+            // eyelashes
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1f * d
+            p.strokeCap = Paint.Cap.ROUND
+            p.color = Color.BLACK
+            c.drawLine(x - 3f * d, y - 4f * d, x - 4.5f * d, y - 6.5f * d, p)
+            c.drawLine(x, y - 4.8f * d, x, y - 7.5f * d, p)
+            c.drawLine(x + 3f * d, y - 4f * d, x + 4.5f * d, y - 6.5f * d, p)
+        }
+        // little nose
+        p.style = Paint.Style.FILL
+        p.color = skinDark
+        oval.set(hx - 2.5f * d, hy - 0.5f * d, hx + 2.5f * d, hy + 2f * d)
+        c.drawOval(oval, p)
+        // big goofy grin
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 1.5f * d
+        p.strokeCap = Paint.Cap.ROUND
+        p.color = Color.parseColor("#33691E")
+        oval.set(hx - 9 * d, hy - 3 * d, hx + 9 * d, hy + 8 * d)
+        c.drawArc(oval, 15f, 150f, false, p)
+        // two big buck teeth
+        p.style = Paint.Style.FILL
+        p.color = Color.WHITE
+        c.drawRoundRect(hx - 4 * d, hy + 3 * d, hx - 0.3f * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
+        c.drawRoundRect(hx + 0.3f * d, hy + 3 * d, hx + 4 * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 0.8f * d
+        p.color = Color.parseColor("#33691E")
+        c.drawRoundRect(hx - 4 * d, hy + 3 * d, hx - 0.3f * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
+        c.drawRoundRect(hx + 0.3f * d, hy + 3 * d, hx + 4 * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
+        p.style = Paint.Style.FILL
         c.restore()
     }
 }

@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.spray"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "5.0"
     }
     signingConfigs {
         getByName("debug") {
