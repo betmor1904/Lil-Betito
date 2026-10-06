@@ -25,6 +25,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
+import kotlin.random.Random
 
 private class Barrier(val view: BarrierView, val lp: WindowManager.LayoutParams, var removed: Boolean = false)
 
@@ -66,6 +67,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var setterIdx = 0
     private val scores = IntArray(2)
     private var names = arrayOf("Player 1", "Player 2")
+    private var mathMode = true
+    private var quizIdx = 0
+    private var earned = 0
+    private var quiz: QuizView? = null
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -170,6 +175,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun startSolo() {
         handler.removeCallbacksAndMessages(null)
+        dismissQuiz()
         twoPlayer = false
         phase = phasePlay
         lockBarriers(false)
@@ -188,6 +194,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         val sp = getSharedPreferences("betito", MODE_PRIVATE)
         names = arrayOf(sp.getString("p1", "Player 1") ?: "Player 1", sp.getString("p2", "Player 2") ?: "Player 2")
+        mathMode = sp.getBoolean("math", true)
         twoPlayer = true
         scores[0] = 0
         scores[1] = 0
@@ -203,16 +210,107 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun startSetup() {
         handler.removeCallbacksAndMessages(null)
+        dismissQuiz()
         phase = phaseSetup
         resetBall()
-        lockBarriers(false)
-        setControl("DONE")
         hud?.let {
-            it.banner = "${names[setterIdx]}: SET TRAPS"
             it.score = scoreText()
             it.message = null
+        }
+        if (mathMode) {
+            removeAllBarriers()
+            setControl(null)
+            earned = 0
+            quizIdx = 0
+            hud?.let { it.banner = "${names[setterIdx]}: ANSWER TO EARN BARRIERS"; it.invalidate() }
+            showQuiz()
+            nextQuestion()
+        } else {
+            lockBarriers(false)
+            setControl("DONE")
+            hud?.let { it.banner = "${names[setterIdx]}: SET TRAPS"; it.invalidate() }
+        }
+    }
+
+    // ---------- math quiz ----------
+
+    private fun showQuiz() {
+        val q = QuizView(this)
+        val lp = params(sw - (32 * d).toInt(), (300 * d).toInt())
+        lp.x = (16 * d).toInt()
+        lp.y = (sh * 0.22f).toInt()
+        q.onPick = { i -> onAnswer(i) }
+        wm.addView(q, lp)
+        quiz = q
+    }
+
+    private fun dismissQuiz() {
+        quiz?.let { wm.removeView(it) }
+        quiz = null
+    }
+
+    private fun nextQuestion() {
+        val q = quiz ?: return
+        val a = Random.nextInt(2, 11)
+        val b = Random.nextInt(2, 11)
+        val ans = a * b
+        val opts = LinkedHashSet<Int>()
+        opts.add(ans)
+        val cands = listOf(ans + a, ans - a, ans + b, ans - b, ans + 10, ans - 10, ans + 1, ans - 1)
+        for (c in cands.shuffled()) {
+            if (c > 0 && opts.size < 4) opts.add(c)
+        }
+        var extra = 2
+        while (opts.size < 4) {
+            opts.add(ans + extra)
+            extra++
+        }
+        val list = opts.toMutableList()
+        list.shuffle()
+        q.title = "${names[setterIdx]}: question ${quizIdx + 1} of 3   (${earned} earned)"
+        q.question = "$a \u00D7 $b = ?"
+        q.options = list.map { it.toString() }
+        q.correct = list.indexOf(ans)
+        q.selected = -1
+        q.invalidate()
+    }
+
+    private fun onAnswer(i: Int) {
+        val q = quiz ?: return
+        if (i == q.correct) earned++
+        handler.postDelayed({
+            if (quizIdx >= 2) {
+                finishQuiz()
+            } else {
+                quizIdx++
+                nextQuestion()
+            }
+        }, 1400)
+    }
+
+    private fun finishQuiz() {
+        dismissQuiz()
+        val n = earned
+        for (k in 0 until n) addBarrier(forced = true, slot = k)
+        hud?.let {
+            it.banner = if (n > 0) {
+                "${names[setterIdx]}: PLACE YOUR $n BARRIER" + (if (n == 1) "" else "S")
+            } else {
+                "${names[setterIdx]}: NO BARRIERS EARNED"
+            }
             it.invalidate()
         }
+        setControl("DONE")
+    }
+
+    private fun removeAllBarriers() {
+        for (b in barriers) {
+            if (!b.removed) {
+                b.removed = true
+                wm.removeView(b.view)
+            }
+        }
+        barriers.clear()
     }
 
     private fun startPlay() {
@@ -387,12 +485,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     // ---------- barriers ----------
 
-    private fun addBarrier() {
-        if (twoPlayer && phase == phasePlay) return
+    private fun addBarrier(forced: Boolean = false, slot: Int = 0) {
+        if (!forced && twoPlayer && (phase == phasePlay || mathMode)) return
         val v = BarrierView(this)
         val lp = params((150 * d).toInt(), (40 * d).toInt())
         lp.x = (sw / 2f - 75 * d).toInt()
-        lp.y = (sh * 0.5f).toInt()
+        lp.y = (sh * 0.42f + slot * 55 * d).toInt()
         val b = Barrier(v, lp)
         val widths = floatArrayOf(90f, 150f, 230f)
         var wi = 1
@@ -519,6 +617,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         Choreographer.getInstance().removeFrameCallback(this)
         handler.removeCallbacksAndMessages(null)
         if (::wm.isInitialized) {
+            dismissQuiz()
             for (b in barriers) if (!b.removed) wm.removeView(b.view)
             barriers.clear()
             sv?.let { wm.removeView(it) }

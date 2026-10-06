@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -24,6 +25,7 @@ class MainActivity : Activity() {
     private val pickCode = 7
     private lateinit var n1: EditText
     private lateinit var n2: EditText
+    private lateinit var mathBox: CheckBox
 
     private fun send(cls: Class<*>, action: String?) {
         if (!Settings.canDrawOverlays(this)) {
@@ -44,7 +46,7 @@ class MainActivity : Activity() {
     private fun saveNames() {
         val a = n1.text.toString().trim().take(12).ifEmpty { "Player 1" }
         val b = n2.text.toString().trim().take(12).ifEmpty { "Player 2" }
-        getSharedPreferences("betito", MODE_PRIVATE).edit().putString("p1", a).putString("p2", b).apply()
+        getSharedPreferences("betito", MODE_PRIVATE).edit().putString("p1", a).putString("p2", b).putBoolean("math", mathBox.isChecked).apply()
     }
 
     override fun onCreate(b: Bundle?) {
@@ -67,6 +69,11 @@ class MainActivity : Activity() {
         n2 = EditText(this).apply { hint = "Player 2 name"; setSingleLine(); setText(sp.getString("p2", "Player 2")) }
         box.addView(n1)
         box.addView(n2)
+        mathBox = CheckBox(this).apply {
+            text = "Setter answers 3 math questions to earn barriers"
+            isChecked = sp.getBoolean("math", true)
+        }
+        box.addView(mathBox)
         box.btn("Start 2 player game") { saveNames(); send(ShotService::class.java, "SHOT_2P") }
 
         box.section("GAME CONTROLS")
