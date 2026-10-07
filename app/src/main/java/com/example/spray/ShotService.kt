@@ -490,7 +490,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
         val vn = vx * nx + vy * ny
         if (vn < 0f) {
-            hit(-vn, qx, qy, nx, ny, kind)
+            hit(-vn, cx - nx * r, cy - ny * r, nx, ny, kind)
             vx -= (1 + bounce) * vn * nx
             vy -= (1 + bounce) * vn * ny
         }
