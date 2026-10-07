@@ -391,7 +391,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     // ---------- steering ----------
 
-    /** Keep the speed constant and make sure he always travels up and down the room. */
+    /** Keep the speed constant. Steering decides the direction, including straight sideways. */
     private fun normalizeVel() {
         var sp = hypot(vx, vy)
         if (sp < 0.001f) {
@@ -401,12 +401,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
         vx = vx / sp * speed
         vy = vy / sp * speed
-        val minVy = 0.22f * speed
-        if (abs(vy) < minVy) {
-            vy = if (vy < 0f) -minVy else minVy
-            val rest = sqrt(max(0f, speed * speed - vy * vy))
-            vx = if (vx < 0f) -rest else rest
-        }
     }
 
     private fun applyPos() {
