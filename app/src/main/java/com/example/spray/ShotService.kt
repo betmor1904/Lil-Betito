@@ -62,7 +62,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var lastNs = 0L
     private var speed = 0f
     private var lastHitMs = 0L
-    private var slowUntil = 0L
+    private var steering = false
+    private var steerX = 0f
+    private var steerY = 0f
 
     // room
     private var floorStartY = 0f
@@ -75,7 +77,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var level = 1
     private var best = 0
     private var score = 0
-    private var nudgesLeft = 3
     private var launched = false
     private var over = false
     private var combo = 0
@@ -172,11 +173,18 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(pv, params(sw, sh, touchable = false))
         parts = pv
 
-        // full-screen layer that catches nudge taps while the turtle is flying
+        // full-screen layer: hold your finger down and the turtle is pulled toward it
         val tv = View(this)
-        tlp = params(sw, sh, touchable = false)
+        tlp = params(sw, sh)
         tv.setOnTouchListener { _, e ->
-            if (e.action == MotionEvent.ACTION_DOWN) nudge(e.rawX, e.rawY)
+            when (e.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    steerX = e.rawX
+                    steerY = e.rawY
+                    steering = !over
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> steering = false
+            }
             true
         }
         wm.addView(tv, tlp)
@@ -192,41 +200,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
         val v = ShotView(this)
         v.radiusPx = r
-        slp = params((112 * d).toInt(), (112 * d).toInt())
-        var dx0 = 0f
-        var dy0 = 0f
-        v.setOnTouchListener { _, e ->
-            if (over) return@setOnTouchListener true
-            if (launched) {
-                if (e.action == MotionEvent.ACTION_DOWN) nudge(e.rawX, e.rawY)
-                return@setOnTouchListener true
-            }
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> { dx0 = e.rawX; dy0 = e.rawY }
-                MotionEvent.ACTION_MOVE -> {
-                    val dragX = dx0 - e.rawX
-                    val dragY = dy0 - e.rawY
-                    if (abs(dragX) > abs(dragY) && abs(dragY) < 40 * d) {
-                        moveBeto(e.rawX)
-                        dx0 = e.rawX
-                        dy0 = e.rawY
-                    } else {
-                        aim(dragX, dragY)
-                    }
-                }
-                MotionEvent.ACTION_UP -> {
-                    val dragX = dx0 - e.rawX
-                    val dragY = dy0 - e.rawY
-                    if (abs(dragX) > abs(dragY) && abs(dragY) < 40 * d) {
-                        moveBeto(e.rawX)
-                    } else {
-                        fire(dragX, dragY)
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> clearAim()
-            }
-            true
-        }
+        slp = params((112 * d).toInt(), (112 * d).toInt(), touchable = false)
         cx = sw / 2f
         cy = floorY - r
         slp.x = (cx - 56 * d).toInt()
@@ -249,15 +223,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
         stopFx()
         clearObstacles()
         floorY = floorStartY
-        launched = false
+        launched = true
         over = false
-        nudgesLeft = 3
+        steering = false
         combo = 0
         cx = sw / 2f
         cy = floorY - r
-        vx = 0f
-        vy = 0f
-        speed = 0f
+        // he is moving the moment the room appears, at one constant speed
+        speed = 9f * d
+        vx = speed * 0.4f * (if (Random.nextBoolean()) 1f else -1f)
+        vy = -speed * 0.8f
+        normalizeVel()
 
         // the gap gets smaller and sits somewhere new every level
         val gapW = max(2 * r + 14f * d, 90f * d - (level - 1) * 5f * d)
@@ -267,11 +243,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         gapR = center + gapW / 2f
 
         spawnObstacles()
-        setTapActive(false)
         sv?.let { it.heading = -90f; it.radiusPx = r; it.invalidate() }
         pushHud()
-        hud?.let { it.banner = "DRAG BACK AND LET GO. FARTHER = FASTER"; it.message = "LEVEL $level"; it.invalidate() }
+        hud?.let { it.banner = "HOLD YOUR FINGER DOWN TO PULL HIM"; it.message = "LEVEL $level"; it.invalidate() }
         handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1400)
+        handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 5000)
         applyPos()
         moveMascot()
     }
@@ -285,9 +261,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.best = best
             it.score = score
             it.worth = worth()
-            it.nudgesLeft = nudgesLeft
             it.combo = combo
-            it.dots = FloatArray(0)
             it.invalidate()
         }
     }
@@ -314,6 +288,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
         return tier * mult
     }
+
+    /** How hard your finger pulls him. He keeps his speed, so this only changes his direction. */
+    private fun steerForce(): Float = 0.7f * d
 
     private fun riseSpeed(): Float = min(0.9f, 0.28f + 0.04f * (level - 1)) * d
 
@@ -364,21 +341,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         parts?.smash(mx, my)
     }
 
-    private fun setTapActive(on: Boolean) {
-        val t = tapLayer ?: return
-        tlp.flags = if (on) {
-            tlp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
-            tlp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-        wm.updateViewLayout(t, tlp)
-    }
-
     private fun levelClear() {
         over = true
         vx = 0f
         vy = 0f
-        setTapActive(false)
+        steering = false
         val pts = worth()
         score += pts
         if (score > best) {
@@ -397,7 +364,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         over = true
         vx = 0f
         vy = 0f
-        setTapActive(false)
+        steering = false
+        if (score > best) {
+            best = score
+            getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
+        }
         snd("lose")
         mascot?.play(MascotView.Move.FACEPALM, "SQUISHED!")
         hud?.let { it.banner = "FINAL SCORE $score  (LEVEL $level)"; it.message = "SQUISHED!"; it.invalidate() }
@@ -418,46 +389,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         fx = null
     }
 
-    // ---------- aiming, launching and nudging ----------
-
-    private fun maxSpeed(): Float = 15f * d
-
-    /** Drag farther = faster. Once launched he keeps that speed for the whole level. */
-    private fun launchV(px: Float, py: Float): FloatArray? {
-        val len = hypot(px, py)
-        if (len < 20 * d) return null
-        val sp = max(3f * d, min(len, 150f * d) / (150f * d) * maxSpeed())
-        return floatArrayOf(px / len * sp, py / len * sp)
-    }
-
-    private fun clearAim() {
-        hud?.let { it.dots = FloatArray(0); it.invalidate() }
-        sv?.let { it.heading = -90f; it.invalidate() }
-    }
-
-    private fun aim(px: Float, py: Float) {
-        val h = hud ?: return
-        val s = sv
-        val v = launchV(px, py)
-        if (v == null) {
-            h.dots = FloatArray(0)
-            s?.heading = -90f
-        } else {
-            val sp = hypot(v[0], v[1])
-            val ux = v[0] / sp
-            val uy = v[1] / sp
-            val n = 4 + (sp / maxSpeed() * 10f).toInt()
-            val pts = ArrayList<Float>()
-            for (i in 1..n) {
-                pts.add(cx + ux * i * 18f * d)
-                pts.add(cy + uy * i * 18f * d)
-            }
-            h.dots = pts.toFloatArray()
-            s?.heading = Math.toDegrees(atan2(v[1].toDouble(), v[0].toDouble())).toFloat()
-        }
-        h.invalidate()
-        s?.invalidate()
-    }
+    // ---------- steering ----------
 
     /** Keep the speed constant and make sure he always travels up and down the room. */
     private fun normalizeVel() {
@@ -475,68 +407,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
             val rest = sqrt(max(0f, speed * speed - vy * vy))
             vx = if (vx < 0f) -rest else rest
         }
-    }
-
-    private fun fire(px: Float, py: Float) {
-        val v = launchV(px, py)
-        hud?.let { it.dots = FloatArray(0); it.invalidate() }
-        if (v == null) {
-            clearAim()
-            return
-        }
-        vx = v[0]
-        vy = v[1]
-        speed = hypot(vx, vy)
-        normalizeVel()
-        launched = true
-        combo = 0
-        setTapActive(true)
-        snd("launch", 0.6f)
-        val voice = voices.random()
-        snd(voice, 1f)
-        mascot?.play(MascotView.randomFunny(), if (voice == "letsgo") "LET'S GOOO!" else "WEEEE!")
-        hud?.let { it.banner = "TAP TO NUDGE HIM INTO THE GAP"; it.invalidate() }
-    }
-
-    /** Tap anywhere: he gets pushed away from your tap, which turns him. His speed stays the same. */
-    private fun nudge(tx: Float, ty: Float) {
-        if (!launched || over || nudgesLeft <= 0) return
-        nudgesLeft--
-        var dx = cx - tx
-        var dy = cy - ty
-        val len = hypot(dx, dy)
-        if (len < 6 * d) {
-            dx = 0f
-            dy = -1f
-        } else {
-            dx /= len
-            dy /= len
-        }
-        vx += dx * speed * 4f
-        vy += dy * speed * 4f
-        normalizeVel()
-        sfx?.play("launch", 1f, 0L, 1.7f)
-        sv?.kick()
-        buzz(30L)
-        slowUntil = SystemClock.uptimeMillis() + 100L
-        parts?.burst(cx - dx * r, cy - dy * r, -dx, -dy, 10f * d, false, 3)
-        hud?.let { it.nudgesLeft = nudgesLeft; it.invalidate() }
-    }
-
-    private fun buzz(ms: Long) {
-        try {
-            val vib = getSystemService(android.os.Vibrator::class.java)
-            vib?.vibrate(android.os.VibrationEffect.createOneShot(ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-        } catch (e: Exception) {
-        }
-    }
-
-    private fun moveBeto(x: Float) {
-        val minX = r + 20 * d
-        val maxX = sw - r - 20 * d
-        cx = x.coerceIn(minX, maxX)
-        cy = floorY - r
-        applyPos()
     }
 
     private fun applyPos() {
@@ -593,7 +463,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 if (combo >= 2) sfx?.play("ding", 0.5f * sp + 0.2f, 60L, rate)
             }
         }
-        hud?.let { it.combo = combo; it.invalidate() }
+        score += 10
+        hud?.let { it.combo = combo; it.score = score; it.invalidate() }
         parts?.burst(x, y, nx, ny, speed, kind == kObstacle, combo)
         if (combo == 3 || combo == 5 || combo == 8) {
             snd("woo", 0.9f)
@@ -633,9 +504,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     override fun doFrame(ns: Long) {
         val s = sv ?: return
-        val dt0 = if (lastNs == 0L) 1f else ((ns - lastNs) / 16_666_667f).coerceAtMost(2f)
+        val dt = if (lastNs == 0L) 1f else ((ns - lastNs) / 16_666_667f).coerceAtMost(2f)
         lastNs = ns
-        val dt = if (SystemClock.uptimeMillis() < slowUntil) dt0 * 0.5f else dt0
 
         if (launched && !over) {
             val hdt = dt / 3f
@@ -677,6 +547,15 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     val t = b.lp.y.toFloat()
                     collide(l, t, l + b.lp.width, t + b.lp.height, kObstacle)
                 }
+                if (steering) {
+                    val sdx = steerX - cx
+                    val sdy = steerY - cy
+                    val sl = hypot(sdx, sdy)
+                    if (sl > 20 * d) {
+                        vx += sdx / sl * steerForce() * hdt
+                        vy += sdy / sl * steerForce() * hdt
+                    }
+                }
                 normalizeVel()
 
                 val inGap = cx > gapL + 4 * d && cx < gapR - 4 * d
@@ -689,8 +568,25 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
                 if (combo > 0 && SystemClock.uptimeMillis() - lastHitMs > 1500L) combo = 0
-                s.heading = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
-                hud?.let { it.floorY = floorY; it.worth = worth(); it.combo = combo; it.invalidate() }
+                var hd = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
+                if (steering) {
+                    var diff = Math.toDegrees(atan2((steerY - cy).toDouble(), (steerX - cx).toDouble())).toFloat() - hd
+                    while (diff > 180f) diff -= 360f
+                    while (diff < -180f) diff += 360f
+                    hd += (diff * 0.3f).coerceIn(-15f, 15f)
+                }
+                s.heading = hd
+                hud?.let {
+                    it.floorY = floorY
+                    it.worth = worth()
+                    it.combo = combo
+                    it.steerOn = steering
+                    it.sx0 = cx
+                    it.sy0 = cy
+                    it.sx1 = steerX
+                    it.sy1 = steerY
+                    it.invalidate()
+                }
                 moveMascot()
             }
             applyPos()

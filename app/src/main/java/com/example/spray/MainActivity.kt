@@ -72,17 +72,14 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play: drag Lil Betito back and let go to launch him. The farther you drag, " +
-                "the faster he goes, and he keeps that speed for the whole level. He zooms back and " +
-                "forth between the floor and the ceiling, and every bump makes noise (obstacles are " +
-                "the loudest). When he bumps something he tucks into his shell, then pops back out. " +
-                "You get 3 nudges per level: tap anywhere and he gets pushed away from your tap, " +
-                "which turns him. Steer him through the green gap in the ceiling to reach the next " +
-                "room. The floor keeps rising, and the higher it gets, the riskier the escape and the " +
-                "more it pays: 100, 300 or 600 points, and 1000 right at the last moment. Later " +
-                "rooms multiply it: rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x. Every level the " +
-                "floor rises faster, the gap shrinks and there are more obstacles. If the floor " +
-                "squishes him, the game starts over."
+            text = "\nHow to play: Lil Betito is always moving at one steady speed. Put your finger " +
+                "down anywhere and he is pulled toward it. Lift your finger and he keeps going. " +
+                "Steer him up through the green gap in the ceiling before the floor rises and " +
+                "squishes him. Every bounce is worth 10 points and makes noise (obstacles are the " +
+                "loudest). An escape pays 100, 300 or 600 points, and 1000 at the last moment, " +
+                "because the higher the floor, the riskier it is. Rooms 6-10 are 2x, 11-20 are 3x " +
+                "and 21+ are 5x. Every level the floor rises faster, the gap shrinks and there " +
+                "are more obstacles. If the floor squishes him, the game starts over."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

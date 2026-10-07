@@ -23,8 +23,11 @@ class HudView(ctx: Context) : View(ctx) {
     var best = 0
     var score = 0
     var worth = 0
-    var nudgesLeft = 3
-    var dots = FloatArray(0)
+    var steerOn = false
+    var sx0 = 0f
+    var sy0 = 0f
+    var sx1 = 0f
+    var sy1 = 0f
     var message: String? = null
     var banner: String? = null
     var combo = 0
@@ -113,31 +116,25 @@ class HudView(ctx: Context) : View(ctx) {
         c.drawText("WORTH $worth", 14 * d, ceilY + 82 * d, p)
         p.clearShadowLayer()
 
-        // nudges left
-        for (i in 0 until 3) {
-            p.color = if (i < nudgesLeft) Color.parseColor("#E040FB") else Color.argb(90, 255, 255, 255)
-            c.drawCircle(24 * d + i * 30 * d, ceilY + 106 * d, 10 * d, p)
-        }
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
-        p.color = Color.WHITE
-        p.textSize = 11 * d
-        c.drawText("NUDGES $nudgesLeft", 12 * d, ceilY + 134 * d, p)
 
         // banner
         p.textAlign = Paint.Align.CENTER
         val b = banner
         if (b != null) {
             p.color = Color.WHITE
-            fitText(c, b, w / 2, ceilY + 156 * d, 15 * d, w * 0.9f)
+            fitText(c, b, w / 2, ceilY + 112 * d, 15 * d, w * 0.9f)
         }
         p.clearShadowLayer()
 
-        // aim dots
-        p.color = Color.WHITE
-        var i = 0
-        while (i + 1 < dots.size) {
-            c.drawCircle(dots[i], dots[i + 1], max(2 * d, 5 * d - (i / 2) * 0.25f * d), p)
-            i += 2
+        // line from the turtle to your finger while you steer
+        if (steerOn) {
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.color = Color.argb(110, 255, 255, 255)
+            c.drawLine(sx0, sy0, sx1, sy1, p)
+            p.style = Paint.Style.FILL
+            c.drawCircle(sx1, sy1, 10 * d, p)
         }
 
         // combo counter
