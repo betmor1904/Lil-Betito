@@ -27,7 +27,15 @@ import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.random.Random
 
-private class Barrier(val view: BarrierView, val lp: WindowManager.LayoutParams, var removed: Boolean = false)
+private class Barrier(
+    val view: BarrierView,
+    val lp: WindowManager.LayoutParams,
+    val coin: Boolean = false,
+    var removed: Boolean = false,
+    var coinSpawned: Boolean = false
+)
+
+private class Coin(val view: CoinView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float)
 
 /**
  * Lil Betito: launch the turtle, let him ricochet around the room, and use 3 nudges per
@@ -51,6 +59,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private lateinit var tlp: WindowManager.LayoutParams
     private lateinit var mlp: WindowManager.LayoutParams
     private val obstacles = ArrayList<Barrier>()
+    private val coins = ArrayList<Coin>()
+    private var lastNx = 0f
+    private var lastNy = -1f
     private val handler = Handler(Looper.getMainLooper())
 
     // turtle physics (velocities are pixels per 60fps frame)
@@ -100,6 +111,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private val kWall = 1
     private val kObstacle = 2
     private val kCeil = 3
+    private val kCoinBrick = 4
     private val bounce = 1f
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -372,12 +384,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 if (clear) break
             }
             placed.add(floatArrayOf(x.toFloat(), y.toFloat()))
+            val isCoin = i % 3 == 1
             val bv = BarrierView(this)
+            bv.coin = isCoin
             val lp = params(w, (24 * d).toInt(), touchable = false)
             lp.x = x
             lp.y = y
             wm.addView(bv, lp)
-            obstacles.add(Barrier(bv, lp))
+            obstacles.add(Barrier(bv, lp, isCoin))
         }
     }
 
@@ -389,6 +403,37 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
         }
         obstacles.clear()
+        for (c in coins) wm.removeView(c.view)
+        coins.clear()
+    }
+
+    /** A coin pops out of a coin brick, in the direction he bounced. */
+    private fun spawnCoin() {
+        val x = (cx + lastNx * 60 * d).coerceIn(r + 10 * d, sw - r - 10 * d)
+        val y = (cy + lastNy * 60 * d).coerceIn(ceilY + 20 * d, max(ceilY + 21 * d, floorY - 30 * d))
+        val size = (22 * d).toInt()
+        val cv = CoinView(this)
+        val lp = params(size, size, touchable = false)
+        lp.x = (x - size / 2f).toInt()
+        lp.y = (y - size / 2f).toInt()
+        wm.addView(cv, lp)
+        coins.add(Coin(cv, lp, x, y))
+        snd("pop", 0.7f, 100L)
+    }
+
+    private fun collectCoins() {
+        for (c in coins.toList()) {
+            if (hypot(cx - c.x, cy - c.y) < r + 12 * d) {
+                wm.removeView(c.view)
+                coins.remove(c)
+                score += 25
+                snd("coin", 1f, 40L)
+                hud?.let { it.score = score; it.invalidate() }
+            } else if (floorY <= c.y + 12 * d) {
+                wm.removeView(c.view)
+                coins.remove(c)
+            }
+        }
     }
 
     /** The rising floor smashes any obstacle it reaches. */
@@ -506,7 +551,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         lastHitMs = SystemClock.uptimeMillis()
         sv?.bump()
         val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
-        if (kind != kObstacle) snd("tick", 0.15f + 0.2f * sp, 40L)
+        if (kind != kObstacle && kind != kCoinBrick) snd("tick", 0.15f + 0.2f * sp, 40L)
         if (kind == kFloor) {
             parts?.burst(x, y, nx, ny, speed, false, 0)
             return
@@ -516,14 +561,18 @@ class ShotService : Service(), Choreographer.FrameCallback {
             snd("bonk", 0.7f + 0.3f * sp, 120L)
             sfx?.play("clink", 0.6f + 0.3f * sp, 60L)
         }
+        if (kind == kCoinBrick) {
+            snd("bonk", 0.5f + 0.2f * sp, 120L)
+            sfx?.play("coin", 1f, 60L, 1.3f)
+        }
         when {
             combo >= 8 -> sfx?.play("siren", 1f, 500L)
             combo >= 5 -> sfx?.play("ding", 0.9f, 80L, 1f + 0.1f * (combo - 5))
             combo >= 3 -> sfx?.play("coin", 0.9f, 80L)
         }
-        score += 10
+        score += if (kind == kCoinBrick) 50 else 10
         hud?.let { it.combo = combo; it.score = score; it.invalidate() }
-        parts?.burst(x, y, nx, ny, speed, kind == kObstacle, combo)
+        parts?.burst(x, y, nx, ny, speed, kind == kObstacle || kind == kCoinBrick, combo)
         if (combo == 3 || combo == 5 || combo == 8) {
             val dance = arrayOf(MascotView.Move.TWERK, MascotView.Move.FLOSS, MascotView.Move.SPIN).random()
             mascot?.play(dance, if (combo == 3) "WOO!" else if (combo == 5) "COMBO!" else "UNREAL!")
@@ -533,13 +582,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
     // ---------- physics loop ----------
 
     /** Circle-vs-rectangle bounce for the ceiling pieces and the obstacles. */
-    private fun collide(l: Float, t: Float, rr: Float, bb: Float, kind: Int) {
+    private fun collide(l: Float, t: Float, rr: Float, bb: Float, kind: Int): Boolean {
         val qx = cx.coerceIn(l, rr)
         val qy = cy.coerceIn(t, bb)
         val dx = cx - qx
         val dy = cy - qy
         val d2 = dx * dx + dy * dy
-        if (d2 >= r * r) return
+        if (d2 >= r * r) return false
         var nx = 0f
         var ny = -1f
         if (d2 > 0.0001f) {
@@ -556,7 +605,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
             hit(-vn, cx - nx * r, cy - ny * r, nx, ny, kind)
             vx -= (1 + bounce) * vn * nx
             vy -= (1 + bounce) * vn * ny
+            lastNx = nx
+            lastNy = ny
+            return true
         }
+        return false
     }
 
     override fun doFrame(ns: Long) {
@@ -609,7 +662,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 for (b in obstacles) {
                     val l = b.lp.x.toFloat()
                     val t = b.lp.y.toFloat()
-                    collide(l, t, l + b.lp.width, t + b.lp.height, kObstacle)
+                    val bounced = collide(l, t, l + b.lp.width, t + b.lp.height, if (b.coin) kCoinBrick else kObstacle)
+                    if (bounced && b.coin && !b.coinSpawned) {
+                        b.coinSpawned = true
+                        spawnCoin()
+                    }
                 }
                 if (steering) {
                     // two fingers: pull along anchor -> finger 2. One finger: pull toward it.
@@ -629,6 +686,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
 
             if (!over) {
+                collectCoins()
                 for (b in obstacles.toList()) {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
