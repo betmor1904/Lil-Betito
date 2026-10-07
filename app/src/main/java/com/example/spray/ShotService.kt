@@ -62,6 +62,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var lastNs = 0L
     private var speed = 0f
     private var lastHitMs = 0L
+    private var levelStartMs = 0L
     private var steering = false
     private var steerX = 0f
     private var steerY = 0f
@@ -228,6 +229,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         launched = true
         over = false
         steering = false
+        levelStartMs = SystemClock.uptimeMillis()
         combo = 0
         cx = sw / 2f
         cy = floorY - r
@@ -351,7 +353,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
         vy = 0f
         steering = false
         val pts = worth()
-        score += pts
+        val secs = (SystemClock.uptimeMillis() - levelStartMs) / 1000f
+        val bonus = when {
+            secs < 5f -> 500
+            secs < 8f -> 250
+            secs < 12f -> 100
+            else -> 0
+        }
+        score += pts + bonus
         if (score > best) {
             best = score
             getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
@@ -359,7 +368,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         snd("jackpot")
         mascot?.play(MascotView.Move.BACKFLIP, "ESCAPED!")
         showFx()
-        hud?.let { it.banner = null; it.message = "LEVEL $level CLEARED! +$pts"; it.score = score; it.best = best; it.invalidate() }
+        hud?.let { it.banner = if (bonus > 0) "SPEED BONUS +$bonus" else null; it.message = "LEVEL $level CLEARED! +${pts + bonus}"; it.score = score; it.best = best; it.invalidate() }
         level++
         handler.postDelayed({ startLevel() }, 2200)
     }
