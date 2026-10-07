@@ -63,6 +63,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var speed = 0f
     private var lastHitMs = 0L
     private var levelStartMs = 0L
+    private var dying = false
+    private var dyingUntil = 0L
     private var steering = false
     private var steerX = 0f
     private var steerY = 0f
@@ -230,6 +232,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         over = false
         steering = false
         levelStartMs = SystemClock.uptimeMillis()
+        dying = false
         combo = 0
         cx = sw / 2f
         cy = floorY - r
@@ -365,7 +368,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             best = score
             getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
         }
-        snd("jackpot")
+        snd("fanfare")
         mascot?.play(MascotView.Move.BACKFLIP, "ESCAPED!")
         showFx()
         hud?.let { it.banner = if (bonus > 0) "SPEED BONUS +$bonus" else null; it.message = "LEVEL $level CLEARED! +${pts + bonus}"; it.score = score; it.best = best; it.invalidate() }
@@ -382,7 +385,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
             best = score
             getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
         }
-        snd("lose")
+        snd("squish")
+        sv?.bump()
+        dying = true
+        dyingUntil = SystemClock.uptimeMillis() + 900L
         mascot?.play(MascotView.Move.FACEPALM, "SQUISHED!")
         hud?.let { it.banner = "FINAL SCORE $score  (LEVEL $level)"; it.message = "SQUISHED!"; it.invalidate() }
         handler.postDelayed({ newGame() }, 3000)
@@ -439,42 +445,34 @@ class ShotService : Service(), Choreographer.FrameCallback {
     }
 
     /**
-     * Every bump makes noise. The floor is a soft thud, walls and the ceiling are a bonk,
-     * and the obstacles are loudest: bonk + a climbing casino ding + a coin.
+     * Sounds go by rarity. Plain walls, the ceiling and the floor are a soft tick. Obstacles
+     * are a bonk plus a chip clink. Then the combo adds rarer sounds on top: coin drop at 3-4,
+     * slot ding at 5-7 and a jackpot siren at 8+.
      */
     private fun hit(speed: Float, x: Float, y: Float, nx: Float, ny: Float, kind: Int) {
         if (speed <= 2.5f * d) return
         lastHitMs = SystemClock.uptimeMillis()
         sv?.bump()
         val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
+        if (kind != kObstacle) snd("tick", 0.15f + 0.2f * sp, 40L)
         if (kind == kFloor) {
-            snd("thud", 0.25f + 0.25f * sp, 120L)
             parts?.burst(x, y, nx, ny, speed, false, 0)
             return
         }
         combo++
-        val semis = pent[min(combo - 1, pent.size - 1)]
-        val rate = Math.pow(2.0, semis / 12.0).toFloat()
-        when (kind) {
-            kObstacle -> {
-                snd("bonk", 0.7f + 0.3f * sp, 120L)
-                sfx?.play("ding", 0.8f + 0.2f * sp, 60L, rate)
-                sfx?.play("coin", 0.8f, 100L)
-            }
-            kCeil -> {
-                snd("bonk", 0.5f + 0.3f * sp, 120L)
-                sfx?.play("ding", 0.4f + 0.3f * sp, 60L, rate)
-            }
-            else -> {
-                snd("bonk", 0.4f + 0.35f * sp, 120L)
-                if (combo >= 2) sfx?.play("ding", 0.5f * sp + 0.2f, 60L, rate)
-            }
+        if (kind == kObstacle) {
+            snd("bonk", 0.7f + 0.3f * sp, 120L)
+            sfx?.play("clink", 0.6f + 0.3f * sp, 60L)
+        }
+        when {
+            combo >= 8 -> sfx?.play("siren", 1f, 500L)
+            combo >= 5 -> sfx?.play("ding", 0.9f, 80L, 1f + 0.1f * (combo - 5))
+            combo >= 3 -> sfx?.play("coin", 0.9f, 80L)
         }
         score += 10
         hud?.let { it.combo = combo; it.score = score; it.invalidate() }
         parts?.burst(x, y, nx, ny, speed, kind == kObstacle, combo)
         if (combo == 3 || combo == 5 || combo == 8) {
-            snd("woo", 0.9f)
             val dance = arrayOf(MascotView.Move.TWERK, MascotView.Move.FLOSS, MascotView.Move.SPIN).random()
             mascot?.play(dance, if (combo == 3) "WOO!" else if (combo == 5) "COMBO!" else "UNREAL!")
         }
@@ -606,6 +604,16 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
             applyPos()
             s.invalidate()
+        }
+        if (over && dying) {
+            // death in slow motion: the floor crawls up over him
+            if (SystemClock.uptimeMillis() > dyingUntil) {
+                dying = false
+            } else {
+                floorY -= riseSpeed() * 0.15f * dt
+                hud?.let { it.floorY = floorY; it.invalidate() }
+                moveMascot()
+            }
         }
         Choreographer.getInstance().postFrameCallback(this)
     }
