@@ -72,6 +72,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var ceilY = 0f
     private var gapL = 0f
     private var gapR = 0f
+    private var gapC = 0f
+    private var gapW0 = 0f
 
     // game state
     private var level = 1
@@ -239,6 +241,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val gapW = max(2 * r + 14f * d, 90f * d - (level - 1) * 5f * d)
         val margin = 20f * d
         val center = margin + gapW / 2f + Random.nextFloat() * (sw - 2 * margin - gapW)
+        gapC = center
+        gapW0 = gapW
         gapL = center - gapW / 2f
         gapR = center + gapW / 2f
 
@@ -508,6 +512,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
             val topBar = ceilY - ct
             for (step in 0 until 3) {
                 floorY -= rise * hdt
+
+                // the exit closes in toward its center by up to 40% as the floor climbs
+                val prog = ((floorStartY - floorY) / (floorStartY - (ceilY + 2 * r))).coerceIn(0f, 1f)
+                val gw = max(2 * r + 8f * d, gapW0 * (1f - 0.4f * prog))
+                gapL = gapC - gw / 2f
+                gapR = gapC + gw / 2f
                 cx += vx * hdt
                 cy += vy * hdt
 
@@ -572,6 +582,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 s.heading = hd
                 hud?.let {
                     it.floorY = floorY
+                    it.gapL = gapL
+                    it.gapR = gapR
                     it.worth = worth()
                     it.combo = combo
                     it.steerOn = steering
