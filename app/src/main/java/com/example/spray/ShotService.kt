@@ -526,6 +526,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 // the floor is moving up, so bounce relative to it
                 if (cy > floorY - r) {
                     cy = floorY - r
+                    combo = 0
                     val rel = vy + rise
                     if (rel > 0f) {
                         hit(rel, cx, floorY, 0f, -1f, kFloor)
@@ -561,7 +562,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 for (b in obstacles.toList()) {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
-                if (combo > 0 && SystemClock.uptimeMillis() - lastHitMs > 1500L) combo = 0
                 var hd = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
                 if (steering) {
                     var diff = Math.toDegrees(atan2((steerY - cy).toDouble(), (steerX - cx).toDouble())).toFloat() - hd
