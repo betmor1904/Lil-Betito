@@ -72,13 +72,17 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play: drag Lil Betito back and let go to launch him. Slide left or right " +
-                "along the floor first to pick where he starts. Once he's flying he ricochets off the walls, " +
-                "the ceiling and the obstacles, and every bump makes noise. Obstacles are the loudest and " +
-                "most rewarding. The floor rises slowly, so you have 3 nudges per level: tap anywhere and " +
-                "Lil Betito gets pushed away from your tap. Steer him up through the green gap in the " +
-                "ceiling to reach the next room. Every level the floor rises faster, the gap shrinks " +
-                "and there are more obstacles. If the floor squishes him against the ceiling, you start over."
+            text = "\nHow to play: drag Lil Betito back and let go to launch him. The farther you drag, " +
+                "the faster he goes, and he keeps that speed for the whole level. He zooms back and " +
+                "forth between the floor and the ceiling, and every bump makes noise (obstacles are " +
+                "the loudest). When he bumps something he tucks into his shell, then pops back out. " +
+                "You get 3 nudges per level: tap anywhere and he gets pushed away from your tap, " +
+                "which turns him. Steer him through the green gap in the ceiling to reach the next " +
+                "room. The floor keeps rising, and the higher it gets, the riskier the escape and the " +
+                "more it pays: 100, 300 or 600 points, and 1000 right at the last moment. Later " +
+                "rooms multiply it: rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x. Every level the " +
+                "floor rises faster, the gap shrinks and there are more obstacles. If the floor " +
+                "squishes him, the game starts over."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

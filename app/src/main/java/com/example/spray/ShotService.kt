@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
@@ -59,7 +60,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var vy = 0f
     private var r = 0f
     private var lastNs = 0L
-    private var boostFrames = 0
+    private var speed = 0f
+    private var lastHitMs = 0L
 
     // room
     private var floorStartY = 0f
@@ -70,7 +72,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     // game state
     private var level = 1
-    private var best = 1
+    private var best = 0
+    private var score = 0
     private var nudgesLeft = 3
     private var launched = false
     private var over = false
@@ -82,8 +85,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private val kFloor = 0
     private val kWall = 1
     private val kObstacle = 2
-    private val bounce = 0.8f
-    private val floorBounce = 0.7f
+    private val kCeil = 3
+    private val bounce = 1f
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -143,11 +146,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         d = resources.displayMetrics.density
         sw = resources.displayMetrics.widthPixels
         sh = resources.displayMetrics.heightPixels
-        r = 22 * d
+        r = 14 * d
         floorStartY = sh - 70 * d
         floorY = floorStartY
         ceilY = 64 * d
-        best = getSharedPreferences("betito", MODE_PRIVATE).getInt("best_level", 1)
+        best = getSharedPreferences("betito", MODE_PRIVATE).getInt("best_score", 0)
 
         val h = HudView(this)
         h.ceilY = ceilY
@@ -185,6 +188,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         closeBtn = xv
 
         val v = ShotView(this)
+        v.radiusPx = r
         slp = params((112 * d).toInt(), (112 * d).toInt())
         var dx0 = 0f
         var dy0 = 0f
@@ -233,6 +237,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun newGame() {
         level = 1
+        score = 0
         startLevel()
     }
 
@@ -240,10 +245,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         stopFx()
         clearObstacles()
-        if (level > best) {
-            best = level
-            getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_level", best).apply()
-        }
         floorY = floorStartY
         launched = false
         over = false
@@ -253,10 +254,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         cy = floorY - r
         vx = 0f
         vy = 0f
-        boostFrames = 0
+        speed = 0f
 
         // the gap gets smaller and sits somewhere new every level
-        val gapW = max(66f * d, 150f * d - (level - 1) * 10f * d)
+        val gapW = max(2 * r + 14f * d, 90f * d - (level - 1) * 5f * d)
         val margin = 20f * d
         val center = margin + gapW / 2f + Random.nextFloat() * (sw - 2 * margin - gapW)
         gapL = center - gapW / 2f
@@ -264,9 +265,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
         spawnObstacles()
         setTapActive(false)
-        sv?.let { it.angle = 0f; it.boost = false; it.mirror = false; it.rockets = 3; it.power = 0; it.invalidate() }
+        sv?.let { it.heading = -90f; it.radiusPx = r; it.invalidate() }
         pushHud()
-        hud?.let { it.banner = "DRAG BACK AND LET GO TO LAUNCH"; it.message = "LEVEL $level"; it.invalidate() }
+        hud?.let { it.banner = "DRAG BACK AND LET GO. FARTHER = FASTER"; it.message = "LEVEL $level"; it.invalidate() }
         handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1400)
         applyPos()
         moveMascot()
@@ -279,11 +280,36 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.gapR = gapR
             it.level = level
             it.best = best
+            it.score = score
+            it.worth = worth()
             it.nudgesLeft = nudgesLeft
             it.combo = combo
             it.dots = FloatArray(0)
             it.invalidate()
         }
+    }
+
+    /**
+     * Points for escaping right now. The higher the floor has risen, the riskier the escape
+     * and the more it pays: 100 / 300 / 600, and 1000 right at the last moment.
+     * Later rooms multiply it: 1-5 = 1x, 6-10 = 2x, 11-20 = 3x, 21+ = 5x.
+     */
+    private fun worth(): Int {
+        val full = floorStartY - (ceilY + 2 * r)
+        val risen = (1f - (floorY - (ceilY + 2 * r)) / full).coerceIn(0f, 1f)
+        val tier = when {
+            risen >= 0.9f -> 1000
+            risen >= 2f / 3f -> 600
+            risen >= 1f / 3f -> 300
+            else -> 100
+        }
+        val mult = when {
+            level <= 5 -> 1
+            level <= 10 -> 2
+            level <= 20 -> 3
+            else -> 5
+        }
+        return tier * mult
     }
 
     private fun riseSpeed(): Float = min(0.6f, 0.14f + 0.025f * (level - 1)) * d
@@ -349,12 +375,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
         over = true
         vx = 0f
         vy = 0f
-        sv?.let { it.boost = false; it.angle = 0f; it.invalidate() }
         setTapActive(false)
+        val pts = worth()
+        score += pts
+        if (score > best) {
+            best = score
+            getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
+        }
         snd("jackpot")
         mascot?.play(MascotView.Move.BACKFLIP, "ESCAPED!")
         showFx()
-        hud?.let { it.banner = null; it.message = "LEVEL $level CLEARED!"; it.invalidate() }
+        hud?.let { it.banner = null; it.message = "LEVEL $level CLEARED! +$pts"; it.score = score; it.best = best; it.invalidate() }
         level++
         handler.postDelayed({ startLevel() }, 2200)
     }
@@ -363,12 +394,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         over = true
         vx = 0f
         vy = 0f
-        sv?.let { it.boost = false; it.angle = 0f; it.invalidate() }
         setTapActive(false)
         snd("lose")
         mascot?.play(MascotView.Move.FACEPALM, "SQUISHED!")
-        hud?.let { it.banner = "YOU REACHED LEVEL $level"; it.message = "SQUISHED!"; it.invalidate() }
-        handler.postDelayed({ level = 1; startLevel() }, 3000)
+        hud?.let { it.banner = "FINAL SCORE $score  (LEVEL $level)"; it.message = "SQUISHED!"; it.invalidate() }
+        handler.postDelayed({ newGame() }, 3000)
     }
 
     private fun showFx() {
@@ -387,24 +417,19 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     // ---------- aiming, launching and nudging ----------
 
+    private fun maxSpeed(): Float = 15f * d
+
+    /** Drag farther = faster. Once launched he keeps that speed for the whole level. */
     private fun launchV(px: Float, py: Float): FloatArray? {
         val len = hypot(px, py)
         if (len < 20 * d) return null
-        val k = min(len, 150 * d) / len * vmax() / (150 * d)
-        return floatArrayOf(px * k, py * k)
+        val sp = max(3f * d, min(len, 150f * d) / (150f * d) * maxSpeed())
+        return floatArrayOf(px / len * sp, py / len * sp)
     }
-
-    private fun tiltOf(x: Float, y: Float): Float =
-        Math.toDegrees(atan2(y.toDouble(), max(abs(x), 0.1f * d).toDouble())).toFloat()
-
-    /** Speed needed to travel from the starting floor up to the ceiling. */
-    private fun vNeed(): Float = sqrt(2f * 0.55f * d * (floorStartY - 2 * r - ceilY))
-
-    private fun vmax(): Float = vNeed() * 1.1f
 
     private fun clearAim() {
         hud?.let { it.dots = FloatArray(0); it.invalidate() }
-        sv?.let { it.angle = 0f; it.invalidate() }
+        sv?.let { it.heading = -90f; it.invalidate() }
     }
 
     private fun aim(px: Float, py: Float) {
@@ -413,48 +438,64 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val v = launchV(px, py)
         if (v == null) {
             h.dots = FloatArray(0)
-            s?.angle = 0f
+            s?.heading = -90f
         } else {
-            var x = cx
-            var y = cy
-            val ax = v[0]
-            var ay = v[1]
+            val sp = hypot(v[0], v[1])
+            val ux = v[0] / sp
+            val uy = v[1] / sp
+            val n = 4 + (sp / maxSpeed() * 10f).toInt()
             val pts = ArrayList<Float>()
-            for (i in 1..30) {
-                x += ax
-                y += ay
-                ay += 0.55f * d
-                if (i % 2 == 0) { pts.add(x); pts.add(y) }
+            for (i in 1..n) {
+                pts.add(cx + ux * i * 18f * d)
+                pts.add(cy + uy * i * 18f * d)
             }
             h.dots = pts.toFloatArray()
-            s?.mirror = v[0] < 0f
-            s?.angle = tiltOf(v[0], v[1])
+            s?.heading = Math.toDegrees(atan2(v[1].toDouble(), v[0].toDouble())).toFloat()
         }
         h.invalidate()
         s?.invalidate()
+    }
+
+    /** Keep the speed constant and make sure he always travels up and down the room. */
+    private fun normalizeVel() {
+        var sp = hypot(vx, vy)
+        if (sp < 0.001f) {
+            vx = 0f
+            vy = -speed
+            sp = speed
+        }
+        vx = vx / sp * speed
+        vy = vy / sp * speed
+        val minVy = 0.22f * speed
+        if (abs(vy) < minVy) {
+            vy = if (vy < 0f) -minVy else minVy
+            val rest = sqrt(max(0f, speed * speed - vy * vy))
+            vx = if (vx < 0f) -rest else rest
+        }
     }
 
     private fun fire(px: Float, py: Float) {
         val v = launchV(px, py)
         hud?.let { it.dots = FloatArray(0); it.invalidate() }
         if (v == null) {
-            sv?.let { it.angle = 0f; it.invalidate() }
+            clearAim()
             return
         }
         vx = v[0]
         vy = v[1]
+        speed = hypot(vx, vy)
+        normalizeVel()
         launched = true
         combo = 0
-        boostFrames = 50
         setTapActive(true)
         snd("launch", 0.6f)
         val voice = voices.random()
         snd(voice, 1f)
         mascot?.play(MascotView.randomFunny(), if (voice == "letsgo") "LET'S GOOO!" else "WEEEE!")
-        hud?.let { it.banner = "TAP TO NUDGE HIM TOWARD THE GAP"; it.invalidate() }
+        hud?.let { it.banner = "TAP TO NUDGE HIM INTO THE GAP"; it.invalidate() }
     }
 
-    /** Tap anywhere: the turtle gets pushed away from where you tapped. */
+    /** Tap anywhere: he gets pushed away from your tap, which turns him. His speed stays the same. */
     private fun nudge(tx: Float, ty: Float) {
         if (!launched || over || nudgesLeft <= 0) return
         nudgesLeft--
@@ -468,16 +509,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
             dx /= len
             dy /= len
         }
-        val kick = vNeed() * 0.5f
-        vx += dx * kick
-        vy += dy * kick
-        val cap = vNeed() * 1.5f
-        val sp = hypot(vx, vy)
-        if (sp > cap) {
-            vx *= cap / sp
-            vy *= cap / sp
-        }
-        boostFrames = 20
+        vx += dx * speed * 1.3f
+        vy += dy * speed * 1.3f
+        normalizeVel()
         snd("pop", 0.9f)
         parts?.burst(cx - dx * r, cy - dy * r, -dx, -dy, 10f * d, false, 3)
         hud?.let { it.nudgesLeft = nudgesLeft; it.invalidate() }
@@ -519,26 +553,31 @@ class ShotService : Service(), Choreographer.FrameCallback {
      */
     private fun hit(speed: Float, x: Float, y: Float, nx: Float, ny: Float, kind: Int) {
         if (speed <= 2.5f * d) return
+        lastHitMs = SystemClock.uptimeMillis()
+        sv?.bump()
         val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
         if (kind == kFloor) {
             snd("thud", 0.25f + 0.25f * sp, 120L)
             parts?.burst(x, y, nx, ny, speed, false, 0)
-            if (combo >= 2) {
-                handler.postDelayed({ if (combo == 0 && !over) hud?.let { it.combo = 0; it.invalidate() } }, 1400)
-            }
-            combo = 0
             return
         }
         combo++
         val semis = pent[min(combo - 1, pent.size - 1)]
         val rate = Math.pow(2.0, semis / 12.0).toFloat()
-        if (kind == kObstacle) {
-            snd("bonk", 0.7f + 0.3f * sp, 120L)
-            sfx?.play("ding", 0.8f + 0.2f * sp, 60L, rate)
-            sfx?.play("coin", 0.8f, 100L)
-        } else {
-            snd("bonk", 0.4f + 0.35f * sp, 120L)
-            if (combo >= 2) sfx?.play("ding", 0.5f * sp + 0.2f, 60L, rate)
+        when (kind) {
+            kObstacle -> {
+                snd("bonk", 0.7f + 0.3f * sp, 120L)
+                sfx?.play("ding", 0.8f + 0.2f * sp, 60L, rate)
+                sfx?.play("coin", 0.8f, 100L)
+            }
+            kCeil -> {
+                snd("bonk", 0.5f + 0.3f * sp, 120L)
+                sfx?.play("ding", 0.4f + 0.3f * sp, 60L, rate)
+            }
+            else -> {
+                snd("bonk", 0.4f + 0.35f * sp, 120L)
+                if (combo >= 2) sfx?.play("ding", 0.5f * sp + 0.2f, 60L, rate)
+            }
         }
         hud?.let { it.combo = combo; it.invalidate() }
         parts?.burst(x, y, nx, ny, speed, kind == kObstacle, combo)
@@ -580,7 +619,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     override fun doFrame(ns: Long) {
         val s = sv ?: return
-        val dt = if (lastNs == 0L) 1f else ((ns - lastNs) / 16_666_667f).coerceAtMost(3f)
+        val dt = if (lastNs == 0L) 1f else ((ns - lastNs) / 16_666_667f).coerceAtMost(2f)
         lastNs = ns
 
         if (launched && !over) {
@@ -590,7 +629,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
             val topBar = ceilY - ct
             for (step in 0 until 3) {
                 floorY -= rise * hdt
-                vy += 0.55f * d * hdt
                 cx += vx * hdt
                 cy += vy * hdt
 
@@ -598,12 +636,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 if (cx < r) {
                     hit(abs(vx), 0f, cy, 1f, 0f, kWall)
                     cx = r
-                    vx = abs(vx) * bounce
+                    vx = abs(vx)
                 }
                 if (cx > sw - r) {
                     hit(abs(vx), sw.toFloat(), cy, -1f, 0f, kWall)
                     cx = sw - r
-                    vx = -abs(vx) * bounce
+                    vx = -abs(vx)
                 }
 
                 // the floor is moving up, so bounce relative to it
@@ -612,20 +650,19 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     val rel = vy + rise
                     if (rel > 0f) {
                         hit(rel, cx, floorY, 0f, -1f, kFloor)
-                        vy = -rise - rel * floorBounce
+                        vy = -rise - rel
                     }
-                    if (abs(vy + rise) < 1.2f * d) vy = -rise
-                    vx *= 0.99f
                 }
 
                 // ceiling pieces on each side of the gap, then the obstacles
-                collide(-50f * d, topBar, gapL, ceilY, kWall)
-                collide(gapR, topBar, sw + 50f * d, ceilY, kWall)
+                collide(-50f * d, topBar, gapL, ceilY, kCeil)
+                collide(gapR, topBar, sw + 50f * d, ceilY, kCeil)
                 for (b in obstacles) {
                     val l = b.lp.x.toFloat()
                     val t = b.lp.y.toFloat()
                     collide(l, t, l + b.lp.width, t + b.lp.height, kObstacle)
                 }
+                normalizeVel()
 
                 val inGap = cx > gapL + 4 * d && cx < gapR - 4 * d
                 if (cy < topBar && inGap) { levelClear(); break }
@@ -636,11 +673,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 for (b in obstacles.toList()) {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
-                if (abs(vx) > 0.5f * d) s.mirror = vx < 0f
-                s.angle = tiltOf(vx, vy)
-                if (boostFrames > 0) boostFrames--
-                s.boost = boostFrames > 0
-                hud?.let { it.floorY = floorY; it.invalidate() }
+                if (combo > 0 && SystemClock.uptimeMillis() - lastHitMs > 1500L) combo = 0
+                s.heading = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
+                hud?.let { it.floorY = floorY; it.worth = worth(); it.combo = combo; it.invalidate() }
                 moveMascot()
             }
             applyPos()

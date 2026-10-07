@@ -5,158 +5,101 @@ import android.graphics.*
 import android.os.SystemClock
 import android.view.View
 import kotlin.math.sin
-import kotlin.random.Random
 
-/** Lil Betito: a turtle with rocket boosters. Faces right; mirror flips it to face left. */
+/**
+ * Lil Betito seen from above. Head and legs tuck into the shell when he bumps something
+ * and pop back out a moment later while he flies. heading: 0 = facing right, -90 = facing up.
+ */
 class ShotView(ctx: Context) : View(ctx) {
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val oval = RectF()
-    private val path = Path()
-    var angle = 0f        // tilt in degrees (positive = nose down)
-    var boost = false     // true while the boosters are firing
-    var mirror = false    // true = facing left
-    var rockets = 3       // 0..3 special rockets strapped on
-    var power = 0         // ready power: 0 none, 1 buster (orange), 2 warp (purple), 3 sticky (green)
-    private val buster: Boolean get() = power != 0
-    private fun mkAura(r: Int, g: Int, b: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = RadialGradient(0f, 0f, 40 * d, intArrayOf(Color.argb(170, r, g, b), Color.argb(0, r, g, b)), null, Shader.TileMode.CLAMP)
-    }
-    private val auras = arrayOf(mkAura(255, 152, 0), mkAura(171, 71, 255), mkAura(118, 255, 3))
-    private val slotY = floatArrayOf(-9f, -17f, -1f)
+    var heading = -90f
+    var radiusPx = 14 * d
+    private var bumpAt = 0L
 
     private val shellDark = Color.parseColor("#2E7D32")
     private val shellLight = Color.parseColor("#66BB6A")
     private val skin = Color.parseColor("#9CCC65")
     private val skinDark = Color.parseColor("#7CB342")
 
-    override fun onDraw(c: Canvas) {
-        val cx = width / 2f
-        val cy = height / 2f
+    /** Call when he hits something: tucks everything in, then it pops back out. */
+    fun bump() { bumpAt = SystemClock.uptimeMillis() }
+
+    private fun tuckAmount(now: Long): Float {
+        if (bumpAt == 0L) return 0f
+        val t = now - bumpAt
+        return when {
+            t < 120L -> 1f
+            t < 520L -> {
+                val k = (t - 120L) / 400f
+                1f - k * k * (3f - 2f * k)
+            }
+            else -> 0f
+        }
+    }
+
+    private fun lerp(a: Float, b: Float, k: Float) = a + (b - a) * k
+
+    private fun leg(c: Canvas, x: Float, y: Float, angle: Float, u: Float) {
         c.save()
-        if (mirror) c.scale(-1f, 1f, cx, cy)
-        c.rotate(angle, cx, cy)
+        c.rotate(angle, x, y)
+        c.drawOval(x - 0.22f * u, y - 0.12f * u, x + 0.22f * u, y + 0.12f * u, p)
+        c.restore()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val now = SystemClock.uptimeMillis()
+        val out = 1f - tuckAmount(now)
+        val u = radiusPx
+        c.save()
+        c.translate(width / 2f, height / 2f)
+        c.rotate(heading)
         p.style = Paint.Style.FILL
 
-        if (buster) {
-            val aura = auras[(power - 1).coerceIn(0, 2)]
-            aura.alpha = (200 + 55 * sin(SystemClock.uptimeMillis() / 110.0)).toInt().coerceIn(0, 255)
-            c.save()
-            c.translate(cx, cy)
-            c.drawCircle(0f, 0f, 40 * d, aura)
-            c.restore()
+        // paddling legs (drawn first so the shell covers them when tucked)
+        val flap = sin(now / 90.0).toFloat() * 18f * out
+        p.color = skinDark
+        for (side in intArrayOf(-1, 1)) {
+            val s = side.toFloat()
+            leg(c, lerp(0.15f * u, 0.34f * u, out), s * lerp(0.2f * u, 0.66f * u, out), s * (40f + flap), u)
+            leg(c, lerp(-0.15f * u, -0.34f * u, out), s * lerp(0.2f * u, 0.60f * u, out), s * (-40f - flap), u)
         }
 
-        // rocket boosters (strapped to the back of the shell)
-        for (k in 0 until rockets.coerceIn(0, 3)) {
-            val y = cy + slotY[k] * d
-            if (boost) {
-                val len = (8 + Random.nextFloat() * 8) * d
-                p.color = Color.parseColor(if (buster) "#FF4081" else "#FF9800")
-                path.reset()
-                path.moveTo(cx - 37 * d, y - 4 * d)
-                path.lineTo(cx - 37 * d - len, y)
-                path.lineTo(cx - 37 * d, y + 4 * d)
-                path.close()
-                c.drawPath(path, p)
-                p.color = Color.parseColor(if (buster) "#FFFF8D" else "#FFEB3B")
-                path.reset()
-                path.moveTo(cx - 37 * d, y - 2 * d)
-                path.lineTo(cx - 37 * d - len * 0.6f, y)
-                path.lineTo(cx - 37 * d, y + 2 * d)
-                path.close()
-                c.drawPath(path, p)
-            }
-            p.color = Color.parseColor("#455A64")
-            c.drawRect(cx - 37 * d, y - 3 * d, cx - 34 * d, y + 3 * d, p)
-            p.color = Color.parseColor("#FFD54F")
-            c.drawRoundRect(cx - 34 * d, y - 4 * d, cx - 12 * d, y + 4 * d, 3 * d, 3 * d, p)
-            p.color = Color.parseColor("#E53935")
-            c.drawRect(cx - 26 * d, y - 4 * d, cx - 22 * d, y + 4 * d, p)
-        }
+        // tail
+        p.color = skinDark
+        val tail = Path()
+        tail.moveTo(-0.5f * u, -0.08f * u)
+        tail.lineTo(lerp(-0.5f * u, -0.82f * u, out), 0f)
+        tail.lineTo(-0.5f * u, 0.08f * u)
+        tail.close()
+        c.drawPath(tail, p)
 
-        if (!boost) {
-            // legs
-            p.color = skinDark
-            c.drawRoundRect(cx - 16 * d, cy + 4 * d, cx - 7 * d, cy + 17 * d, 4 * d, 4 * d, p)
-            c.drawRoundRect(cx + 7 * d, cy + 4 * d, cx + 16 * d, cy + 17 * d, 4 * d, 4 * d, p)
-            // tail
-            path.reset()
-            path.moveTo(cx - 20 * d, cy + 4 * d)
-            path.lineTo(cx - 28 * d, cy + 9 * d)
-            path.lineTo(cx - 20 * d, cy + 10 * d)
-            path.close()
-            c.drawPath(path, p)
+        // head
+        val hx = lerp(0.35f * u, 0.80f * u, out)
+        p.color = skin
+        c.drawCircle(hx, 0f, 0.2f * u, p)
+        if (out > 0.5f) {
+            p.color = Color.BLACK
+            c.drawCircle(hx + 0.07f * u, -0.08f * u, 0.035f * u, p)
+            c.drawCircle(hx + 0.07f * u, 0.08f * u, 0.035f * u, p)
         }
-
-        // belly
-        p.color = Color.parseColor("#D7CCC8")
-        c.drawRoundRect(cx - 22 * d, cy + 1 * d, cx + 22 * d, cy + 8 * d, 3 * d, 3 * d, p)
 
         // shell
         p.color = shellDark
-        oval.set(cx - 22 * d, cy - 20 * d, cx + 22 * d, cy + 20 * d)
-        c.drawArc(oval, 180f, 180f, true, p)
+        c.drawOval(-0.62f * u, -0.52f * u, 0.62f * u, 0.52f * u, p)
         p.color = shellLight
-        c.drawCircle(cx, cy - 9 * d, 6 * d, p)
-        c.drawCircle(cx - 12 * d, cy - 4 * d, 4 * d, p)
-        c.drawCircle(cx + 12 * d, cy - 4 * d, 4 * d, p)
-
-        // goofy face (drawn last so it sits in front of the shell)
-        val hx = cx + 27 * d
-        val hy = cy - 4 * d
-        p.style = Paint.Style.FILL
-        p.color = skin
-        c.drawCircle(hx, hy, 12 * d, p)
-        // big bulging eyes with blue irises
-        for (ex in floatArrayOf(-5f, 5f)) {
-            val x = hx + ex * d
-            val y = hy - 5 * d
-            p.style = Paint.Style.FILL
-            p.color = Color.WHITE
-            c.drawCircle(x, y, 4.8f * d, p)
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1f * d
-            p.color = Color.parseColor("#33691E")
-            c.drawCircle(x, y, 4.8f * d, p)
-            p.style = Paint.Style.FILL
-            p.color = Color.parseColor("#1E88E5")
-            c.drawCircle(x + 0.8f * d, y, 2.6f * d, p)
-            p.color = Color.BLACK
-            c.drawCircle(x + 1f * d, y, 1.2f * d, p)
-            // eyelashes
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1f * d
-            p.strokeCap = Paint.Cap.ROUND
-            p.color = Color.BLACK
-            c.drawLine(x - 3f * d, y - 4f * d, x - 4.5f * d, y - 6.5f * d, p)
-            c.drawLine(x, y - 4.8f * d, x, y - 7.5f * d, p)
-            c.drawLine(x + 3f * d, y - 4f * d, x + 4.5f * d, y - 6.5f * d, p)
-        }
-        // little nose
-        p.style = Paint.Style.FILL
-        p.color = skinDark
-        oval.set(hx - 2.5f * d, hy - 0.5f * d, hx + 2.5f * d, hy + 2f * d)
-        c.drawOval(oval, p)
-        // big goofy grin
+        c.drawOval(-0.52f * u, -0.43f * u, 0.52f * u, 0.43f * u, p)
         p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.5f * d
-        p.strokeCap = Paint.Cap.ROUND
-        p.color = Color.parseColor("#33691E")
-        oval.set(hx - 9 * d, hy - 3 * d, hx + 9 * d, hy + 8 * d)
-        c.drawArc(oval, 15f, 150f, false, p)
-        // two big buck teeth
-        p.style = Paint.Style.FILL
-        p.color = Color.WHITE
-        c.drawRoundRect(hx - 4 * d, hy + 3 * d, hx - 0.3f * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
-        c.drawRoundRect(hx + 0.3f * d, hy + 3 * d, hx + 4 * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 0.8f * d
-        p.color = Color.parseColor("#33691E")
-        c.drawRoundRect(hx - 4 * d, hy + 3 * d, hx - 0.3f * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
-        c.drawRoundRect(hx + 0.3f * d, hy + 3 * d, hx + 4 * d, hy + 9 * d, 1.2f * d, 1.2f * d, p)
+        p.strokeWidth = maxOf(1f, 0.06f * u)
+        p.color = shellDark
+        c.drawOval(-0.22f * u, -0.17f * u, 0.22f * u, 0.17f * u, p)
+        c.drawLine(0.2f * u, -0.12f * u, 0.42f * u, -0.3f * u, p)
+        c.drawLine(0.2f * u, 0.12f * u, 0.42f * u, 0.3f * u, p)
+        c.drawLine(-0.2f * u, -0.12f * u, -0.42f * u, -0.3f * u, p)
+        c.drawLine(-0.2f * u, 0.12f * u, -0.42f * u, 0.3f * u, p)
+        c.drawLine(0.22f * u, 0f, 0.5f * u, 0f, p)
+        c.drawLine(-0.22f * u, 0f, -0.5f * u, 0f, p)
         p.style = Paint.Style.FILL
         c.restore()
-        if (buster) postInvalidateOnAnimation()
     }
 }

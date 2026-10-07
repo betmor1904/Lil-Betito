@@ -17,7 +17,9 @@ class HudView(ctx: Context) : View(ctx) {
     var gapL = 0f
     var gapR = 0f
     var level = 1
-    var best = 1
+    var best = 0
+    var score = 0
+    var worth = 0
     var nudgesLeft = 3
     var dots = FloatArray(0)
     var message: String? = null
@@ -69,31 +71,36 @@ class HudView(ctx: Context) : View(ctx) {
         p.typeface = Typeface.DEFAULT_BOLD
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
 
-        // level + best
+        // level, score, best, what this escape is worth right now
         p.color = Color.WHITE
         p.textSize = 20 * d
         c.drawText("LEVEL $level", 14 * d, ceilY + 28 * d, p)
         p.color = Color.parseColor("#FFEB3B")
-        p.textSize = 12 * d
-        c.drawText("BEST $best", 14 * d, ceilY + 46 * d, p)
+        p.textSize = 14 * d
+        c.drawText("SCORE $score", 14 * d, ceilY + 47 * d, p)
+        p.textSize = 11 * d
+        c.drawText("BEST $best", 14 * d, ceilY + 63 * d, p)
+        p.color = Color.parseColor("#76FF03")
+        p.textSize = 14 * d
+        c.drawText("WORTH $worth", 14 * d, ceilY + 82 * d, p)
         p.clearShadowLayer()
 
         // nudges left
         for (i in 0 until 3) {
             p.color = if (i < nudgesLeft) Color.parseColor("#E040FB") else Color.argb(90, 255, 255, 255)
-            c.drawCircle(22 * d + i * 26 * d, ceilY + 66 * d, 8 * d, p)
+            c.drawCircle(22 * d + i * 26 * d, ceilY + 104 * d, 8 * d, p)
         }
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
         p.color = Color.WHITE
         p.textSize = 11 * d
-        c.drawText("NUDGES", 12 * d, ceilY + 90 * d, p)
+        c.drawText("NUDGES", 12 * d, ceilY + 126 * d, p)
 
         // banner
         p.textAlign = Paint.Align.CENTER
         val b = banner
         if (b != null) {
             p.color = Color.WHITE
-            fitText(c, b, w / 2, ceilY + 118 * d, 15 * d, w * 0.9f)
+            fitText(c, b, w / 2, ceilY + 156 * d, 15 * d, w * 0.9f)
         }
         p.clearShadowLayer()
 
