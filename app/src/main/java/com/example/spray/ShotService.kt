@@ -229,10 +229,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         combo = 0
         cx = sw / 2f
         cy = floorY - r
-        // he is moving the moment the room appears, at one constant speed
-        speed = 9f * d
-        vx = speed * 0.4f * (if (Random.nextBoolean()) 1f else -1f)
-        vy = -speed * 0.8f
+        // he is moving the moment the room appears: straight up, at one constant speed
+        speed = 8f * d
+        vx = 0f
+        vy = -speed
         normalizeVel()
 
         // the gap gets smaller and sits somewhere new every level
