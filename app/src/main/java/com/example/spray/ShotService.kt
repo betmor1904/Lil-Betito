@@ -574,24 +574,24 @@ class ShotService : Service(), Choreographer.FrameCallback {
         lastHitMs = SystemClock.uptimeMillis()
         sv?.bump()
         val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
-        if (kind != kObstacle && kind != kCoinBrick) snd("tick", 0.15f + 0.2f * sp, 40L)
+        if (kind != kObstacle && kind != kCoinBrick) snd("tick", 0.45f + 0.35f * sp, 40L)
         if (kind == kFloor) {
             parts?.burst(x, y, nx, ny, speed, false, 0)
             return
         }
         combo++
         if (kind == kObstacle) {
-            snd("bonk", 0.7f + 0.3f * sp, 120L)
-            sfx?.play("clink", 0.6f + 0.3f * sp, 60L)
+            snd("bonk", 0.8f + 0.2f * sp, 120L)
+            sfx?.play("clink", 1f, 60L)
         }
         if (kind == kCoinBrick) {
-            snd("bonk", 0.5f + 0.2f * sp, 120L)
-            sfx?.play("coin", 1f, 60L, 1.3f)
+            snd("bonk", 0.6f, 120L)
+            sfx?.play("kaching", 1f, 100L)
         }
         when {
-            combo >= 8 -> sfx?.play("siren", 1f, 500L)
-            combo >= 5 -> sfx?.play("ding", 0.9f, 80L, 1f + 0.1f * (combo - 5))
-            combo >= 3 -> sfx?.play("coin", 0.9f, 80L)
+            combo >= 8 -> sfx?.play("siren", 1f, 900L)
+            combo >= 5 -> sfx?.play("slot", 1f, 250L)
+            combo >= 3 -> sfx?.play("coins", 1f, 250L)
         }
         score += if (kind == kCoinBrick) 50 else 10
         hud?.let { it.combo = combo; it.score = score; it.invalidate() }

@@ -46,6 +46,9 @@ class Sfx(ctx: Context) {
         ids["siren"] = pool.load(ctx, R.raw.siren, 1)
         ids["fanfare"] = pool.load(ctx, R.raw.fanfare, 1)
         ids["squish"] = pool.load(ctx, R.raw.squish, 1)
+        ids["coins"] = pool.load(ctx, R.raw.coins, 1)
+        ids["slot"] = pool.load(ctx, R.raw.slot, 1)
+        ids["kaching"] = pool.load(ctx, R.raw.kaching, 1)
     }
 
     fun play(name: String, volume: Float = 1f, minGapMs: Long = 0L, rate: Float = 1f) {
