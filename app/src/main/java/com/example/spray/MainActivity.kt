@@ -72,14 +72,17 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play: Lil Betito is always moving at one steady speed. Put your finger " +
-                "down anywhere and he is pulled toward it. Lift your finger and he keeps going. " +
-                "Steer him up through the green gap in the ceiling before the floor rises and " +
-                "squishes him. Every bounce is worth 10 points and makes noise (obstacles are the " +
-                "loudest). An escape pays 100, 300 or 600 points, and 1000 at the last moment, " +
-                "because the higher the floor, the riskier it is. Rooms 6-10 are 2x, 11-20 are 3x " +
-                "and 21+ are 5x. Every level the floor rises faster, the gap shrinks and there " +
-                "are more obstacles. If the floor squishes him, the game starts over."
+            text = "\nHow to play: Lil Betito is always moving at one steady speed. Put one finger " +
+                "down and he is pulled toward it. Use two fingers for a joystick: the first finger " +
+                "is the anchor and the second finger sets the direction. Lift your fingers and he " +
+                "keeps going. Steer him up through the green gap in the ceiling before the floor " +
+                "rises and squishes him. The gap closes in a little as the floor climbs. Every " +
+                "bounce is worth 10 points, gold coin bricks are worth 50 and drop a coin. Chain " +
+                "bounces without touching the floor for combos and bigger sounds. An escape pays " +
+                "100, 300 or 600 points, and 1000 at the last moment, plus a speed bonus for " +
+                "escaping in under 12 seconds. Rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x. " +
+                "If he stops climbing for 3 seconds the edges pulse red and the floor speeds up. " +
+                "If the floor squishes him, the game starts over."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

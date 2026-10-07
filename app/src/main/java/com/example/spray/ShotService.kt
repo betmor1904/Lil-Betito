@@ -38,8 +38,8 @@ private class Barrier(
 private class Coin(val view: CoinView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float)
 
 /**
- * Lil Betito: launch the turtle, let him ricochet around the room, and use 3 nudges per
- * level to steer him into the gap in the ceiling before the floor rises and squishes him.
+ * Lil Betito: the turtle never stops moving. Steer him with your finger(s) up through the gap
+ * in the ceiling before the rising floor squishes him.
  */
 class ShotService : Service(), Choreographer.FrameCallback {
     private lateinit var wm: WindowManager
