@@ -292,7 +292,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     /** How hard your finger pulls him. He keeps his speed, so this only changes his direction. */
     private fun steerForce(): Float = 1.5f * d
 
-    private fun riseSpeed(): Float = min(0.9f, 0.28f + 0.04f * (level - 1)) * d
+    private fun riseSpeed(): Float = min(1.4f, 0.5f + 0.07f * (level - 1)) * d
 
     private fun spawnObstacles() {
         val count = min(level + 1, 8)
