@@ -24,6 +24,7 @@ class HudView(ctx: Context) : View(ctx) {
     var score = 0
     var worth = 0
     var steerOn = false
+    var steerTwo = false
     var sx0 = 0f
     var sy0 = 0f
     var sx1 = 0f
@@ -135,6 +136,7 @@ class HudView(ctx: Context) : View(ctx) {
             c.drawLine(sx0, sy0, sx1, sy1, p)
             p.style = Paint.Style.FILL
             c.drawCircle(sx1, sy1, 10 * d, p)
+            if (steerTwo) c.drawCircle(sx0, sy0, 10 * d, p)
         }
 
         // combo counter

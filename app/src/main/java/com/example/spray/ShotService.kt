@@ -68,6 +68,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var steering = false
     private var steerX = 0f
     private var steerY = 0f
+    private var twoFinger = false
+    private var ptr1 = -1
+    private var ptr2 = -1
+    private var p1x = 0f
+    private var p1y = 0f
+    private var p2x = 0f
+    private var p2y = 0f
 
     // room
     private var floorStartY = 0f
@@ -178,18 +185,63 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(pv, params(sw, sh, touchable = false))
         parts = pv
 
-        // full-screen layer: hold your finger down and the turtle is pulled toward it
+        // full-screen layer for steering. One finger: he is pulled toward it. Two fingers:
+        // finger 1 is the anchor and finger 2 sets the direction (anchor -> finger 2).
         val tv = View(this)
         tlp = params(sw, sh)
         tv.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    steerX = e.rawX
-                    steerY = e.rawY
-                    steering = !over
+            // raw coordinates for every pointer (getRawX(index) needs a newer Android)
+            val ox = e.rawX - e.getX(0)
+            val oy = e.rawY - e.getY(0)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    ptr1 = e.getPointerId(0)
+                    ptr2 = -1
+                    p1x = e.getX(0) + ox
+                    p1y = e.getY(0) + oy
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> steering = false
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    val i = e.actionIndex
+                    val id = e.getPointerId(i)
+                    if (ptr2 == -1 && id != ptr1) {
+                        ptr2 = id
+                        p2x = e.getX(i) + ox
+                        p2y = e.getY(i) + oy
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val i1 = e.findPointerIndex(ptr1)
+                    if (i1 >= 0) {
+                        p1x = e.getX(i1) + ox
+                        p1y = e.getY(i1) + oy
+                    }
+                    val i2 = e.findPointerIndex(ptr2)
+                    if (i2 >= 0) {
+                        p2x = e.getX(i2) + ox
+                        p2y = e.getY(i2) + oy
+                    }
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    val id = e.getPointerId(e.actionIndex)
+                    if (id == ptr2) {
+                        ptr2 = -1
+                    } else if (id == ptr1) {
+                        // the anchor lifted: the other finger becomes the anchor
+                        ptr1 = ptr2
+                        p1x = p2x
+                        p1y = p2y
+                        ptr2 = -1
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    ptr1 = -1
+                    ptr2 = -1
+                }
             }
+            steering = ptr1 != -1 && !over
+            twoFinger = steering && ptr2 != -1
+            steerX = p1x
+            steerY = p1y
             true
         }
         wm.addView(tv, tlp)
@@ -560,10 +612,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     collide(l, t, l + b.lp.width, t + b.lp.height, kObstacle)
                 }
                 if (steering) {
-                    val sdx = steerX - cx
-                    val sdy = steerY - cy
+                    // two fingers: pull along anchor -> finger 2. One finger: pull toward it.
+                    val sdx = if (twoFinger) p2x - p1x else steerX - cx
+                    val sdy = if (twoFinger) p2y - p1y else steerY - cy
                     val sl = hypot(sdx, sdy)
-                    if (sl > 20 * d) {
+                    if (sl > (if (twoFinger) 12f else 20f) * d) {
                         vx += sdx / sl * steerForce() * hdt
                         vy += sdy / sl * steerForce() * hdt
                     }
@@ -581,7 +634,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 var hd = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
                 if (steering) {
-                    var diff = Math.toDegrees(atan2((steerY - cy).toDouble(), (steerX - cx).toDouble())).toFloat() - hd
+                    val tdx = if (twoFinger) p2x - p1x else steerX - cx
+                    val tdy = if (twoFinger) p2y - p1y else steerY - cy
+                    var diff = Math.toDegrees(atan2(tdy.toDouble(), tdx.toDouble())).toFloat() - hd
                     while (diff > 180f) diff -= 360f
                     while (diff < -180f) diff += 360f
                     hd += (diff * 0.3f).coerceIn(-15f, 15f)
@@ -594,10 +649,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     it.worth = worth()
                     it.combo = combo
                     it.steerOn = steering
-                    it.sx0 = cx
-                    it.sy0 = cy
-                    it.sx1 = steerX
-                    it.sy1 = steerY
+                    it.steerTwo = twoFinger
+                    it.sx0 = if (twoFinger) p1x else cx
+                    it.sy0 = if (twoFinger) p1y else cy
+                    it.sx1 = if (twoFinger) p2x else steerX
+                    it.sy1 = if (twoFinger) p2y else steerY
                     it.invalidate()
                 }
                 moveMascot()
