@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.*
 import android.view.View
 import java.io.File
+import kotlin.math.min
 
 /** Red striped obstacle with BETO on it (and Beto's photo if one was chosen). */
 class BarrierView(ctx: Context) : View(ctx) {
@@ -73,9 +74,9 @@ class BarrierView(ctx: Context) : View(ctx) {
         p.color = Color.WHITE
         p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
         p.textAlign = Paint.Align.CENTER
-        p.textSize = 15 * d
+        p.textSize = min(15 * d, h * 0.62f)
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
-        c.drawText("BETO", (left + right) / 2, h / 2 + 5 * d, p)
+        c.drawText("BETO", (left + right) / 2, h / 2 + p.textSize * 0.35f, p)
         p.clearShadowLayer()
     }
 }

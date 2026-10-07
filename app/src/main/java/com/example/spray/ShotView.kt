@@ -16,6 +16,9 @@ class ShotView(ctx: Context) : View(ctx) {
     var heading = -90f
     var radiusPx = 14 * d
     private var bumpAt = 0L
+    private var kickAt = 0L
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var glowFor = -1f
 
     private val shellDark = Color.parseColor("#2E7D32")
     private val shellLight = Color.parseColor("#66BB6A")
@@ -24,6 +27,9 @@ class ShotView(ctx: Context) : View(ctx) {
 
     /** Call when he hits something: tucks everything in, then it pops back out. */
     fun bump() { bumpAt = SystemClock.uptimeMillis() }
+
+    /** Call on a nudge: he squashes and stretches along his direction for a moment. */
+    fun kick() { kickAt = SystemClock.uptimeMillis() }
 
     private fun tuckAmount(now: Long): Float {
         if (bumpAt == 0L) return 0f
@@ -53,7 +59,20 @@ class ShotView(ctx: Context) : View(ctx) {
         val u = radiusPx
         c.save()
         c.translate(width / 2f, height / 2f)
+        // bright halo so he pops against any background
+        if (glowFor != u) {
+            glow.shader = RadialGradient(
+                0f, 0f, 2.1f * u,
+                intArrayOf(Color.argb(200, 0, 229, 255), Color.argb(90, 0, 229, 255), Color.argb(0, 0, 229, 255)),
+                floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP
+            )
+            glowFor = u
+        }
+        c.drawCircle(0f, 0f, 2.1f * u, glow)
         c.rotate(heading)
+        val kt = now - kickAt
+        val sq = if (kickAt == 0L || kt > 180L) 0f else 1f - kt / 180f
+        c.scale(1f + 0.4f * sq, 1f - 0.3f * sq)
         p.style = Paint.Style.FILL
 
         // paddling legs (drawn first so the shell covers them when tucked)

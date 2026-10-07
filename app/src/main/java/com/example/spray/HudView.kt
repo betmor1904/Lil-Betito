@@ -2,15 +2,18 @@ package com.example.spray
 
 import android.content.Context
 import android.graphics.*
+import android.os.SystemClock
 import android.view.View
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /** Draws the room: ceiling with the exit gap, the rising floor, level, nudges, combo and messages. */
 class HudView(ctx: Context) : View(ctx) {
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG)
     var floorY = 0f
     var ceilY = 0f
     var ceilThick = 0f
@@ -30,6 +33,15 @@ class HudView(ctx: Context) : View(ctx) {
         Color.parseColor("#76FF03"), Color.parseColor("#E040FB")
     )
 
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        grid.strokeWidth = 1.5f * d
+        grid.shader = LinearGradient(
+            0f, 0f, w.toFloat(), 0f,
+            intArrayOf(Color.argb(0, 255, 255, 255), Color.argb(56, 255, 255, 255), Color.argb(0, 255, 255, 255)),
+            null, Shader.TileMode.CLAMP
+        )
+    }
+
     private fun fitText(c: Canvas, t: String, x: Float, y: Float, size: Float, maxW: Float) {
         p.textSize = size
         val mw = p.measureText(t)
@@ -42,20 +54,36 @@ class HudView(ctx: Context) : View(ctx) {
         val h = height.toFloat()
         p.style = Paint.Style.FILL
 
-        // rising floor
-        p.color = Color.argb(235, 25, 25, 60)
-        c.drawRect(0f, floorY, w, h, p)
-        p.color = Color.parseColor("#FF4081")
-        c.drawRect(0f, floorY, w, floorY + 5 * d, p)
+        // dark background + grid lines that ride up with the floor so you can feel the motion
+        c.drawColor(Color.argb(225, 10, 14, 36))
+        var gy = floorY - 100 * d
+        while (gy > ceilY) {
+            c.drawLine(0f, gy, w, gy, grid)
+            gy -= 100 * d
+        }
 
-        // ceiling with the exit gap
+        // rising floor: red and dangerous
+        p.style = Paint.Style.FILL
+        p.color = Color.parseColor("#E64A19")
+        c.drawRect(0f, floorY, w, h, p)
+        p.color = Color.parseColor("#FFEB3B")
+        c.drawRect(0f, floorY, w, floorY + 6 * d, p)
+
+        // ceiling: bright neon bands with the exit gap
         val top = ceilY - ceilThick
-        p.color = Color.argb(235, 25, 25, 60)
+        p.color = Color.parseColor("#E0F7FA")
         c.drawRect(0f, top, gapL, ceilY, p)
         c.drawRect(gapR, top, w, ceilY, p)
         p.color = Color.parseColor("#00E5FF")
-        c.drawRect(0f, ceilY - 3 * d, gapL, ceilY, p)
-        c.drawRect(gapR, ceilY - 3 * d, w, ceilY, p)
+        c.drawRect(0f, ceilY - 4 * d, gapL, ceilY, p)
+        c.drawRect(gapR, ceilY - 4 * d, w, ceilY, p)
+
+        // pulsing green glow under the exit
+        val pulse = 0.6f + 0.4f * sin(SystemClock.uptimeMillis() / 220.0).toFloat()
+        for (i in 0 until 4) {
+            p.color = Color.argb(((90 * pulse).toInt() - i * 18).coerceIn(0, 255), 118, 255, 3)
+            c.drawRect(gapL, ceilY, gapR, ceilY + (i + 1) * 16 * d, p)
+        }
 
         // exit arrow above the gap
         val mid = (gapL + gapR) / 2f
@@ -88,12 +116,12 @@ class HudView(ctx: Context) : View(ctx) {
         // nudges left
         for (i in 0 until 3) {
             p.color = if (i < nudgesLeft) Color.parseColor("#E040FB") else Color.argb(90, 255, 255, 255)
-            c.drawCircle(22 * d + i * 26 * d, ceilY + 104 * d, 8 * d, p)
+            c.drawCircle(24 * d + i * 30 * d, ceilY + 106 * d, 10 * d, p)
         }
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
         p.color = Color.WHITE
         p.textSize = 11 * d
-        c.drawText("NUDGES", 12 * d, ceilY + 126 * d, p)
+        c.drawText("NUDGES $nudgesLeft", 12 * d, ceilY + 134 * d, p)
 
         // banner
         p.textAlign = Paint.Align.CENTER

@@ -62,6 +62,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var lastNs = 0L
     private var speed = 0f
     private var lastHitMs = 0L
+    private var slowUntil = 0L
 
     // room
     private var floorStartY = 0f
@@ -147,9 +148,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sw = resources.displayMetrics.widthPixels
         sh = resources.displayMetrics.heightPixels
         r = 14 * d
-        floorStartY = sh - 70 * d
-        floorY = floorStartY
         ceilY = 64 * d
+        // the room is half as tall as the screen, so levels stay short and tense
+        val bottom = sh - 70 * d
+        floorStartY = ceilY + 2 * r + (bottom - ceilY - 2 * r) * 0.5f
+        floorY = floorStartY
         best = getSharedPreferences("betito", MODE_PRIVATE).getInt("best_score", 0)
 
         val h = HudView(this)
@@ -312,27 +315,27 @@ class ShotService : Service(), Choreographer.FrameCallback {
         return tier * mult
     }
 
-    private fun riseSpeed(): Float = min(0.6f, 0.14f + 0.025f * (level - 1)) * d
+    private fun riseSpeed(): Float = min(0.9f, 0.28f + 0.04f * (level - 1)) * d
 
     private fun spawnObstacles() {
-        val count = min(level / 2, 5)
-        val topY = ceilY + 130 * d
-        val botY = floorStartY - 160 * d
+        val count = min(level + 1, 8)
+        val topY = ceilY + 110 * d
+        val botY = floorStartY - 90 * d
         val placed = ArrayList<FloatArray>()
         for (i in 0 until count) {
-            val w = ((90 + Random.nextInt(0, 61)) * d).toInt()
+            val w = ((50 + Random.nextInt(0, 41)) * d).toInt()
             var x = 0
             var y = 0
             for (attempt in 0 until 30) {
                 x = (Random.nextFloat() * (sw - w - 24 * d) + 12 * d).toInt()
                 y = (topY + Random.nextFloat() * (botY - topY)).toInt()
                 var clear = true
-                for (o in placed) if (abs(o[0] - x) < 160 * d && abs(o[1] - y) < 90 * d) clear = false
+                for (o in placed) if (abs(o[0] - x) < 110 * d && abs(o[1] - y) < 50 * d) clear = false
                 if (clear) break
             }
             placed.add(floatArrayOf(x.toFloat(), y.toFloat()))
             val bv = BarrierView(this)
-            val lp = params(w, (40 * d).toInt(), touchable = false)
+            val lp = params(w, (24 * d).toInt(), touchable = false)
             lp.x = x
             lp.y = y
             wm.addView(bv, lp)
@@ -509,12 +512,23 @@ class ShotService : Service(), Choreographer.FrameCallback {
             dx /= len
             dy /= len
         }
-        vx += dx * speed * 1.3f
-        vy += dy * speed * 1.3f
+        vx += dx * speed * 4f
+        vy += dy * speed * 4f
         normalizeVel()
-        snd("pop", 0.9f)
+        sfx?.play("launch", 1f, 0L, 1.7f)
+        sv?.kick()
+        buzz(30L)
+        slowUntil = SystemClock.uptimeMillis() + 100L
         parts?.burst(cx - dx * r, cy - dy * r, -dx, -dy, 10f * d, false, 3)
         hud?.let { it.nudgesLeft = nudgesLeft; it.invalidate() }
+    }
+
+    private fun buzz(ms: Long) {
+        try {
+            val vib = getSystemService(android.os.Vibrator::class.java)
+            vib?.vibrate(android.os.VibrationEffect.createOneShot(ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+        } catch (e: Exception) {
+        }
     }
 
     private fun moveBeto(x: Float) {
@@ -619,8 +633,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     override fun doFrame(ns: Long) {
         val s = sv ?: return
-        val dt = if (lastNs == 0L) 1f else ((ns - lastNs) / 16_666_667f).coerceAtMost(2f)
+        val dt0 = if (lastNs == 0L) 1f else ((ns - lastNs) / 16_666_667f).coerceAtMost(2f)
         lastNs = ns
+        val dt = if (SystemClock.uptimeMillis() < slowUntil) dt0 * 0.5f else dt0
 
         if (launched && !over) {
             val hdt = dt / 3f
