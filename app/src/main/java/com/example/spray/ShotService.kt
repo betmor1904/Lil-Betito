@@ -75,6 +75,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var lastHitMs = 0L
     private var levelStartMs = 0L
     private var dying = false
+    private var stuckUntil = 0L
+    private var winStart = 0L
+    private var winMin = 0f
+    private var winMax = 0f
     private var dyingUntil = 0L
     private var steering = false
     private var steerX = 0f
@@ -297,6 +301,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         steering = false
         levelStartMs = SystemClock.uptimeMillis()
         dying = false
+        stuckUntil = 0L
+        winStart = levelStartMs
+        winMin = floorStartY - r
+        winMax = floorStartY - r
         combo = 0
         cx = sw / 2f
         cy = floorY - r
@@ -365,7 +373,18 @@ class ShotService : Service(), Choreographer.FrameCallback {
     /** How hard your finger pulls him. He keeps his speed, so this only changes his direction. */
     private fun steerForce(): Float = 1.5f * d
 
-    private fun riseSpeed(): Float = min(1.4f, 0.5f + 0.07f * (level - 1)) * d
+    private fun riseSpeed(): Float {
+        val base = min(1.4f, 0.5f + 0.07f * (level - 1)) * d
+        return if (SystemClock.uptimeMillis() < stuckUntil) base * 2.5f else base
+    }
+
+    /** No real up-and-down movement for 3 seconds: warn, rumble, and speed the floor up for a bit. */
+    private fun triggerStuck(now: Long) {
+        stuckUntil = now + 2500L
+        combo = 0
+        snd("rumble", 1f)
+        mascot?.play(MascotView.Move.FACEPALM, "UH OH...")
+    }
 
     private fun spawnObstacles() {
         val count = min(level + 1, 8)
@@ -449,6 +468,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun levelClear() {
         over = true
+        stuckUntil = 0L
         vx = 0f
         vy = 0f
         steering = false
@@ -468,6 +488,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         snd("fanfare")
         mascot?.play(MascotView.Move.BACKFLIP, "ESCAPED!")
         showFx()
+        hud?.let { it.stuck = false }
         hud?.let { it.banner = if (bonus > 0) "SPEED BONUS +$bonus" else null; it.message = "LEVEL $level CLEARED! +${pts + bonus}"; it.score = score; it.best = best; it.invalidate() }
         level++
         handler.postDelayed({ startLevel() }, 2200)
@@ -475,6 +496,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun squished() {
         over = true
+        stuckUntil = 0L
         vx = 0f
         vy = 0f
         steering = false
@@ -487,6 +509,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         dying = true
         dyingUntil = SystemClock.uptimeMillis() + 900L
         mascot?.play(MascotView.Move.FACEPALM, "SQUISHED!")
+        hud?.let { it.stuck = false }
         hud?.let { it.banner = "FINAL SCORE $score  (LEVEL $level)"; it.message = "SQUISHED!"; it.invalidate() }
         handler.postDelayed({ newGame() }, 3000)
     }
@@ -687,6 +710,15 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
             if (!over) {
                 collectCoins()
+                val nowMs = SystemClock.uptimeMillis()
+                if (cy < winMin) winMin = cy
+                if (cy > winMax) winMax = cy
+                if (nowMs - winStart >= 3000L) {
+                    if (winMax - winMin < 60 * d && nowMs >= stuckUntil) triggerStuck(nowMs)
+                    winStart = nowMs
+                    winMin = cy
+                    winMax = cy
+                }
                 for (b in obstacles.toList()) {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
@@ -706,6 +738,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     it.gapR = gapR
                     it.worth = worth()
                     it.combo = combo
+                    it.stuck = SystemClock.uptimeMillis() < stuckUntil
                     it.steerOn = steering
                     it.steerTwo = twoFinger
                     it.sx0 = if (twoFinger) p1x else cx

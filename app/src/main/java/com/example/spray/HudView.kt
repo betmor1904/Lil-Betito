@@ -23,6 +23,7 @@ class HudView(ctx: Context) : View(ctx) {
     var best = 0
     var score = 0
     var worth = 0
+    var stuck = false
     var steerOn = false
     var steerTwo = false
     var sx0 = 0f
@@ -153,6 +154,19 @@ class HudView(ctx: Context) : View(ctx) {
             p.color = neon[combo % neon.size]
             fitText(c, txt, w / 2, h * 0.30f, size, w * 0.9f)
             p.typeface = Typeface.DEFAULT_BOLD
+        }
+
+        // stuck: the screen edges pulse red
+        if (stuck) {
+            val a = 0.5f + 0.5f * sin(SystemClock.uptimeMillis() / 120.0).toFloat()
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 24 * d
+            p.color = Color.argb((50 + 110 * a).toInt(), 255, 23, 68)
+            c.drawRect(0f, 0f, w, h, p)
+            p.strokeWidth = 10 * d
+            p.color = Color.argb((70 + 120 * a).toInt(), 255, 23, 68)
+            c.drawRect(0f, 0f, w, h, p)
+            p.style = Paint.Style.FILL
         }
 
         // big message
