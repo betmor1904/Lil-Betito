@@ -24,6 +24,7 @@ import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
@@ -123,6 +124,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var gapR = 0f
     private var gapC = 0f
     private var gapW0 = 0f
+    private var gapBase = 0f
+    private var respawns = 0
 
     // game state
     private var level = 1
@@ -327,7 +330,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         levelStartMs = SystemClock.uptimeMillis()
         dying = false
         levelPoints = 0
-        doorOpen = false
+        doorOpen = true
+        respawns = 0
         milestones = 0
         floorDrop = 0f
         stuckUntil = 0L
@@ -348,6 +352,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val margin = 20f * d
         val center = margin + gapW / 2f + Random.nextFloat() * (sw - 2 * margin - gapW)
         gapC = center
+        gapBase = center
         gapW0 = gapW
         gapL = center - gapW / 2f
         gapR = center + gapW / 2f
@@ -360,7 +365,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         target = min(1500, 200 + 80 * (level - 1))
         sv?.let { it.heading = -90f; it.radiusPx = r; it.charged = false; it.invalidate() }
         pushHud()
-        hud?.let { it.banner = "CRUSH BRICKS, EAT APPLES, FILL YOUR ENERGY"; it.message = "LEVEL $level"; it.invalidate() }
+        hud?.let { it.banner = null; it.message = "LEVEL $level"; it.invalidate() }
         handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1400)
         handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 5000)
         applyPos()
@@ -548,8 +553,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
     }
 
+    private fun commitLine(): Float = ceilY + 0.4f * (floorStartY - ceilY)
+
     private fun respawnOne() {
-        if (over || brickCount() >= maxBricks) return
+        if (over || brickCount() >= maxBricks || respawns >= maxBricks || cy < commitLine()) return
+        respawns++
         val cells = freeCells()
         if (cells.isEmpty()) return
         spawnBrick(cells[0])
@@ -627,15 +635,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
         score += v
         levelPoints += v
         hud?.let { it.score = score; it.crushed = levelPoints; it.invalidate() }
-        // every quarter of the target drops the floor, which buys you time
-        while (milestones < 3 && levelPoints >= target * (milestones + 1) / 4) {
-            milestones++
-            floorDrop += 0.12f * (floorStartY - (ceilY + 2 * r))
-            snd("coins", 1f)
-            hud?.let { it.banner = "+TIME! THE FLOOR DROPS"; it.invalidate() }
-            handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 1500)
-        }
-        if (!doorOpen && levelPoints >= target) openDoor()
     }
 
     private fun openDoor() {
@@ -899,9 +898,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 if (floorY > floorStartY) floorY = floorStartY
 
-                // the exit closes in toward its center by up to 40% as the floor climbs
-                val prog = ((floorStartY - floorY) / (floorStartY - (ceilY + 2 * r))).coerceIn(0f, 1f)
-                val gw = max(2 * r + 8f * d, gapW0 * (1f - 0.4f * prog))
+                val elapsed = SystemClock.uptimeMillis() - levelStartMs
+                val prog = (elapsed / 45000f).coerceIn(0f, 1f)
+                val gw = max(2 * r + 8f * d, gapW0 * (1f - 0.5f * prog))
+                if (level > 5) {
+                    val gm = 20f * d + gw / 2f
+                    gapC = (gapBase + sin(elapsed / 1400.0).toFloat() * 50f * d).coerceIn(gm, sw - gm)
+                }
                 gapL = gapC - gw / 2f
                 gapR = gapC + gw / 2f
                 cx += vx * hdt
@@ -933,7 +936,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 // ceiling pieces on each side of the gap, then the obstacles
                 collide(-50f * d, topBar, gapL, ceilY, kCeil)
                 collide(gapR, topBar, sw + 50f * d, ceilY, kCeil)
-                if (!doorOpen) collide(gapL, topBar, gapR, ceilY, kCeil)
                 for (b in obstacles) {
                     val l = b.lp.x.toFloat()
                     val t = b.lp.y.toFloat()
@@ -962,7 +964,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 normalizeVel()
 
-                val inGap = doorOpen && cx > gapL + 4 * d && cx < gapR - 4 * d
+                val inGap = cx > gapL + 4 * d && cx < gapR - 4 * d
                 if (cy < topBar && inGap) { levelClear(); break }
                 if (floorY - 2 * r <= ceilY && !inGap) { squished(); break }
             }
@@ -972,15 +974,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 collectFood()
                 addEnergy(2f * dt / 60f)
                 if (charged && SystemClock.uptimeMillis() - chargeAt >= 1500L) blast()
-                val nowMs = SystemClock.uptimeMillis()
-                if (cy < winMin) winMin = cy
-                if (cy > winMax) winMax = cy
-                if (nowMs - winStart >= 3000L) {
-                    if (winMax - winMin < 60 * d && nowMs >= stuckUntil) triggerStuck(nowMs)
-                    winStart = nowMs
-                    winMin = cy
-                    winMax = cy
-                }
                 for (b in obstacles.toList()) {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
