@@ -24,6 +24,9 @@ class HudView(ctx: Context) : View(ctx) {
     var score = 0
     var worth = 0
     var stuck = false
+    var target = 100
+    var crushed = 0
+    var doorOpen = false
     var steerOn = false
     var steerTwo = false
     var sx0 = 0f
@@ -83,22 +86,28 @@ class HudView(ctx: Context) : View(ctx) {
         c.drawRect(0f, ceilY - 4 * d, gapL, ceilY, p)
         c.drawRect(gapR, ceilY - 4 * d, w, ceilY, p)
 
-        // pulsing green glow under the exit
-        val pulse = 0.6f + 0.4f * sin(SystemClock.uptimeMillis() / 220.0).toFloat()
-        for (i in 0 until 4) {
-            p.color = Color.argb(((90 * pulse).toInt() - i * 18).coerceIn(0, 255), 118, 255, 3)
-            c.drawRect(gapL, ceilY, gapR, ceilY + (i + 1) * 16 * d, p)
-        }
-
-        // exit arrow above the gap
         val mid = (gapL + gapR) / 2f
-        p.color = Color.parseColor("#76FF03")
-        path.reset()
-        path.moveTo(mid, top - 26 * d)
-        path.lineTo(mid - 14 * d, top - 6 * d)
-        path.lineTo(mid + 14 * d, top - 6 * d)
-        path.close()
-        c.drawPath(path, p)
+        if (doorOpen) {
+            // open door: pulsing green glow and an arrow
+            val pulse = 0.6f + 0.4f * sin(SystemClock.uptimeMillis() / 220.0).toFloat()
+            for (i in 0 until 4) {
+                p.color = Color.argb(((90 * pulse).toInt() - i * 18).coerceIn(0, 255), 118, 255, 3)
+                c.drawRect(gapL, ceilY, gapR, ceilY + (i + 1) * 16 * d, p)
+            }
+            p.color = Color.parseColor("#76FF03")
+            path.reset()
+            path.moveTo(mid, top - 26 * d)
+            path.lineTo(mid - 14 * d, top - 6 * d)
+            path.lineTo(mid + 14 * d, top - 6 * d)
+            path.close()
+            c.drawPath(path, p)
+        } else {
+            // locked door: crush enough stuff to open it
+            p.color = Color.parseColor("#B71C1C")
+            c.drawRect(gapL, top, gapR, ceilY, p)
+            p.color = Color.WHITE
+            c.drawRect(gapL + 3 * d, top + 6 * d, gapR - 3 * d, top + 10 * d, p)
+        }
 
         p.textAlign = Paint.Align.LEFT
         p.typeface = Typeface.DEFAULT_BOLD
@@ -116,7 +125,17 @@ class HudView(ctx: Context) : View(ctx) {
         p.color = Color.parseColor("#76FF03")
         p.textSize = 14 * d
         c.drawText("WORTH $worth", 14 * d, ceilY + 82 * d, p)
+        p.color = if (doorOpen) Color.parseColor("#76FF03") else Color.parseColor("#FF8A80")
+        p.textSize = 12 * d
+        c.drawText(if (doorOpen) "DOOR OPEN!" else "DOOR $crushed/$target", 14 * d, ceilY + 100 * d, p)
         p.clearShadowLayer()
+
+        // progress toward opening the door
+        val frac = if (target > 0) (crushed.toFloat() / target).coerceIn(0f, 1f) else 0f
+        p.color = Color.argb(70, 255, 255, 255)
+        c.drawRect(14 * d, ceilY + 106 * d, 134 * d, ceilY + 113 * d, p)
+        p.color = if (doorOpen) Color.parseColor("#76FF03") else Color.parseColor("#FFC107")
+        c.drawRect(14 * d, ceilY + 106 * d, (14 + 120 * frac) * d, ceilY + 113 * d, p)
 
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
 
@@ -125,7 +144,7 @@ class HudView(ctx: Context) : View(ctx) {
         val b = banner
         if (b != null) {
             p.color = Color.WHITE
-            fitText(c, b, w / 2, ceilY + 112 * d, 15 * d, w * 0.9f)
+            fitText(c, b, w / 2, ceilY + 142 * d, 15 * d, w * 0.9f)
         }
         p.clearShadowLayer()
 

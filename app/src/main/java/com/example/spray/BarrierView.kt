@@ -16,6 +16,7 @@ class BarrierView(ctx: Context) : View(ctx) {
         null
     }
     var coin = false
+    var value = 10
     private val src = Rect()
     private val dst = RectF()
     private val clip = Path()
@@ -41,7 +42,11 @@ class BarrierView(ctx: Context) : View(ctx) {
         val w = width.toFloat()
         val h = height.toFloat()
         p.style = Paint.Style.FILL
-        p.color = if (coin) Color.argb(235, 255, 160, 0) else Color.argb(215, 211, 47, 47)
+        p.color = when {
+            coin -> Color.argb(235, 255, 160, 0)
+            value >= 25 -> Color.argb(230, 126, 87, 194)
+            else -> Color.argb(215, 211, 47, 47)
+        }
         c.drawRoundRect(0f, 0f, w, h, 8 * d, 8 * d, p)
 
         c.save()
@@ -77,7 +82,7 @@ class BarrierView(ctx: Context) : View(ctx) {
         p.textAlign = Paint.Align.CENTER
         p.textSize = min(15 * d, h * 0.62f)
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
-        c.drawText(if (coin) "COIN" else "BETO", (left + right) / 2, h / 2 + p.textSize * 0.35f, p)
+        c.drawText(value.toString(), (left + right) / 2, h / 2 + p.textSize * 0.35f, p)
         p.clearShadowLayer()
     }
 }
