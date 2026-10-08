@@ -75,14 +75,16 @@ class MainActivity : Activity() {
             text = "\nHow to play: Lil Betito is always moving at one steady speed. Put one finger " +
                 "down and he is pulled toward it. Use two fingers for a joystick: the first finger " +
                 "is the anchor and the second finger sets the direction. Zoom around and crush the " +
-                "bricks. Each one has a value (10, 25 or gold 50 that drops a coin). Every quarter " +
-                "of the way to the target the floor drops, which buys you time. Reach the target " +
-                "and the door in the ceiling opens: fly through it to reach the next room. The floor " +
-                "keeps rising and eats bricks it reaches, and if it squishes him the game starts " +
-                "over. Escaping pays 100, 300 or 600 points, and 1000 at the last moment, plus a " +
-                "speed bonus under 12 seconds. Rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x. " +
-                "Chain bounces without touching the floor for combos and bigger casino sounds. If " +
-                "he stops climbing for 3 seconds the edges pulse red and the floor speeds up."
+                "bricks. The smaller the brick, the more it is worth: red 10, purple 25, gold 50 (and " +
+                "it drops a coin), and long teal bars 40. Black boxes never pop, so they bounce you " +
+                "around and get in the way. Eat the apples, which sit in tight spots, for energy. " +
+                "Energy also fills while you move and when you crush bricks. When it is full he glows " +
+                "light blue and blows up: every brick explodes for double points, the ground drops " +
+                "to give you time, and more bricks pop up. Every quarter of the way to the target the " +
+                "floor drops too. Reach the target and the door in the ceiling opens: fly through it " +
+                "to reach the next room. If the rising floor squishes him, the game starts over. " +
+                "Escaping pays 100, 300 or 600 points, 1000 at the last moment, plus a speed bonus. " +
+                "Rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

@@ -17,6 +17,8 @@ class BarrierView(ctx: Context) : View(ctx) {
     }
     var coin = false
     var value = 10
+    var solid = false
+    var bar = false
     private val src = Rect()
     private val dst = RectF()
     private val clip = Path()
@@ -43,31 +45,38 @@ class BarrierView(ctx: Context) : View(ctx) {
         val h = height.toFloat()
         p.style = Paint.Style.FILL
         p.color = when {
+            solid -> Color.argb(250, 12, 12, 12)
             coin -> Color.argb(235, 255, 160, 0)
+            bar -> Color.argb(235, 0, 150, 136)
             value >= 25 -> Color.argb(230, 126, 87, 194)
             else -> Color.argb(215, 211, 47, 47)
         }
-        c.drawRoundRect(0f, 0f, w, h, 8 * d, 8 * d, p)
+        val cr = min(8 * d, h / 3f)
+        c.drawRoundRect(0f, 0f, w, h, cr, cr, p)
 
-        c.save()
-        c.clipRect(0f, 0f, w, h)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 8 * d
-        p.color = if (coin) Color.argb(120, 255, 255, 255) else Color.argb(110, 255, 235, 59)
-        var x = -h
-        while (x < w) {
-            c.drawLine(x, h, x + h, 0f, p)
-            x += 24 * d
+        if (!solid) {
+            c.save()
+            c.clipRect(0f, 0f, w, h)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = min(8 * d, h * 0.4f)
+            p.color = if (coin) Color.argb(120, 255, 255, 255) else Color.argb(110, 255, 235, 59)
+            var x = -h
+            while (x < w) {
+                c.drawLine(x, h, x + h, 0f, p)
+                x += 24 * d
+            }
+            c.restore()
         }
-        c.restore()
 
-        p.strokeWidth = 3 * d
-        p.color = Color.WHITE
-        c.drawRoundRect(1.5f * d, 1.5f * d, w - 1.5f * d, h - 1.5f * d, 8 * d, 8 * d, p)
+        val ow = min(3 * d, h * 0.2f)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = ow
+        p.color = if (solid) Color.argb(200, 200, 200, 200) else Color.WHITE
+        c.drawRoundRect(ow / 2f, ow / 2f, w - ow / 2f, h - ow / 2f, cr, cr, p)
 
         var left = 0f
         var right = w
-        if (photo != null) {
+        if (photo != null && !solid && h >= 20 * d && w >= 40 * d) {
             val size = h - 8 * d
             face(c, 4 * d, size)
             left = 8 * d + size
@@ -76,6 +85,7 @@ class BarrierView(ctx: Context) : View(ctx) {
                 right = w - 8 * d - size
             }
         }
+        if (solid || h < 14 * d || w < 26 * d) return
         p.style = Paint.Style.FILL
         p.color = Color.WHITE
         p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)

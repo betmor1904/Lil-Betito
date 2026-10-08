@@ -27,6 +27,9 @@ class HudView(ctx: Context) : View(ctx) {
     var target = 100
     var crushed = 0
     var doorOpen = false
+    var energy = 0f
+    var charged = false
+    var flash = 0f
     var steerOn = false
     var steerTwo = false
     var sx0 = 0f
@@ -137,6 +140,16 @@ class HudView(ctx: Context) : View(ctx) {
         p.color = if (doorOpen) Color.parseColor("#76FF03") else Color.parseColor("#FFC107")
         c.drawRect(14 * d, ceilY + 106 * d, (14 + 120 * frac) * d, ceilY + 113 * d, p)
 
+        // energy: fill it up and he glows light blue and blows up
+        p.textAlign = Paint.Align.LEFT
+        p.color = if (charged) Color.parseColor("#80D8FF") else Color.WHITE
+        p.textSize = 12 * d
+        c.drawText(if (charged) "CHARGED! BOOM!" else "ENERGY ${energy.toInt()}%", 14 * d, ceilY + 130 * d, p)
+        p.color = Color.argb(70, 255, 255, 255)
+        c.drawRect(14 * d, ceilY + 136 * d, 134 * d, ceilY + 143 * d, p)
+        p.color = Color.parseColor("#40C4FF")
+        c.drawRect(14 * d, ceilY + 136 * d, (14 + 120 * (energy / 100f).coerceIn(0f, 1f)) * d, ceilY + 143 * d, p)
+
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
 
         // banner
@@ -144,7 +157,7 @@ class HudView(ctx: Context) : View(ctx) {
         val b = banner
         if (b != null) {
             p.color = Color.WHITE
-            fitText(c, b, w / 2, ceilY + 142 * d, 15 * d, w * 0.9f)
+            fitText(c, b, w / 2, ceilY + 172 * d, 15 * d, w * 0.9f)
         }
         p.clearShadowLayer()
 
@@ -173,6 +186,13 @@ class HudView(ctx: Context) : View(ctx) {
             p.color = neon[combo % neon.size]
             fitText(c, txt, w / 2, h * 0.30f, size, w * 0.9f)
             p.typeface = Typeface.DEFAULT_BOLD
+        }
+
+        // explosion flash
+        if (flash > 0f) {
+            p.style = Paint.Style.FILL
+            p.color = Color.argb((210 * flash).toInt().coerceIn(0, 255), 170, 225, 255)
+            c.drawRect(0f, 0f, w, h, p)
         }
 
         // stuck: the screen edges pulse red

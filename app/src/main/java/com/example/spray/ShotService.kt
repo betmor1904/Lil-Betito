@@ -33,8 +33,12 @@ private class Barrier(
     val coin: Boolean = false,
     var removed: Boolean = false,
     var coinSpawned: Boolean = false,
-    val value: Int = 10
+    val value: Int = 10,
+    val solid: Boolean = false,
+    val cell: Int = -1
 )
+
+private class Food(val view: FoodView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float, val cell: Int)
 
 private class Coin(val view: CoinView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float)
 
@@ -83,6 +87,18 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var milestones = 0
     private var floorDrop = 0f
     private val toCrush = ArrayList<Barrier>()
+    private val foods = ArrayList<Food>()
+    private var energy = 0f
+    private var charged = false
+    private var chargeAt = 0L
+    private var flash = 0f
+    private var maxBricks = 14
+    private var gCols = 5
+    private var gRows = 6
+    private var gMargin = 0f
+    private var gCellW = 0f
+    private var gCellH = 0f
+    private var gTopY = 0f
     private var stuckUntil = 0L
     private var winStart = 0L
     private var winMin = 0f
@@ -124,6 +140,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private val kObstacle = 2
     private val kCeil = 3
     private val kCoinBrick = 4
+    private val kSolid = 5
     private val bounce = 1f
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -186,9 +203,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sh = resources.displayMetrics.heightPixels
         r = 14 * d
         ceilY = 64 * d
-        // the room is half as tall as the screen, so levels stay short and tense
+        // the ground starts at the bottom of the screen, so there is a lot of room
         val bottom = sh - 70 * d
-        floorStartY = ceilY + 2 * r + (bottom - ceilY - 2 * r) * 0.5f
+        floorStartY = bottom
         floorY = floorStartY
         best = getSharedPreferences("betito", MODE_PRIVATE).getInt("best_score", 0)
 
@@ -335,12 +352,15 @@ class ShotService : Service(), Choreographer.FrameCallback {
         gapL = center - gapW / 2f
         gapR = center + gapW / 2f
 
-        spawnObstacles()
-        // crush about 60% of the stuff in the room to open the door
-        target = max(50, (0.6f * totalValue / 10f).toInt() * 10)
-        sv?.let { it.heading = -90f; it.radiusPx = r; it.invalidate() }
+        energy = 0f
+        charged = false
+        flash = 0f
+        buildRoom()
+        // bricks keep popping up, so the points needed to open the door are a fixed target
+        target = min(1500, 200 + 80 * (level - 1))
+        sv?.let { it.heading = -90f; it.radiusPx = r; it.charged = false; it.invalidate() }
         pushHud()
-        hud?.let { it.banner = "CRUSH THE BRICKS TO OPEN THE DOOR"; it.message = "LEVEL $level"; it.invalidate() }
+        hud?.let { it.banner = "CRUSH BRICKS, EAT APPLES, FILL YOUR ENERGY"; it.message = "LEVEL $level"; it.invalidate() }
         handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1400)
         handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 5000)
         applyPos()
@@ -360,6 +380,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.target = target
             it.crushed = levelPoints
             it.doorOpen = doorOpen
+            it.energy = energy
+            it.charged = charged
+            it.flash = 0f
             it.invalidate()
         }
     }
@@ -403,38 +426,186 @@ class ShotService : Service(), Choreographer.FrameCallback {
         mascot?.play(MascotView.Move.FACEPALM, "UH OH...")
     }
 
-    /** A grid of bricks, each with a value (10, 25 or 50). Crush them for points. */
-    private fun spawnObstacles() {
-        val cols = 5
-        val rows = 4
-        val margin = 14 * d
-        val cellW = (sw - 2 * margin) / cols
-        val topY = ceilY + 120 * d
-        val botY = floorStartY - 70 * d
-        val cellH = (botY - topY) / rows
-        val cells = ArrayList<Int>()
-        for (i in 0 until cols * rows) cells.add(i)
-        cells.shuffle()
-        val count = min(10 + 2 * (level - 1), cols * rows)
-        var total = 0
-        for (k in 0 until count) {
-            val col = cells[k] % cols
-            val row = cells[k] / cols
-            val roll = Random.nextInt(100)
-            val value = if (roll < 60) 10 else if (roll < 88) 25 else 50
-            total += value
-            val w = (cellW - 8 * d).toInt()
-            val h = (22 * d).toInt()
-            val bv = BarrierView(this)
-            bv.value = value
-            bv.coin = value == 50
-            val lp = params(w, h, touchable = false)
-            lp.x = (margin + col * cellW + 4 * d).toInt()
-            lp.y = (topY + row * cellH + (cellH - h) / 2f).toInt()
-            wm.addView(bv, lp)
-            obstacles.add(Barrier(bv, lp, value == 50, value = value))
+    // ---------- the room: a grid of cells holding bricks, black boxes and food ----------
+
+    private fun layoutGrid() {
+        gMargin = 14 * d
+        gCellW = (sw - 2 * gMargin) / gCols
+        gTopY = ceilY + 150 * d
+        val botY = floorStartY - 90 * d
+        gRows = max(3, ((botY - gTopY) / (52 * d)).toInt())
+        gCellH = (botY - gTopY) / gRows
+    }
+
+    private fun cellFree(cell: Int): Boolean {
+        for (b in obstacles) if (b.cell == cell) return false
+        for (f in foods) if (f.cell == cell) return false
+        return true
+    }
+
+    /** Empty cells that are comfortably above the rising floor, in random order. */
+    private fun freeCells(): MutableList<Int> {
+        val out = ArrayList<Int>()
+        for (cell in 0 until gCols * gRows) {
+            val bottom = gTopY + (cell / gCols + 1) * gCellH
+            if (bottom < floorY - 50 * d && cellFree(cell)) out.add(cell)
         }
-        totalValue = total
+        out.shuffle()
+        return out
+    }
+
+    private fun brickCount(): Int = obstacles.count { !it.solid }
+
+    private fun placeBrick(cell: Int, wDp: Float, hDp: Float, value: Int, solid: Boolean, bar: Boolean) {
+        val w = (wDp * d).toInt()
+        val h = (hDp * d).toInt()
+        val jx = (Random.nextFloat() - 0.5f) * max(0f, gCellW - w - 4 * d) * 0.8f
+        val jy = (Random.nextFloat() - 0.5f) * max(0f, gCellH - h - 4 * d) * 0.8f
+        val bv = BarrierView(this)
+        bv.value = value
+        bv.coin = !solid && value == 50
+        bv.solid = solid
+        bv.bar = bar
+        val lp = params(w, h, touchable = false)
+        lp.x = (gMargin + (cell % gCols) * gCellW + (gCellW - w) / 2f + jx).toInt()
+        lp.y = (gTopY + (cell / gCols) * gCellH + (gCellH - h) / 2f + jy).toInt()
+        wm.addView(bv, lp)
+        obstacles.add(Barrier(bv, lp, bv.coin, value = value, solid = solid, cell = cell))
+    }
+
+    /** Smaller bricks are worth more. Long flat bars are worth extra. */
+    private fun spawnBrick(cell: Int) {
+        val roll = Random.nextInt(100)
+        when {
+            roll < 30 -> placeBrick(cell, 44f, 18f, 10, false, false)
+            roll < 45 -> placeBrick(cell, 18f, 44f, 10, false, false)
+            roll < 60 -> placeBrick(cell, 30f, 14f, 25, false, false)
+            roll < 70 -> placeBrick(cell, 14f, 30f, 25, false, false)
+            roll < 82 -> placeBrick(cell, 20f, 10f, 50, false, false)
+            else -> placeBrick(cell, 64f, 10f, 40, false, true)
+        }
+    }
+
+    private fun buildRoom() {
+        layoutGrid()
+        // permanent black boxes: they never pop, they bounce him around and get in the way
+        val blacks = min(3 + level / 2, 9)
+        var cells = freeCells()
+        for (k in 0 until min(blacks, cells.size)) {
+            if (Random.nextBoolean()) placeBrick(cells[k], 36f, 36f, 0, true, false)
+            else placeBrick(cells[k], 62f, 16f, 0, true, false)
+        }
+        maxBricks = min(14 + 2 * (level - 1), 26)
+        cells = freeCells()
+        for (k in 0 until min(maxBricks, cells.size)) spawnBrick(cells[k])
+        for (k in 0 until (if (level >= 5) 3 else 2)) spawnFood()
+    }
+
+    /** Apples go in tight spots right next to the black boxes, so you have to steer in for them. */
+    private fun spawnFood() {
+        if (over) return
+        val free = freeCells()
+        if (free.isEmpty()) return
+        var cell = free[0]
+        for (fc in free) {
+            val col = fc % gCols
+            val row = fc / gCols
+            var near = false
+            for (b in obstacles) {
+                if (b.solid && abs(b.cell % gCols - col) + abs(b.cell / gCols - row) == 1) near = true
+            }
+            if (near) {
+                cell = fc
+                break
+            }
+        }
+        val size = (24 * d).toInt()
+        val x = gMargin + (cell % gCols) * gCellW + gCellW / 2f
+        val y = gTopY + (cell / gCols) * gCellH + gCellH / 2f
+        val fv = FoodView(this)
+        val lp = params(size, size, touchable = false)
+        lp.x = (x - size / 2f).toInt()
+        lp.y = (y - size / 2f).toInt()
+        wm.addView(fv, lp)
+        foods.add(Food(fv, lp, x, y, cell))
+    }
+
+    private fun collectFood() {
+        for (f in foods.toList()) {
+            if (hypot(cx - f.x, cy - f.y) < r + 13 * d) {
+                wm.removeView(f.view)
+                foods.remove(f)
+                snd("pop", 1f, 40L)
+                sfx?.play("coin", 0.8f, 40L, 1.5f)
+                addEnergy(25f)
+                addPoints(25)
+                handler.postDelayed({ spawnFood() }, 2500)
+            } else if (floorY <= f.y + 12 * d) {
+                wm.removeView(f.view)
+                foods.remove(f)
+                handler.postDelayed({ spawnFood() }, 1500)
+            }
+        }
+    }
+
+    private fun respawnOne() {
+        if (over || brickCount() >= maxBricks) return
+        val cells = freeCells()
+        if (cells.isEmpty()) return
+        spawnBrick(cells[0])
+        snd("pop", 0.6f, 150L)
+    }
+
+    // ---------- energy: fill the bar and he glows light blue, then blows up ----------
+
+    private fun addEnergy(v: Float) {
+        if (charged || over) return
+        energy = min(100f, energy + v)
+        if (energy >= 100f) startCharge()
+    }
+
+    private fun startCharge() {
+        charged = true
+        chargeAt = SystemClock.uptimeMillis()
+        sv?.let { it.charged = true; it.invalidate() }
+        snd("rumble", 1f)
+        mascot?.play(MascotView.Move.SPIN, "CHARGED!")
+        hud?.let { it.banner = "ENERGY FULL! HE IS ABOUT TO BLOW!"; it.charged = true; it.invalidate() }
+    }
+
+    private fun blast() {
+        charged = false
+        energy = 0f
+        sv?.let { it.charged = false; it.invalidate() }
+        flash = 1f
+        snd("siren", 1f)
+        snd("bust", 1f)
+        showFx()
+        parts?.smash(cx, cy)
+        // every brick explodes for double points (the black boxes stay)
+        for (b in obstacles.toList()) {
+            if (b.solid || b.removed) continue
+            val mx = b.lp.x + b.lp.width / 2f
+            val my = b.lp.y + b.lp.height / 2f
+            b.removed = true
+            wm.removeView(b.view)
+            obstacles.remove(b)
+            parts?.smash(mx, my)
+            addPoints(b.value * 2)
+        }
+        addPoints(100)
+        // the ground drops, which buys a lot of time
+        floorDrop += 0.35f * (floorStartY - (ceilY + 2 * r))
+        hud?.let { it.banner = "BOOM! BONUS POINTS AND TIME"; it.charged = false; it.energy = 0f; it.invalidate() }
+        handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 1800)
+        // more bricks pop up so the game keeps going until the door opens
+        handler.postDelayed({
+            if (!over) {
+                val cells = freeCells()
+                for (k in 0 until min(maxBricks - brickCount(), cells.size)) spawnBrick(cells[k])
+                snd("pop", 1f, 0L)
+            }
+        }, 900)
     }
 
     /** He crushes a brick on contact: it breaks and its value counts toward the door. */
@@ -448,6 +619,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         parts?.smash(mx, my)
         snd("bust", 0.7f, 100L)
         addPoints(b.value)
+        addEnergy(5f)
+        handler.postDelayed({ respawnOne() }, 900)
     }
 
     private fun addPoints(v: Int) {
@@ -457,7 +630,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         // every quarter of the target drops the floor, which buys you time
         while (milestones < 3 && levelPoints >= target * (milestones + 1) / 4) {
             milestones++
-            floorDrop += 0.2f * (floorStartY - (ceilY + 2 * r))
+            floorDrop += 0.12f * (floorStartY - (ceilY + 2 * r))
             snd("coins", 1f)
             hud?.let { it.banner = "+TIME! THE FLOOR DROPS"; it.invalidate() }
             handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 1500)
@@ -483,6 +656,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         obstacles.clear()
         for (c in coins) wm.removeView(c.view)
         coins.clear()
+        for (f in foods) wm.removeView(f.view)
+        foods.clear()
     }
 
     /** A coin pops out of a coin brick, in the direction he bounced. */
@@ -523,11 +698,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
         obstacles.remove(b)
         snd("bust", 0.6f, 250L)
         parts?.smash(mx, my)
+        if (!b.solid) handler.postDelayed({ respawnOne() }, 900)
     }
 
     private fun levelClear() {
         over = true
         stuckUntil = 0L
+        charged = false
+        sv?.let { it.charged = false }
         vx = 0f
         vy = 0f
         steering = false
@@ -556,6 +734,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun squished() {
         over = true
         stuckUntil = 0L
+        charged = false
+        sv?.let { it.charged = false }
         vx = 0f
         vy = 0f
         steering = false
@@ -633,8 +813,14 @@ class ShotService : Service(), Choreographer.FrameCallback {
         lastHitMs = SystemClock.uptimeMillis()
         sv?.bump()
         val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
-        if (kind != kObstacle && kind != kCoinBrick) snd("tick", 0.45f + 0.35f * sp, 40L)
+        if (kind != kObstacle && kind != kCoinBrick && kind != kSolid) snd("tick", 0.45f + 0.35f * sp, 40L)
         if (kind == kFloor) {
+            parts?.burst(x, y, nx, ny, speed, false, 0)
+            return
+        }
+        if (kind == kSolid) {
+            // black boxes: a heavy thunk, no points, no combo
+            snd("bonk", 0.9f, 120L)
             parts?.burst(x, y, nx, ny, speed, false, 0)
             return
         }
@@ -751,8 +937,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 for (b in obstacles) {
                     val l = b.lp.x.toFloat()
                     val t = b.lp.y.toFloat()
-                    val bounced = collide(l, t, l + b.lp.width, t + b.lp.height, if (b.coin) kCoinBrick else kObstacle)
-                    if (bounced) {
+                    val bounced = collide(l, t, l + b.lp.width, t + b.lp.height, if (b.solid) kSolid else if (b.coin) kCoinBrick else kObstacle)
+                    if (bounced && !b.solid) {
                         if (b.coin && !b.coinSpawned) {
                             b.coinSpawned = true
                             spawnCoin()
@@ -783,6 +969,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
             if (!over) {
                 collectCoins()
+                collectFood()
+                addEnergy(2f * dt / 60f)
+                if (charged && SystemClock.uptimeMillis() - chargeAt >= 1500L) blast()
                 val nowMs = SystemClock.uptimeMillis()
                 if (cy < winMin) winMin = cy
                 if (cy > winMax) winMax = cy
@@ -812,6 +1001,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     it.worth = worth()
                     it.combo = combo
                     it.stuck = SystemClock.uptimeMillis() < stuckUntil
+                    it.energy = energy
+                    it.charged = charged
                     it.steerOn = steering
                     it.steerTwo = twoFinger
                     it.sx0 = if (twoFinger) p1x else cx
@@ -824,6 +1015,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
             applyPos()
             s.invalidate()
+        }
+        if (flash > 0f) {
+            flash = max(0f, flash - 0.04f * dt)
+            hud?.let { it.flash = flash; it.invalidate() }
         }
         if (over && dying) {
             // death in slow motion: the floor crawls up over him

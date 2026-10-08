@@ -19,6 +19,9 @@ class ShotView(ctx: Context) : View(ctx) {
     private var kickAt = 0L
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
     private var glowFor = -1f
+    var charged = false
+    private val chargeGlow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var chargeFor = -1f
 
     private val shellDark = Color.parseColor("#2E7D32")
     private val shellLight = Color.parseColor("#66BB6A")
@@ -69,6 +72,22 @@ class ShotView(ctx: Context) : View(ctx) {
             glowFor = u
         }
         c.drawCircle(0f, 0f, 2.1f * u, glow)
+        if (charged) {
+            // full of energy: a big pulsing light-blue glow
+            if (chargeFor != u) {
+                chargeGlow.shader = RadialGradient(
+                    0f, 0f, 3.4f * u,
+                    intArrayOf(Color.argb(235, 170, 225, 255), Color.argb(150, 120, 200, 255), Color.argb(0, 120, 200, 255)),
+                    floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+                )
+                chargeFor = u
+            }
+            val pul = 0.85f + 0.15f * sin(now / 90.0).toFloat()
+            c.save()
+            c.scale(pul, pul)
+            c.drawCircle(0f, 0f, 3.4f * u, chargeGlow)
+            c.restore()
+        }
         c.rotate(heading)
         val kt = now - kickAt
         val sq = if (kickAt == 0L || kt > 180L) 0f else 1f - kt / 180f
