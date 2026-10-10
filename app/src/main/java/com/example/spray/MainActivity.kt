@@ -73,28 +73,22 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play: Lil Betito is stuck in a flooded maze. Swim up through the rows of " +
-                "walls and out the gap in the ceiling before the rising floor catches him. Walls never " +
-                "break: plan your route around them. 3 lives.\n\n" +
-                "Steering: one finger and he turns toward it. Two fingers: the second finger above the " +
-                "first swims up harder (green line), below brakes (amber line). Two-finger moves burn " +
-                "your Spin meter.\n\n" +
-                "Currents (the arrows show where the water goes): blue updrafts carry you up through a " +
-                "gap, green streams push you sideways, red riptides push down through a gap (that row " +
-                "always has a second, narrow gap too), and from level 7 whirlpools spin you to a new " +
-                "heading. Inside a current the water steers, your finger only nudges. Brake to dig in " +
-                "and hold still. Swimming with the flow refills Spin.\n\n" +
-                "Bonuses, three ways to solve a room: CLEAN (never touch a wall or the ceiling), " +
-                "DIRECT (never touch a current) and EXPLORER (ride every current). Watch the tracker " +
-                "under the Spin bar.\n\n" +
-                "Apples spin the 3 slot reels at the top right: 3 of a kind pays 5x the escape value " +
-                "(777 pays 10x), a pair 2x, no match half. Worth the detour?\n\n" +
-                "Spin meter full? Tap SPIN: pulsing currents turn on for 5 seconds, the floor drops, " +
-                "and you get a free slot spin.\n\n" +
-                "Clear a room to earn 1-3 stars: escape for 1, a style bonus for 2, and two bonuses, " +
-                "a fast escape or a last-second CLUTCH escape for 3.\n\n" +
-                "Escaping pays 100, 300 or 600 points, 1000 at the last moment, plus a speed bonus. " +
-                "Rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x."
+            text = "\nHow to play (turn your phone sideways): Lil Betito is in a flooded maze. Swim to " +
+                "the glowing exit in the right wall before the stinging tide from the left catches him. " +
+                "3 lives.\n\n" +
+                "Controls: put your LEFT thumb down anywhere and drag to swim (a joystick appears where " +
+                "you touch). RIGHT thumb: tap STROKE for a burst of speed, hold it to brake and dig in " +
+                "against currents. Tap FIRE to throw a shell.\n\n" +
+                "The shark patrols the maze. If he sees you he chases (! over his head). Break his line of " +
+                "sight or hide in seaweed and he searches (?), then gives up. Seaweed hides you unless " +
+                "he's right on top of you.\n\n" +
+                "Shells (grab them in the maze, they aim at the shark for you): GREEN flies straight and " +
+                "stuns him. RED bounces off walls. Orange BOMB shells explode, stun him longer, and blow " +
+                "up the brown pillar blocks. Yellow SPEED KELP makes you fast for 5 seconds.\n\n" +
+                "Currents (arrows show the flow): blue pushes you toward the exit, green up or down, red " +
+                "pushes you back, purple whirlpools spin you. Brake to hold still in one.\n\n" +
+                "Bonuses: CLEAN (never touch a wall), DIRECT (never touch a current), EXPLORER (ride " +
+                "every current). Apples spin the slot reels. Clear a room for 1-3 stars."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

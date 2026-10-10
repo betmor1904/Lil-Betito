@@ -1,15 +1,13 @@
 # Lil Betito
 
-A small Android game that floats over your screen. Lil Betito is stuck in a flooded maze. Read the room, plan a route through the currents, and swim out the gap in the ceiling before the rising floor catches him. Grab apples to spin the slot reels.
+A sideways Android game that floats over your screen. Lil Betito is in a flooded maze with a shark on patrol. Sneak, hide in seaweed, throw shells, and reach the exit before the stinging tide catches him.
 
 ## How to play
-- Walls never break. Route around them. Touching them slows you down and costs the CLEAN bonus.
-- One finger turns him toward it. Two fingers: second finger above the first swims up harder, below brakes. Two-finger moves burn the Spin meter.
-- Currents (arrows show the flow): blue updrafts, green side streams, red riptides (level 4+), whirlpools (level 7+), pulsing currents (level 11+). Inside a current the water steers. Brake to dig in.
-- Three ways to solve a room: CLEAN (no walls), DIRECT (no currents), EXPLORER (every current).
-- Apples spin the 3 slot reels. 3 of a kind = 5x (777 = 10x), pair = 2x, no match = half.
-- Full Spin meter: tap SPIN to force currents on for 5s, drop the floor, and get a free slot spin.
-- 3 lives.
+- Turn your phone sideways. Left thumb anywhere: floating joystick. Right thumb: STROKE (tap = burst, hold = brake) and FIRE.
+- The shark chases when he sees you (!), searches when he loses you (?). Seaweed hides you.
+- Shells aim at the shark: green stuns, red bounces off walls, orange bombs explode and break pillars. Speed kelp = 5s boost.
+- Currents push you around: blue forward, green up/down, red backward, purple whirlpools.
+- Bonuses: CLEAN, DIRECT, EXPLORER. Apples spin the slot reels. 1-3 stars per room. 3 lives.
 
 ## Install
 Open the Actions tab, tap the latest Build APK run, download the screen-skater-apk artifact, and install the APK. Allow Display over other apps when asked.
