@@ -24,6 +24,7 @@ import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -36,7 +37,11 @@ private class Barrier(
     var coinSpawned: Boolean = false,
     val value: Int = 10,
     val solid: Boolean = false,
-    val cell: Int = -1
+    val cell: Int = -1,
+    // close-call tracking for black boxes
+    var near: Boolean = false,
+    var nearHit: Boolean = false,
+    var closeCall: Boolean = false
 )
 
 private class Food(val view: FoodView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float, val cell: Int)
@@ -44,8 +49,9 @@ private class Food(val view: FoodView, val lp: WindowManager.LayoutParams, val x
 private class Coin(val view: CoinView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float)
 
 /**
- * Lil Betito: the turtle never stops moving. Steer him with your finger(s) up through the gap
- * in the ceiling before the rising floor squishes him.
+ * Lil Betito, Gauntlet rules: the gap in the ceiling is always open and is the only way out.
+ * Get through it before it shrinks and before the rising floor squishes him.
+ * Casino layer: bet part of your score on each level, and coin bricks spin a 3-reel slot.
  */
 class ShotService : Service(), Choreographer.FrameCallback {
     private lateinit var wm: WindowManager
@@ -57,6 +63,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var hud: HudView? = null
     private var tapLayer: View? = null
     private var closeBtn: CloseView? = null
+    private var wagerBtn: WagerView? = null
+    private var spinBtn: SpinButtonView? = null
     private var parts: PartsView? = null
     private var mascot: MascotView? = null
     private var fx: FxView? = null
@@ -64,6 +72,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private lateinit var slp: WindowManager.LayoutParams
     private lateinit var tlp: WindowManager.LayoutParams
     private lateinit var mlp: WindowManager.LayoutParams
+    private lateinit var spinLp: WindowManager.LayoutParams
     private val obstacles = ArrayList<Barrier>()
     private val coins = ArrayList<Coin>()
     private var lastNx = 0f
@@ -77,21 +86,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var vy = 0f
     private var r = 0f
     private var lastNs = 0L
-    private var speed = 0f
     private var lastHitMs = 0L
     private var levelStartMs = 0L
     private var dying = false
-    private var levelPoints = 0
-    private var target = 100
-    private var totalValue = 0
-    private var doorOpen = false
-    private var milestones = 0
-    private var floorDrop = 0f
     private val toCrush = ArrayList<Barrier>()
     private val foods = ArrayList<Food>()
-    private var energy = 0f
-    private var charged = false
-    private var chargeAt = 0L
     private var flash = 0f
     private var maxBricks = 14
     private var gCols = 5
@@ -100,15 +99,22 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var gCellW = 0f
     private var gCellH = 0f
     private var gTopY = 0f
-    private var stuckUntil = 0L
-    private var winStart = 0L
-    private var winMin = 0f
-    private var winMax = 0f
     private var dyingUntil = 0L
+
+    // speed: drifts back to base; two-finger climb/brake pushes it between min and max
+    private val speedBase get() = 8f * d
+    private val speedMin get() = 4f * d
+    private val speedMax get() = 10f * d
+    private val climbForce get() = 3f * d
+    private val brakeForce get() = 3f * d
+    private val dragK = 0.02f
+
+    // touch
     private var steering = false
     private var steerX = 0f
     private var steerY = 0f
     private var twoFinger = false
+    private var thrust = 0          // 1 climbing, -1 braking, 0 none
     private var ptr1 = -1
     private var ptr2 = -1
     private var p1x = 0f
@@ -126,6 +132,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var gapW0 = 0f
     private var gapBase = 0f
     private var respawns = 0
+    private var floorDrop = 0f
 
     // game state
     private var level = 1
@@ -134,9 +141,27 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var launched = false
     private var over = false
     private var combo = 0
+    private var lastComboMs = 0L
+    private val comboWindow = 1500L
+    private var lives = 3
 
-    private val voices = arrayOf("wee", "wee2", "letsgo")
-    private val pent = intArrayOf(0, 2, 4, 7, 9, 12)   // happy notes the ding climbs through
+    // spin meter (was energy): fuel for two-finger control, tap SPIN when full
+    private var energy = 0f
+    private var spinShown = false
+
+    // wager
+    private var wagerPct = 10
+    private var wager = 0
+    private var wagerLocked = false
+    private var betsCloseMs = 0L
+    private val betWindow = 4000L
+
+    // slot reels: 0 cherry, 1 bell, 2 bar, 3 seven, 4 coin. Sevens are the rarest.
+    private val reels = intArrayOf(-1, -1, -1)
+    private var reelCount = 0
+    private var reelResolving = false
+    private var pendingFills = 0
+    private val symbolWeights = intArrayOf(30, 20, 15, 7, 28)
 
     private val kFloor = 0
     private val kWall = 1
@@ -210,7 +235,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val bottom = sh - 70 * d
         floorStartY = bottom
         floorY = floorStartY
-        best = getSharedPreferences("betito", MODE_PRIVATE).getInt("best_score", 0)
+        val prefs = getSharedPreferences("betito", MODE_PRIVATE)
+        best = prefs.getInt("best_score", 0)
+        wagerPct = prefs.getInt("wager_pct", 10)
 
         val h = HudView(this)
         h.ceilY = ceilY
@@ -229,8 +256,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(pv, params(sw, sh, touchable = false))
         parts = pv
 
-        // full-screen layer for steering. One finger: he is pulled toward it. Two fingers:
-        // finger 1 is the anchor and finger 2 sets the direction (anchor -> finger 2).
+        // Full-screen layer for steering. One finger: he turns toward it.
+        // Two fingers: finger 2 above finger 1 climbs, below brakes, sideways steers.
         val tv = View(this)
         tlp = params(sw, sh)
         tv.setOnTouchListener { _, e ->
@@ -299,6 +326,26 @@ class ShotService : Service(), Choreographer.FrameCallback {
         wm.addView(xv, xlp)
         closeBtn = xv
 
+        // wager - / + buttons, just left of the close button
+        val wv = WagerView(this)
+        val wlp = params((124 * d).toInt(), (40 * d).toInt())
+        wlp.x = sw - ((58 + 124) * d).toInt()
+        wlp.y = (ceilY + 40 * d).toInt()
+        wv.onMinus = { changeWager(-10) }
+        wv.onPlus = { changeWager(10) }
+        wm.addView(wv, wlp)
+        wagerBtn = wv
+
+        // SPIN button: only shows (and only takes touches) when the meter is full
+        val bv = SpinButtonView(this)
+        spinLp = params((160 * d).toInt(), (56 * d).toInt(), touchable = false)
+        spinLp.x = (sw / 2f - 80 * d).toInt()
+        spinLp.y = (sh - 66 * d).toInt()
+        bv.visibility = View.GONE
+        bv.setOnClickListener { spendSpin() }
+        wm.addView(bv, spinLp)
+        spinBtn = bv
+
         val v = ShotView(this)
         v.radiusPx = r
         slp = params((112 * d).toInt(), (112 * d).toInt(), touchable = false)
@@ -316,6 +363,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun newGame() {
         level = 1
         score = 0
+        lives = 3
         startLevel()
     }
 
@@ -329,25 +377,25 @@ class ShotService : Service(), Choreographer.FrameCallback {
         steering = false
         levelStartMs = SystemClock.uptimeMillis()
         dying = false
-        levelPoints = 0
-        doorOpen = true
         respawns = 0
-        milestones = 0
         floorDrop = 0f
-        stuckUntil = 0L
-        winStart = levelStartMs
-        winMin = floorStartY - r
-        winMax = floorStartY - r
         combo = 0
+        thrust = 0
         cx = sw / 2f
         cy = floorY - r
-        // he is moving the moment the room appears: straight up, at one constant speed
-        speed = 8f * d
+        // he is moving the moment the room appears: straight up at base speed
         vx = 0f
-        vy = -speed
-        normalizeVel()
+        vy = -speedBase
 
-        // the gap gets smaller and sits somewhere new every level
+        // betting is open for the first few seconds of every level
+        wagerLocked = false
+        wager = 0
+        betsCloseMs = levelStartMs + betWindow
+
+        // fresh reels each level
+        resetReels()
+
+        // the gap starts wide and sits somewhere new every level
         val gapW = max(2 * r + 14f * d, 90f * d - (level - 1) * 5f * d)
         val margin = 20f * d
         val center = margin + gapW / 2f + Random.nextFloat() * (sw - 2 * margin - gapW)
@@ -358,16 +406,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
         gapR = center + gapW / 2f
 
         energy = 0f
-        charged = false
         flash = 0f
+        updateSpinReady()
         buildRoom()
-        // bricks keep popping up, so the points needed to open the door are a fixed target
-        target = min(1500, 200 + 80 * (level - 1))
         sv?.let { it.heading = -90f; it.radiusPx = r; it.charged = false; it.invalidate() }
         pushHud()
-        hud?.let { it.banner = null; it.message = "LEVEL $level"; it.invalidate() }
+        hud?.let {
+            it.message = "LEVEL $level"
+            it.banner = "PLACE YOUR BET   - / +"
+            it.invalidate()
+        }
         handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1400)
-        handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 5000)
         applyPos()
         moveMascot()
     }
@@ -382,53 +431,78 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.score = score
             it.worth = worth()
             it.combo = combo
-            it.target = target
-            it.crushed = levelPoints
-            it.doorOpen = doorOpen
+            it.comboMult = comboMult()
+            it.comboLeft = 0f
+            it.lives = lives
             it.energy = energy
-            it.charged = charged
+            it.spinReady = energy >= 100f
             it.flash = 0f
+            it.reels = reels
+            it.reelResolving = reelResolving
+            it.wagerLocked = wagerLocked
+            it.wager = if (wagerLocked) wager else pendingWager()
+            it.wagerPct = wagerPct
+            it.betSecs = 0
             it.invalidate()
         }
+        wagerBtn?.let { it.pct = wagerPct; it.locked = wagerLocked; it.invalidate() }
     }
 
-    /**
-     * Points for escaping right now. The higher the floor has risen, the riskier the escape
-     * and the more it pays: 100 / 300 / 600, and 1000 right at the last moment.
-     * Later rooms multiply it: 1-5 = 1x, 6-10 = 2x, 11-20 = 3x, 21+ = 5x.
-     */
-    private fun worth(): Int {
+    /** Escape points before the level band: 100 / 300 / 600, and 1000 right at the last moment. */
+    private fun tier(): Int {
         val full = floorStartY - (ceilY + 2 * r)
         val risen = (1f - (floorY - (ceilY + 2 * r)) / full).coerceIn(0f, 1f)
-        val tier = when {
+        return when {
             risen >= 0.9f -> 1000
             risen >= 2f / 3f -> 600
             risen >= 1f / 3f -> 300
             else -> 100
         }
-        val mult = when {
-            level <= 5 -> 1
-            level <= 10 -> 2
-            level <= 20 -> 3
-            else -> 5
-        }
-        return tier * mult
     }
 
-    /** How hard your finger pulls him. He keeps his speed, so this only changes his direction. */
+    /** Level band multiplier: 1-5 = 1x, 6-10 = 2x, 11-20 = 3x, 21+ = 5x. */
+    private fun band(): Int = when {
+        level <= 5 -> 1
+        level <= 10 -> 2
+        level <= 20 -> 3
+        else -> 5
+    }
+
+    /** Points for escaping right now. */
+    private fun worth(): Int = tier() * band()
+
+    /** How hard your finger turns him. Steering only changes direction, never speed. */
     private fun steerForce(): Float = 1.5f * d
 
-    private fun riseSpeed(): Float {
-        val base = min(1.2f, 0.30f + 0.05f * (level - 1)) * d
-        return if (SystemClock.uptimeMillis() < stuckUntil) base * 2.5f else base
+    private fun riseSpeed(): Float = min(1.2f, 0.30f + 0.05f * (level - 1)) * d
+
+    // ---------- wager ----------
+
+    private fun pendingWager(): Int = score * wagerPct / 100
+
+    private fun changeWager(step: Int) {
+        if (wagerLocked) {
+            snd("wrong", 0.3f, 200L)
+            return
+        }
+        val np = (wagerPct + step).coerceIn(0, 100)
+        if (np == wagerPct) return
+        wagerPct = np
+        getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("wager_pct", wagerPct).apply()
+        if (step > 0) sfx?.play("coin", 0.7f, 60L, 1.4f) else snd("tick", 0.8f, 60L)
+        pushHud()
     }
 
-    /** No real up-and-down movement for 3 seconds: warn, rumble, and speed the floor up for a bit. */
-    private fun triggerStuck(now: Long) {
-        stuckUntil = now + 2500L
-        combo = 0
-        snd("rumble", 1f)
-        mascot?.play(MascotView.Move.FACEPALM, "UH OH...")
+    private fun lockWager() {
+        if (wagerLocked) return
+        wagerLocked = true
+        wager = pendingWager()
+        snd("clink", 1f)
+        if (!over) {
+            hud?.let { it.banner = if (wager > 0) "BETS CLOSED - WAGER $wager" else "BETS CLOSED"; it.invalidate() }
+            handler.postDelayed({ hud?.let { if (it.banner?.startsWith("BETS") == true) { it.banner = null; it.invalidate() } } }, 1400)
+        }
+        pushHud()
     }
 
     // ---------- the room: a grid of cells holding bricks, black boxes and food ----------
@@ -461,32 +535,33 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
     private fun brickCount(): Int = obstacles.count { !it.solid }
 
-    private fun placeBrick(cell: Int, wDp: Float, hDp: Float, value: Int, solid: Boolean, bar: Boolean) {
+    private fun placeBrick(cell: Int, wDp: Float, hDp: Float, value: Int, solid: Boolean, bar: Boolean, coin: Boolean = false) {
         val w = (wDp * d).toInt()
         val h = (hDp * d).toInt()
         val jx = (Random.nextFloat() - 0.5f) * max(0f, gCellW - w - 4 * d) * 0.8f
         val jy = (Random.nextFloat() - 0.5f) * max(0f, gCellH - h - 4 * d) * 0.8f
         val bv = BarrierView(this)
         bv.value = value
-        bv.coin = !solid && value == 50
+        bv.coin = coin
         bv.solid = solid
         bv.bar = bar
         val lp = params(w, h, touchable = false)
         lp.x = (gMargin + (cell % gCols) * gCellW + (gCellW - w) / 2f + jx).toInt()
         lp.y = (gTopY + (cell / gCols) * gCellH + (gCellH - h) / 2f + jy).toInt()
         wm.addView(bv, lp)
-        obstacles.add(Barrier(bv, lp, bv.coin, value = value, solid = solid, cell = cell))
+        obstacles.add(Barrier(bv, lp, coin, value = value, solid = solid, cell = cell))
     }
 
-    /** Smaller bricks are worth more. Long flat bars are worth extra. */
+    /** Smaller bricks are worth more. Long flat bars are worth extra. Gold bricks spin the slot. */
     private fun spawnBrick(cell: Int) {
         val roll = Random.nextInt(100)
         when {
-            roll < 30 -> placeBrick(cell, 44f, 18f, 10, false, false)
-            roll < 45 -> placeBrick(cell, 18f, 44f, 10, false, false)
-            roll < 60 -> placeBrick(cell, 30f, 14f, 25, false, false)
-            roll < 70 -> placeBrick(cell, 14f, 30f, 25, false, false)
-            roll < 82 -> placeBrick(cell, 20f, 10f, 50, false, false)
+            roll < 28 -> placeBrick(cell, 44f, 18f, 10, false, false)
+            roll < 42 -> placeBrick(cell, 18f, 44f, 10, false, false)
+            roll < 56 -> placeBrick(cell, 30f, 14f, 25, false, false)
+            roll < 66 -> placeBrick(cell, 14f, 30f, 25, false, false)
+            roll < 76 -> placeBrick(cell, 20f, 10f, 50, false, false, coin = true)
+            roll < 86 -> placeBrick(cell, 26f, 26f, 30, false, false, coin = true)   // gold slot brick
             else -> placeBrick(cell, 64f, 10f, 40, false, true)
         }
     }
@@ -553,6 +628,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
     }
 
+    /** Above this line (the top 40% of the room) no more bricks come back, so you can rush the gap. */
     private fun commitLine(): Float = ceilY + 0.4f * (floorStartY - ceilY)
 
     private fun respawnOne() {
@@ -564,27 +640,41 @@ class ShotService : Service(), Choreographer.FrameCallback {
         snd("pop", 0.6f, 150L)
     }
 
-    // ---------- energy: fill the bar and he glows light blue, then blows up ----------
+    // ---------- spin meter: fill it, then tap SPIN to cash it in ----------
 
     private fun addEnergy(v: Float) {
-        if (charged || over) return
-        energy = min(100f, energy + v)
-        if (energy >= 100f) startCharge()
+        if (over) return
+        energy = (energy + v).coerceIn(0f, 100f)
+        updateSpinReady()
     }
 
-    private fun startCharge() {
-        charged = true
-        chargeAt = SystemClock.uptimeMillis()
-        sv?.let { it.charged = true; it.invalidate() }
-        snd("rumble", 1f)
-        mascot?.play(MascotView.Move.SPIN, "CHARGED!")
-        hud?.let { it.banner = "ENERGY FULL! HE IS ABOUT TO BLOW!"; it.charged = true; it.invalidate() }
+    /** Shows or hides the SPIN button (and his glow) depending on whether the meter is full. */
+    private fun updateSpinReady() {
+        val ready = energy >= 100f && !over
+        if (ready == spinShown) return
+        spinShown = ready
+        sv?.let { it.charged = ready; it.invalidate() }
+        spinBtn?.let { b ->
+            b.visibility = if (ready) View.VISIBLE else View.GONE
+            spinLp.flags = if (ready) flags else flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            wm.updateViewLayout(b, spinLp)
+        }
+        if (ready) {
+            snd("rumble", 0.8f, 500L)
+            mascot?.play(MascotView.Move.SPIN, "SPIN READY!")
+        }
+    }
+
+    /** Tap SPIN: free slot spin, every brick blows up for double points, and the floor drops. */
+    private fun spendSpin() {
+        if (over || energy < 100f) return
+        energy = 0f
+        updateSpinReady()
+        blast()
+        freeSpin()
     }
 
     private fun blast() {
-        charged = false
-        energy = 0f
-        sv?.let { it.charged = false; it.invalidate() }
         flash = 1f
         snd("siren", 1f)
         snd("bust", 1f)
@@ -604,11 +694,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         addPoints(100)
         // the ground drops, which buys a lot of time
         floorDrop += 0.35f * (floorStartY - (ceilY + 2 * r))
-        hud?.let { it.banner = "BOOM! BONUS POINTS AND TIME"; it.charged = false; it.energy = 0f; it.invalidate() }
-        handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 1800)
-        // more bricks pop up so the game keeps going until the door opens
+        hud?.let { it.banner = "SPIN! BRICKS BLOWN, FLOOR DROPS"; it.invalidate() }
+        handler.postDelayed({ hud?.let { if (it.banner?.startsWith("SPIN!") == true) { it.banner = null; it.invalidate() } } }, 1800)
+        // bricks come back only if he is still low in the room
         handler.postDelayed({
-            if (!over) {
+            if (!over && cy > commitLine()) {
                 val cells = freeCells()
                 for (k in 0 until min(maxBricks - brickCount(), cells.size)) spawnBrick(cells[k])
                 snd("pop", 1f, 0L)
@@ -616,7 +706,106 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }, 900)
     }
 
-    /** He crushes a brick on contact: it breaks and its value counts toward the door. */
+    // ---------- slot reels ----------
+
+    private fun resetReels() {
+        reels[0] = -1
+        reels[1] = -1
+        reels[2] = -1
+        reelCount = 0
+        reelResolving = false
+        pendingFills = 0
+    }
+
+    private fun rollSymbol(): Int {
+        var n = Random.nextInt(symbolWeights.sum())
+        for (i in symbolWeights.indices) {
+            if (n < symbolWeights[i]) return i
+            n -= symbolWeights[i]
+        }
+        return 0
+    }
+
+    /** A coin brick was crushed: the next reel lands on a symbol. */
+    private fun fillReel() {
+        if (over) return
+        if (reelResolving || reelCount >= 3) {
+            pendingFills++
+            return
+        }
+        reels[reelCount] = rollSymbol()
+        reelCount++
+        when (reelCount) {
+            1 -> snd("pop", 1f, 0L)
+            2 -> sfx?.play("coins", 1f, 0L)
+            else -> sfx?.play("slot", 1f, 0L)
+        }
+        hud?.let { it.reels = reels; it.invalidate() }
+        if (reelCount == 3) resolveReels()
+    }
+
+    /** Free spin from the SPIN button: fills whatever reels are left, no coin bricks needed. */
+    private fun freeSpin() {
+        if (reelResolving) {
+            pendingFills += 3
+            return
+        }
+        while (reelCount < 3 && !reelResolving) fillReel()
+    }
+
+    /**
+     * Three reels are full. 3 of a kind = 5x the escape tier (three sevens = 10x jackpot),
+     * a pair = 2x, nothing = half. Slot wins are NOT multiplied by the level band.
+     */
+    private fun resolveReels() {
+        reelResolving = true
+        val a = reels[0]
+        val b = reels[1]
+        val c = reels[2]
+        val base = tier()
+        val pay: Int
+        val text: String
+        if (a == b && b == c) {
+            if (a == 3) {
+                pay = base * 10
+                text = "777 JACKPOT! +$pay"
+                sfx?.play("jackpot", 1f, 0L)
+            } else {
+                pay = base * 5
+                text = "3 OF A KIND! +$pay"
+            }
+            sfx?.play("siren", 1f, 0L)
+            snd("fanfare")
+            mascot?.play(MascotView.Move.BACKFLIP, "JACKPOT!")
+            flash = 0.6f
+        } else if (a == b || b == c || a == c) {
+            pay = base * 2
+            text = "PAIR! +$pay"
+            snd("ding", 1f)
+        } else {
+            pay = base / 2
+            text = "NO MATCH +$pay"
+            snd("wrong", 0.4f)
+        }
+        addPoints(pay)
+        hud?.let { it.reelResolving = true; it.banner = text; it.invalidate() }
+        handler.postDelayed({
+            hud?.let { if (it.banner == text) it.banner = null }
+            reels[0] = -1
+            reels[1] = -1
+            reels[2] = -1
+            reelCount = 0
+            reelResolving = false
+            hud?.let { it.reels = reels; it.reelResolving = false; it.invalidate() }
+            val n = min(3, pendingFills)
+            pendingFills -= n
+            repeat(n) { fillReel() }
+        }, 1300)
+    }
+
+    // ---------- bricks, coins, points ----------
+
+    /** He crushes a brick on contact: score + spin meter. Coin bricks also spin a reel. */
     private fun crushBrick(b: Barrier) {
         if (b.removed) return
         val mx = b.lp.x + b.lp.width / 2f
@@ -626,24 +815,19 @@ class ShotService : Service(), Choreographer.FrameCallback {
         obstacles.remove(b)
         parts?.smash(mx, my)
         snd("bust", 0.7f, 100L)
-        addPoints(b.value)
+        addPoints(b.value * comboMult())
         addEnergy(5f)
+        if (b.coin) fillReel()
         handler.postDelayed({ respawnOne() }, 900)
     }
 
     private fun addPoints(v: Int) {
         score += v
-        levelPoints += v
-        hud?.let { it.score = score; it.crushed = levelPoints; it.invalidate() }
+        hud?.let { it.score = score; it.invalidate() }
     }
 
-    private fun openDoor() {
-        doorOpen = true
-        snd("slot", 1f)
-        mascot?.play(MascotView.Move.CHEER, "DOOR OPEN!")
-        hud?.let { it.doorOpen = true; it.banner = "DOOR OPEN! GO GO GO!"; it.invalidate() }
-        handler.postDelayed({ hud?.let { it.banner = null; it.invalidate() } }, 2000)
-    }
+    /** Fast brick chains pay more: x2 at a combo of 5, x3 at 10, x4 at 15. */
+    private fun comboMult(): Int = min(4, 1 + combo / 5)
 
     private fun clearObstacles() {
         for (b in obstacles) {
@@ -678,9 +862,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
             if (hypot(cx - c.x, cy - c.y) < r + 12 * d) {
                 wm.removeView(c.view)
                 coins.remove(c)
-                score += 25
+                addPoints(25)
+                addEnergy(15f)
                 snd("coin", 1f, 40L)
-                hud?.let { it.score = score; it.invalidate() }
             } else if (floorY <= c.y + 12 * d) {
                 wm.removeView(c.view)
                 coins.remove(c)
@@ -700,14 +884,51 @@ class ShotService : Service(), Choreographer.FrameCallback {
         if (!b.solid) handler.postDelayed({ respawnOne() }, 900)
     }
 
+    /** Skimming past a black box without touching it: +10 spin, once per box per level. */
+    private fun checkCloseCalls() {
+        val zone = 10f * d
+        for (b in obstacles) {
+            if (!b.solid || b.closeCall) continue
+            val l = b.lp.x.toFloat()
+            val t = b.lp.y.toFloat()
+            val qx = cx.coerceIn(l, l + b.lp.width)
+            val qy = cy.coerceIn(t, t + b.lp.height)
+            val gap = hypot(cx - qx, cy - qy) - r
+            if (gap < zone) {
+                if (!b.near) {
+                    b.near = true
+                    b.nearHit = false
+                }
+            } else if (b.near) {
+                b.near = false
+                if (!b.nearHit) {
+                    b.closeCall = true
+                    addEnergy(10f)
+                    sfx?.play("woo", 0.7f, 300L)
+                    parts?.burst(qx, qy, 0f, -1f, 6f * d, true, 3)
+                    hud?.let { it.popup = "CLOSE CALL +10 SPIN"; it.popupAt = SystemClock.uptimeMillis(); it.invalidate() }
+                }
+            }
+        }
+    }
+
+    // ---------- end of a level ----------
+
+    private fun saveBest() {
+        if (score > best) {
+            best = score
+            getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
+        }
+    }
+
     private fun levelClear() {
+        lockWager()
         over = true
-        stuckUntil = 0L
-        charged = false
-        sv?.let { it.charged = false }
+        updateSpinReady()
         vx = 0f
         vy = 0f
         steering = false
+        val bandM = band()
         val pts = worth()
         val secs = (SystemClock.uptimeMillis() - levelStartMs) / 1000f
         val bonus = when {
@@ -716,40 +937,68 @@ class ShotService : Service(), Choreographer.FrameCallback {
             secs < 12f -> 100
             else -> 0
         }
-        score += pts + bonus
-        if (score > best) {
-            best = score
-            getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
-        }
+        val wagerWin = wager * bandM
+        score += pts + bonus + wagerWin
+        saveBest()
         snd("fanfare")
+        if (wagerWin > 0) sfx?.play("kaching", 1f, 0L)
         mascot?.play(MascotView.Move.BACKFLIP, "ESCAPED!")
         showFx()
-        hud?.let { it.stuck = false }
-        hud?.let { it.banner = if (bonus > 0) "SPEED BONUS +$bonus" else null; it.message = "LEVEL $level CLEARED! +${pts + bonus}"; it.score = score; it.best = best; it.invalidate() }
+        val lines = ArrayList<String>()
+        lines.add("ESCAPE +${pts + bonus}")
+        lines.add("TIME %.1fs".format(secs))
+        if (wager > 0) lines.add("WAGER +$wagerWin")
+        hud?.let {
+            it.message = "LEVEL $level CLEARED!"
+            it.banner = lines.joinToString("   ")
+            it.invalidate()
+        }
         level++
-        handler.postDelayed({ startLevel() }, 2200)
+        // bets for the next level open now
+        wagerLocked = false
+        wager = 0
+        pushHud()
+        handler.postDelayed({ hud?.let { it.banner = "NEXT LEVEL - SET YOUR BET   - / +"; it.invalidate() } }, 1600)
+        handler.postDelayed({ startLevel() }, 3000)
     }
 
     private fun squished() {
+        lockWager()
         over = true
-        stuckUntil = 0L
-        charged = false
-        sv?.let { it.charged = false }
+        updateSpinReady()
         vx = 0f
         vy = 0f
         steering = false
-        if (score > best) {
-            best = score
-            getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("best_score", best).apply()
-        }
+        val lost = min(wager, score)
+        score -= lost
+        saveBest()
         snd("squish")
         sv?.bump()
         dying = true
         dyingUntil = SystemClock.uptimeMillis() + 900L
         mascot?.play(MascotView.Move.FACEPALM, "SQUISHED!")
-        hud?.let { it.stuck = false }
-        hud?.let { it.banner = "FINAL SCORE $score  (LEVEL $level)"; it.message = "SQUISHED!"; it.invalidate() }
-        handler.postDelayed({ newGame() }, 3000)
+        lives--
+        wagerLocked = false
+        wager = 0
+        val lostTxt = if (lost > 0) "LOST $lost.  " else ""
+        if (lives > 0) {
+            pushHud()
+            hud?.let {
+                it.banner = lostTxt + (if (lives == 1) "LAST LIFE!" else "$lives LIVES LEFT")
+                it.message = "SQUISHED!"
+                it.invalidate()
+            }
+            handler.postDelayed({ startLevel() }, 2600)
+        } else {
+            snd("lose")
+            pushHud()
+            hud?.let {
+                it.banner = "FINAL SCORE $score  (LEVEL $level)"
+                it.message = "GAME OVER"
+                it.invalidate()
+            }
+            handler.postDelayed({ newGame() }, 3500)
+        }
     }
 
     private fun showFx() {
@@ -766,18 +1015,34 @@ class ShotService : Service(), Choreographer.FrameCallback {
         fx = null
     }
 
-    // ---------- steering ----------
+    // ---------- movement ----------
 
-    /** Keep the speed constant. Steering decides the direction, including straight sideways. */
-    private fun normalizeVel() {
-        var sp = hypot(vx, vy)
-        if (sp < 0.001f) {
-            vx = 0f
-            vy = -speed
-            sp = speed
+    /** Turn the velocity toward (dx, dy) without changing his speed. */
+    private fun steerToward(dx: Float, dy: Float, hdt: Float) {
+        val sl = hypot(dx, dy)
+        if (sl < 0.001f) return
+        val mag = hypot(vx, vy)
+        vx += dx / sl * steerForce() * hdt
+        vy += dy / sl * steerForce() * hdt
+        val nm = hypot(vx, vy)
+        if (nm > 0.001f) {
+            vx = vx / nm * mag
+            vy = vy / nm * mag
         }
-        vx = vx / sp * speed
-        vy = vy / sp * speed
+    }
+
+    /** Speed drifts back toward base (unless climbing/braking), and stays between min and max. */
+    private fun settleSpeed() {
+        var mag = hypot(vx, vy)
+        if (mag < 0.001f) {
+            vx = 0f
+            vy = -speedMin
+            mag = speedMin
+        }
+        var target = if (thrust == 0) mag + (speedBase - mag) * dragK else mag
+        target = target.coerceIn(speedMin, speedMax)
+        vx = vx / mag * target
+        vy = vy / mag * target
     }
 
     private fun applyPos() {
@@ -803,32 +1068,32 @@ class ShotService : Service(), Choreographer.FrameCallback {
     }
 
     /**
-     * Sounds go by rarity. Plain walls, the ceiling and the floor are a soft tick. Obstacles
-     * are a bonk plus a chip clink. Then the combo adds rarer sounds on top: coin drop at 3-4,
-     * slot ding at 5-7 and a jackpot siren at 8+.
+     * Walls, ceiling and floor are a soft tick. Bricks are a bonk plus a chip clink and build
+     * the combo; the combo adds rarer sounds on top: coin drop at 3-4, slot ding at 5-7, siren at 8+.
      */
     private fun hit(speed: Float, x: Float, y: Float, nx: Float, ny: Float, kind: Int) {
         if (speed <= 2.5f * d) return
         lastHitMs = SystemClock.uptimeMillis()
         sv?.bump()
         val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
-        if (kind != kObstacle && kind != kCoinBrick && kind != kSolid) snd("tick", 0.45f + 0.35f * sp, 40L)
-        if (kind == kFloor) {
-            parts?.burst(x, y, nx, ny, speed, false, 0)
-            return
-        }
         if (kind == kSolid) {
             // black boxes: a heavy thunk, no points, no combo
             snd("bonk", 0.9f, 120L)
             parts?.burst(x, y, nx, ny, speed, false, 0)
             return
         }
+        if (kind != kObstacle && kind != kCoinBrick) {
+            // walls, ceiling, floor: just a tick, no points
+            snd("tick", 0.45f + 0.35f * sp, 40L)
+            parts?.burst(x, y, nx, ny, speed, false, 0)
+            return
+        }
         combo++
+        lastComboMs = SystemClock.uptimeMillis()
         if (kind == kObstacle) {
             snd("bonk", 0.8f + 0.2f * sp, 120L)
             sfx?.play("clink", 1f, 60L)
-        }
-        if (kind == kCoinBrick) {
+        } else {
             snd("bonk", 0.6f, 120L)
             sfx?.play("kaching", 1f, 100L)
         }
@@ -837,12 +1102,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
             combo >= 5 -> sfx?.play("slot", 1f, 250L)
             combo >= 3 -> sfx?.play("coins", 1f, 250L)
         }
-        if (kind != kObstacle && kind != kCoinBrick) score += 10
-        hud?.let { it.combo = combo; it.score = score; it.invalidate() }
-        parts?.burst(x, y, nx, ny, speed, kind == kObstacle || kind == kCoinBrick, combo)
-        if (combo == 3 || combo == 5 || combo == 8) {
+        hud?.let { it.combo = combo; it.invalidate() }
+        parts?.burst(x, y, nx, ny, speed, true, combo)
+        if (combo == 3 || combo == 5 || combo == 10) {
             val dance = arrayOf(MascotView.Move.TWERK, MascotView.Move.FLOSS, MascotView.Move.SPIN).random()
-            mascot?.play(dance, if (combo == 3) "WOO!" else if (combo == 5) "COMBO!" else "UNREAL!")
+            mascot?.play(dance, if (combo == 3) "WOO!" else if (combo == 5) "x2 POINTS!" else "x3 POINTS!")
         }
     }
 
@@ -885,6 +1149,23 @@ class ShotService : Service(), Choreographer.FrameCallback {
         lastNs = ns
 
         if (launched && !over) {
+            val now = SystemClock.uptimeMillis()
+            if (!wagerLocked && now >= betsCloseMs) lockWager()
+
+            // two fingers only work while there is spin in the meter; it burns 15 per second
+            val twoActive = twoFinger && energy > 0f
+            thrust = 0
+            if (twoActive) {
+                val vdy = p2y - p1y
+                thrust = when {
+                    vdy < -20f * d -> 1
+                    vdy > 20f * d -> -1
+                    else -> 0
+                }
+                energy = max(0f, energy - 15f * dt / 60f)
+                updateSpinReady()
+            }
+
             val hdt = dt / 3f
             val rise = riseSpeed()
             val ct = ceilThick()
@@ -898,7 +1179,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 if (floorY > floorStartY) floorY = floorStartY
 
-                val elapsed = SystemClock.uptimeMillis() - levelStartMs
+                // the gap shrinks to half its size over 45 seconds; after level 5 it drifts
+                val elapsed = now - levelStartMs
                 val prog = (elapsed / 45000f).coerceIn(0f, 1f)
                 val gw = max(2 * r + 8f * d, gapW0 * (1f - 0.5f * prog))
                 if (level > 5) {
@@ -940,6 +1222,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     val l = b.lp.x.toFloat()
                     val t = b.lp.y.toFloat()
                     val bounced = collide(l, t, l + b.lp.width, t + b.lp.height, if (b.solid) kSolid else if (b.coin) kCoinBrick else kObstacle)
+                    if (bounced && b.solid) {
+                        b.near = true
+                        b.nearHit = true
+                    }
                     if (bounced && !b.solid) {
                         if (b.coin && !b.coinSpawned) {
                             b.coinSpawned = true
@@ -952,17 +1238,26 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     for (b in toCrush) crushBrick(b)
                     toCrush.clear()
                 }
+
                 if (steering) {
-                    // two fingers: pull along anchor -> finger 2. One finger: pull toward it.
-                    val sdx = if (twoFinger) p2x - p1x else steerX - cx
-                    val sdy = if (twoFinger) p2y - p1y else steerY - cy
-                    val sl = hypot(sdx, sdy)
-                    if (sl > (if (twoFinger) 12f else 20f) * d) {
-                        vx += sdx / sl * steerForce() * hdt
-                        vy += sdy / sl * steerForce() * hdt
+                    if (twoActive) {
+                        // sideways offset of finger 2 steers, vertical offset climbs or brakes
+                        val hdx = p2x - p1x
+                        if (abs(hdx) > 12f * d) steerToward(sign(hdx), 0f, hdt)
+                        if (thrust == 1) {
+                            vy -= climbForce * hdt
+                        } else if (thrust == -1) {
+                            val nvy = max(0f, abs(vy) - brakeForce * hdt)
+                            vy = sign(vy) * nvy
+                        }
+                    } else {
+                        // one finger: turn toward it
+                        val sdx = steerX - cx
+                        val sdy = steerY - cy
+                        if (hypot(sdx, sdy) > 20f * d) steerToward(sdx, sdy, hdt)
                     }
                 }
-                normalizeVel()
+                settleSpeed()
 
                 val inGap = cx > gapL + 4 * d && cx < gapR - 4 * d
                 if (cy < topBar && inGap) { levelClear(); break }
@@ -972,15 +1267,16 @@ class ShotService : Service(), Choreographer.FrameCallback {
             if (!over) {
                 collectCoins()
                 collectFood()
-                addEnergy(2f * dt / 60f)
-                if (charged && SystemClock.uptimeMillis() - chargeAt >= 1500L) blast()
+                checkCloseCalls()
+                val sinceCombo = now - lastComboMs
+                if (combo > 0 && sinceCombo > comboWindow) combo = 0
                 for (b in obstacles.toList()) {
                     if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
                 }
                 var hd = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
-                if (steering) {
-                    val tdx = if (twoFinger) p2x - p1x else steerX - cx
-                    val tdy = if (twoFinger) p2y - p1y else steerY - cy
+                if (steering && !twoActive) {
+                    val tdx = steerX - cx
+                    val tdy = steerY - cy
                     var diff = Math.toDegrees(atan2(tdy.toDouble(), tdx.toDouble())).toFloat() - hd
                     while (diff > 180f) diff -= 360f
                     while (diff < -180f) diff += 360f
@@ -993,16 +1289,28 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     it.gapR = gapR
                     it.worth = worth()
                     it.combo = combo
-                    it.stuck = SystemClock.uptimeMillis() < stuckUntil
+                    it.comboMult = comboMult()
+                    it.comboLeft = if (combo > 0) (1f - sinceCombo / comboWindow.toFloat()).coerceIn(0f, 1f) else 0f
                     it.energy = energy
-                    it.charged = charged
+                    it.spinReady = energy >= 100f
+                    it.wagerLocked = wagerLocked
+                    it.wager = if (wagerLocked) wager else pendingWager()
+                    it.wagerPct = wagerPct
+                    it.betSecs = if (wagerLocked) 0 else ((betsCloseMs - now + 999) / 1000).toInt()
                     it.steerOn = steering
-                    it.steerTwo = twoFinger
-                    it.sx0 = if (twoFinger) p1x else cx
-                    it.sy0 = if (twoFinger) p1y else cy
-                    it.sx1 = if (twoFinger) p2x else steerX
-                    it.sy1 = if (twoFinger) p2y else steerY
+                    it.steerTwo = twoActive
+                    it.steerMode = if (twoActive) thrust else 0
+                    it.sx0 = if (twoActive) p1x else cx
+                    it.sy0 = if (twoActive) p1y else cy
+                    it.sx1 = if (twoActive) p2x else steerX
+                    it.sy1 = if (twoActive) p2y else steerY
                     it.invalidate()
+                }
+                wagerBtn?.let {
+                    if (it.locked != wagerLocked) {
+                        it.locked = wagerLocked
+                        it.invalidate()
+                    }
                 }
                 moveMascot()
             }
@@ -1035,6 +1343,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
             sv?.let { wm.removeView(it) }
             tapLayer?.let { wm.removeView(it) }
             closeBtn?.let { wm.removeView(it) }
+            wagerBtn?.let { wm.removeView(it) }
+            spinBtn?.let { wm.removeView(it) }
             parts?.let { wm.removeView(it) }
             mascot?.let { wm.removeView(it) }
             hud?.let { wm.removeView(it) }
@@ -1044,6 +1354,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sv = null
         tapLayer = null
         closeBtn = null
+        wagerBtn = null
+        spinBtn = null
         parts = null
         mascot = null
         hud = null

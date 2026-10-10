@@ -72,17 +72,21 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play: Lil Betito is always moving at one steady speed. Put one finger " +
-                "down and he is pulled toward it. Use two fingers for a joystick: the first finger " +
-                "is the anchor and the second finger sets the direction. Zoom around and crush the " +
-                "bricks. The smaller the brick, the more it is worth: red 10, purple 25, gold 50 (and " +
-                "it drops a coin), and long teal bars 40. Black boxes never pop, so they bounce you " +
-                "around and get in the way. Eat the apples, which sit in tight spots, for energy. " +
-                "Energy also fills while you move and when you crush bricks. When it is full he glows " +
-                "light blue and blows up: every brick explodes for double points, the ground drops " +
-                "to give you time, and more bricks pop up. Every quarter of the way to the target the " +
-                "floor drops too. Reach the target and the door in the ceiling opens: fly through it " +
-                "to reach the next room. If the rising floor squishes him, the game starts over. " +
+            text = "\nHow to play: Fly Lil Betito up through the gap in the ceiling. The gap is always " +
+                "open, but it shrinks over time (and drifts side to side after level 5), and the floor " +
+                "keeps rising. If it squishes him you lose a life. 3 lives, then it's game over.\n\n" +
+                "Steering: one finger and he turns toward it. Two fingers: the second finger above the " +
+                "first climbs faster (green line), below brakes (amber line), and to the side steers. " +
+                "Two-finger moves burn your Spin meter.\n\n" +
+                "Bricks: crush them for points. Hit them fast to build a combo: x2 points at 5, x3 at 10, " +
+                "x4 at 15. The combo dies if you go 1.5 seconds without a brick. Black boxes never break.\n\n" +
+                "Slots: gold coin bricks spin the 3 reels at the top right. 3 of a kind pays 5x the " +
+                "escape value (777 pays 10x), a pair pays 2x, no match pays half.\n\n" +
+                "Spin meter: fills from apples, bricks, coins and close calls (skim a black box without " +
+                "touching it). When it's full, tap SPIN: every brick blows up for double points, the " +
+                "floor drops, and you get a free slot spin.\n\n" +
+                "Wager: for the first 4 seconds of each level, set your bet with - and +. Escape and " +
+                "you win it (times the room multiplier). Get squished and you lose it.\n\n" +
                 "Escaping pays 100, 300 or 600 points, 1000 at the last moment, plus a speed bonus. " +
                 "Rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x."
         })
