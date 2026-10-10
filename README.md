@@ -1,17 +1,15 @@
 # Lil Betito
 
-A small Android game that floats over your screen. Lil Betito never stops moving. Fly him up through the gap in the ceiling before it shrinks and before the rising floor squishes him. Bet on yourself each level, and crush gold bricks to spin the slot reels.
+A small Android game that floats over your screen. Lil Betito is stuck in a flooded maze. Read the room, plan a route through the currents, and swim out the gap in the ceiling before the rising floor catches him. Grab apples to spin the slot reels.
 
 ## How to play
-- The gap in the ceiling is always open. It shrinks over time, and after level 5 it drifts.
-- One finger turns him toward it. Two fingers: second finger above the first climbs, below brakes. Two-finger moves burn the Spin meter.
-- Quick swipe for a tail kick (costs a little Spin).
-- Currents push him: blue updrafts, green side streams, red riptides (level 4+), whirlpools you can slingshot out of (level 7+). Swimming with the flow refills Spin. Brake inside a current to dig in.
-- Crush bricks for points. Fast chains build a combo: x2 at 5, x3 at 10, x4 at 15. It dies after 1.5s without a brick.
-- Gold coin bricks fill the 3 slot reels. 3 of a kind = 5x (777 = 10x), pair = 2x, no match = half.
-- Fill the Spin meter (apples, bricks, coins, close calls past black boxes) and tap SPIN: bricks explode, the floor drops, free slot spin.
-- Set your wager with - / + in the first 4 seconds of a level. Escape to win it, get squished and lose it.
-- 3 lives. Escaping pays 100, 300 or 600, 1000 at the last moment, plus a speed bonus. Later rooms multiply it.
+- Walls never break. Route around them. Touching them slows you down and costs the CLEAN bonus.
+- One finger turns him toward it. Two fingers: second finger above the first swims up harder, below brakes. Two-finger moves burn the Spin meter.
+- Currents (arrows show the flow): blue updrafts, green side streams, red riptides (level 4+), whirlpools (level 7+), pulsing currents (level 11+). Inside a current the water steers. Brake to dig in.
+- Three ways to solve a room: CLEAN (no walls), DIRECT (no currents), EXPLORER (every current).
+- Apples spin the 3 slot reels. 3 of a kind = 5x (777 = 10x), pair = 2x, no match = half.
+- Full Spin meter: tap SPIN to force currents on for 5s, drop the floor, and get a free slot spin.
+- 3 lives.
 
 ## Install
 Open the Actions tab, tap the latest Build APK run, download the screen-skater-apk artifact, and install the APK. Allow Display over other apps when asked.

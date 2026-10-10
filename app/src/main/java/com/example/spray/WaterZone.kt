@@ -18,7 +18,9 @@ class WaterZone(
     val pulse: Boolean = false,
     val phaseMs: Long = 0L
 ) {
+    val id: Int = nextId++
     var power = 1f
+    var forcedUntil = 0L      // SPIN forces pulsing currents fully on until this time
     val cx get() = (l + r) / 2f
     val cy get() = (t + b) / 2f
     val rad get() = (r - l) / 2f
@@ -28,5 +30,6 @@ class WaterZone(
         const val SIDE = 1
         const val RIP = 2
         const val WHIRL = 3
+        private var nextId = 0
     }
 }

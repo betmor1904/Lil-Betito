@@ -9,7 +9,7 @@ import kotlin.math.sin
 
 /**
  * Draws the room: ceiling with the exit gap, the rising floor, level/score, the spin meter,
- * the slot reels, the wager, lives, combo, steering line and messages.
+ * the slot reels, lives, the bonus tracker, steering line and messages.
  */
 class HudView(ctx: Context) : View(ctx) {
     private val d = resources.displayMetrics.density
@@ -46,11 +46,16 @@ class HudView(ctx: Context) : View(ctx) {
     var comboLeft = 0f
     var reels = intArrayOf(-1, -1, -1)
     var reelResolving = false
-    var wager = 0
-    var wagerPct = 10
-    var wagerLocked = false
-    var betSecs = 0
     var zones: List<WaterZone> = emptyList()
+    var cleanRun = true
+    var praise: String? = null
+    var praiseAt = 0L
+    var praiseBig = false
+    var stars = 0
+    var starsAt = 0L
+    private val starPath = Path()
+    var currentsVisited = 0
+    var currentsTotal = 0
     private val water = Paint(Paint.ANTI_ALIAS_FLAG)
     private val arc = RectF()
     private val neon = intArrayOf(
@@ -155,6 +160,18 @@ class HudView(ctx: Context) : View(ctx) {
                     c.drawArc(arc, turn * (1.4f - 0.15f * i) + i * 72f, 70f, false, water)
                     c.drawArc(arc, turn * (1.4f - 0.15f * i) + i * 72f + 180f, 70f, false, water)
                 }
+                // a fixed circular arrow so the spin direction reads at a glance
+                water.color = Color.argb((220 * pw).toInt(), 255, 255, 255)
+                water.strokeWidth = 3 * d
+                val ar = z.rad * 0.55f
+                arc.set(z.cx - ar, z.cy - ar, z.cx + ar, z.cy + ar)
+                c.drawArc(arc, 0f, 270f * z.spin, false, water)
+                val endA = Math.toRadians((270.0 * z.spin)).toFloat()
+                val ex = z.cx + ar * kotlin.math.cos(endA)
+                val ey = z.cy + ar * kotlin.math.sin(endA)
+                val tx = -kotlin.math.sin(endA) * z.spin
+                val ty = kotlin.math.cos(endA) * z.spin
+                arrowHead(c, ex, ey, tx, ty)
                 continue
             }
             c.drawRect(z.l, z.t, z.r, z.b, water)
@@ -201,6 +218,102 @@ class HudView(ctx: Context) : View(ctx) {
                 }
             }
             c.restore()
+            // a big arrow in the middle shows where this water goes
+            val ax = (z.l + z.r) / 2f
+            val ay = (z.t + z.b) / 2f
+            val len = 18 * d
+            water.style = Paint.Style.STROKE
+            water.strokeWidth = 4 * d
+            water.color = Color.argb((230 * pw).toInt(), 255, 255, 255)
+            c.drawLine(ax - z.dx * len, ay - z.dy * len, ax + z.dx * len, ay + z.dy * len, water)
+            arrowHead(c, ax + z.dx * len, ay + z.dy * len, z.dx, z.dy)
+        }
+    }
+
+    private fun arrowHead(c: Canvas, x: Float, y: Float, dx: Float, dy: Float) {
+        val k = 9 * d
+        val px = -dy * k
+        val py = dx * k
+        c.drawLine(x, y, x - dx * k + px, y - dy * k + py, water)
+        c.drawLine(x, y, x - dx * k - px, y - dy * k - py, water)
+    }
+
+    /** Pop-in bounce: shoots up past full size, settles back. */
+    private fun bounce(age: Long, dur: Long): Float {
+        val t = (age.toFloat() / dur).coerceIn(0f, 1f)
+        return if (t < 0.6f) 0.3f + 1.0f * (t / 0.6f) else 1.3f - 0.3f * ((t - 0.6f) / 0.4f)
+    }
+
+    /** Big flashing praise word, candy-crush style, with sparkles flying out. */
+    private fun drawPraise(c: Canvas, w: Float, h: Float, now: Long) {
+        val txt = praise ?: return
+        val age = now - praiseAt
+        val life = if (praiseBig) 1600L else 1100L
+        if (age > life) { praise = null; return }
+        val sc = bounce(age, 280L)
+        val alpha = if (age > life - 300) ((life - age) / 300f).coerceIn(0f, 1f) else 1f
+        val y = h * 0.30f
+        val size = (if (praiseBig) 44 else 32) * d
+        c.save()
+        c.scale(sc, sc, w / 2, y)
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
+        p.style = Paint.Style.STROKE
+        p.strokeJoin = Paint.Join.ROUND
+        p.strokeWidth = 7 * d
+        p.color = Color.argb((255 * alpha).toInt(), 74, 20, 140)
+        fitText(c, txt, w / 2, y, size, w * 0.9f)
+        p.style = Paint.Style.FILL
+        val col = neon[((now / 90) % neon.size).toInt()]
+        p.color = Color.argb((255 * alpha).toInt(), Color.red(col), Color.green(col), Color.blue(col))
+        fitText(c, txt, w / 2, y, size, w * 0.9f)
+        c.restore()
+        p.typeface = Typeface.DEFAULT_BOLD
+        // sparkles bursting out from the word
+        if (praiseBig) {
+            val k = (age / 700f).coerceIn(0f, 1f)
+            for (i in 0 until 12) {
+                val a = i * 0.5236f
+                val dist = (40 + 140 * k) * d
+                val sx = w / 2 + kotlin.math.cos(a) * dist
+                val sy = y - 12 * d + kotlin.math.sin(a) * dist * 0.6f
+                val nc = neon[i % neon.size]
+                p.color = Color.argb((255 * (1f - k) * alpha).toInt(), Color.red(nc), Color.green(nc), Color.blue(nc))
+                star(c, sx, sy, (6 - 3 * k) * d)
+            }
+        }
+    }
+
+    private fun star(c: Canvas, x: Float, y: Float, rad: Float) {
+        starPath.reset()
+        for (i in 0 until 10) {
+            val a = -1.5708f + i * 0.6283f
+            val rr = if (i % 2 == 0) rad else rad * 0.45f
+            val px = x + kotlin.math.cos(a) * rr
+            val py = y + kotlin.math.sin(a) * rr
+            if (i == 0) starPath.moveTo(px, py) else starPath.lineTo(px, py)
+        }
+        starPath.close()
+        c.drawPath(starPath, p)
+    }
+
+    /** 1-3 stars fly in one after another above the LEVEL CLEARED message. */
+    private fun drawStars(c: Canvas, w: Float, h: Float, now: Long) {
+        val y = h * 0.4f - 64 * d
+        for (i in 0 until 3) {
+            val age = now - starsAt - 300L * i
+            if (age < 0) continue
+            val sc = bounce(age, 320L)
+            val x = w / 2 + (i - 1) * 62 * d
+            val rad = (if (i == 1) 30 else 24) * d * sc
+            p.style = Paint.Style.FILL
+            p.color = if (i < stars) Color.parseColor("#FFD600") else Color.argb(120, 60, 60, 80)
+            star(c, x, y - (if (i == 1) 8 * d else 0f), rad)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 3 * d
+            p.color = if (i < stars) Color.parseColor("#FF6F00") else Color.argb(160, 200, 200, 220)
+            star(c, x, y - (if (i == 1) 8 * d else 0f), rad)
+            p.style = Paint.Style.FILL
         }
     }
 
@@ -273,7 +386,24 @@ class HudView(ctx: Context) : View(ctx) {
         p.color = if (spinReady) Color.parseColor("#80D8FF") else Color.parseColor("#40C4FF")
         c.drawRect(14 * d, ceilY + 106 * d, (14 + 120 * (energy / 100f).coerceIn(0f, 1f)) * d, ceilY + 113 * d, p)
 
-        // ---- right column: slot reels, (wager buttons + close are their own windows), wager text, lives ----
+        // live style-bonus tracker: what this run can still earn
+        p.textAlign = Paint.Align.LEFT
+        p.textSize = 11 * d
+        p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        p.color = if (cleanRun) Color.parseColor("#76FF03") else Color.argb(120, 255, 255, 255)
+        val cleanTxt = if (cleanRun) "CLEAN \u2713" else "CLEAN \u2717"
+        c.drawText(cleanTxt, 14 * d, ceilY + 130 * d, p)
+        val x2 = 14 * d + p.measureText(cleanTxt) + 10 * d
+        val direct = currentsVisited == 0
+        p.color = if (direct) Color.parseColor("#FFD54F") else Color.argb(120, 255, 255, 255)
+        val directTxt = if (direct) "DIRECT \u2713" else "DIRECT \u2717"
+        c.drawText(directTxt, x2, ceilY + 130 * d, p)
+        val x3 = x2 + p.measureText(directTxt) + 10 * d
+        p.color = if (currentsTotal > 0 && currentsVisited >= currentsTotal) Color.parseColor("#80D8FF") else Color.WHITE
+        c.drawText("CURRENTS $currentsVisited/$currentsTotal", x3, ceilY + 130 * d, p)
+        p.clearShadowLayer()
+
+        // ---- right column: slot reels, (close button is its own window), lives ----
         val bs = 30 * d
         val gap = 6 * d
         val rx0 = w - 14 * d - 3 * bs - 2 * gap
@@ -302,20 +432,9 @@ class HudView(ctx: Context) : View(ctx) {
 
         p.textAlign = Paint.Align.RIGHT
         p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
-        if (wagerLocked) {
-            p.color = Color.parseColor("#FFD54F")
-            p.textSize = 15 * d
-            c.drawText("WAGER $wager", w - 14 * d, ceilY + 100 * d, p)
-        } else {
-            val blink = betSecs > 0 && (now / 300) % 2 == 0L
-            p.color = if (blink) Color.WHITE else Color.parseColor("#FFD54F")
-            p.textSize = 13 * d
-            val t = if (betSecs > 0) "BET $wagerPct% = $wager  ${betSecs}s" else "BET $wagerPct% = $wager"
-            c.drawText(t, w - 14 * d, ceilY + 100 * d, p)
-        }
         p.color = Color.parseColor("#FF1744")
         p.textSize = 18 * d
-        c.drawText("♥".repeat(lives.coerceIn(0, 3)) + "♡".repeat((3 - lives).coerceIn(0, 3)), w - 14 * d, ceilY + 122 * d, p)
+        c.drawText("♥".repeat(lives.coerceIn(0, 3)) + "♡".repeat((3 - lives).coerceIn(0, 3)), w - 14 * d, ceilY + 104 * d, p)
 
         // banner
         p.textAlign = Paint.Align.CENTER
@@ -352,27 +471,7 @@ class HudView(ctx: Context) : View(ctx) {
             if (steerTwo) c.drawCircle(sx0, sy0, 10 * d, p)
         }
 
-        // combo counter + the bar that shows how long until it runs out
-        if (combo >= 2) {
-            val txt = if (comboMult > 1) "COMBO $combo  ×$comboMult" else "COMBO $combo"
-            val size = (26 + min(combo, 10) * 2.5f) * d
-            p.textAlign = Paint.Align.CENTER
-            p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
-            p.style = Paint.Style.STROKE
-            p.strokeJoin = Paint.Join.ROUND
-            p.strokeWidth = 6 * d
-            p.color = Color.parseColor("#4A148C")
-            fitText(c, txt, w / 2, h * 0.30f, size, w * 0.9f)
-            p.style = Paint.Style.FILL
-            p.color = neon[combo % neon.size]
-            fitText(c, txt, w / 2, h * 0.30f, size, w * 0.9f)
-            p.typeface = Typeface.DEFAULT_BOLD
-            val bw = w * 0.5f
-            p.color = Color.argb(70, 255, 255, 255)
-            c.drawRect(w / 2 - bw / 2, h * 0.30f + 12 * d, w / 2 + bw / 2, h * 0.30f + 18 * d, p)
-            p.color = neon[combo % neon.size]
-            c.drawRect(w / 2 - bw / 2, h * 0.30f + 12 * d, w / 2 - bw / 2 + bw * comboLeft, h * 0.30f + 18 * d, p)
-        }
+        drawPraise(c, w, h, now)
 
         // explosion flash
         if (flash > 0f) {
@@ -389,6 +488,7 @@ class HudView(ctx: Context) : View(ctx) {
             p.setShadowLayer(8f, 3f, 3f, Color.BLACK)
             fitText(c, m, w / 2, h * 0.4f, 34 * d, w * 0.92f)
             p.clearShadowLayer()
+            if (stars > 0) drawStars(c, w, h, now)
         }
     }
 }

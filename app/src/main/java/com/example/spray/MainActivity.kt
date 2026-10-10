@@ -73,26 +73,26 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play: Fly Lil Betito up through the gap in the ceiling. The gap is always " +
-                "open, but it shrinks over time (and drifts side to side after level 5), and the floor " +
-                "keeps rising. If it squishes him you lose a life. 3 lives, then it's game over.\n\n" +
+            text = "\nHow to play: Lil Betito is stuck in a flooded maze. Swim up through the rows of " +
+                "walls and out the gap in the ceiling before the rising floor catches him. Walls never " +
+                "break: plan your route around them. 3 lives.\n\n" +
                 "Steering: one finger and he turns toward it. Two fingers: the second finger above the " +
-                "first climbs faster (green line), below brakes (amber line), and to the side steers. " +
-                "Two-finger moves burn your Spin meter. Quick swipe any finger for a TAIL KICK: a " +
-                "burst of speed that way (costs a little Spin).\n\n" +
-                "Currents: the streaky water pushes him. Blue goes up (free ride), green goes sideways, " +
-                "red riptides drag him down toward the floor. Swimming with a current refills Spin, " +
-                "fighting it drains a little. Brake (two fingers, second one lower) inside a current to " +
-                "dig in and hold still. From level 7, circle inside a whirlpool and swim out to SLINGSHOT.\n\n" +
-                "Bricks: crush them for points. Hit them fast to build a combo: x2 points at 5, x3 at 10, " +
-                "x4 at 15. The combo dies if you go 1.5 seconds without a brick. Black boxes never break.\n\n" +
-                "Slots: gold coin bricks spin the 3 reels at the top right. 3 of a kind pays 5x the " +
-                "escape value (777 pays 10x), a pair pays 2x, no match pays half.\n\n" +
-                "Spin meter: fills from apples, bricks, coins and close calls (skim a black box without " +
-                "touching it). When it's full, tap SPIN: every brick blows up for double points, the " +
-                "floor drops, and you get a free slot spin.\n\n" +
-                "Wager: for the first 4 seconds of each level, set your bet with - and +. Escape and " +
-                "you win it (times the room multiplier). Get squished and you lose it.\n\n" +
+                "first swims up harder (green line), below brakes (amber line). Two-finger moves burn " +
+                "your Spin meter.\n\n" +
+                "Currents (the arrows show where the water goes): blue updrafts carry you up through a " +
+                "gap, green streams push you sideways, red riptides push down through a gap (that row " +
+                "always has a second, narrow gap too), and from level 7 whirlpools spin you to a new " +
+                "heading. Inside a current the water steers, your finger only nudges. Brake to dig in " +
+                "and hold still. Swimming with the flow refills Spin.\n\n" +
+                "Bonuses, three ways to solve a room: CLEAN (never touch a wall or the ceiling), " +
+                "DIRECT (never touch a current) and EXPLORER (ride every current). Watch the tracker " +
+                "under the Spin bar.\n\n" +
+                "Apples spin the 3 slot reels at the top right: 3 of a kind pays 5x the escape value " +
+                "(777 pays 10x), a pair 2x, no match half. Worth the detour?\n\n" +
+                "Spin meter full? Tap SPIN: pulsing currents turn on for 5 seconds, the floor drops, " +
+                "and you get a free slot spin.\n\n" +
+                "Clear a room to earn 1-3 stars: escape for 1, a style bonus for 2, and two bonuses, " +
+                "a fast escape or a last-second CLUTCH escape for 3.\n\n" +
                 "Escaping pays 100, 300 or 600 points, 1000 at the last moment, plus a speed bonus. " +
                 "Rooms 6-10 are 2x, 11-20 are 3x and 21+ are 5x."
         })

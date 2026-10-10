@@ -29,29 +29,15 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
-private class Barrier(
-    val view: BarrierView,
-    val lp: WindowManager.LayoutParams,
-    val coin: Boolean = false,
-    var removed: Boolean = false,
-    var coinSpawned: Boolean = false,
-    val value: Int = 10,
-    val solid: Boolean = false,
-    val cell: Int = -1,
-    // close-call tracking for black boxes
-    var near: Boolean = false,
-    var nearHit: Boolean = false,
-    var closeCall: Boolean = false
-)
+/** A wall. Walls never break: you route around them. */
+private class Wall(val view: BarrierView, val lp: WindowManager.LayoutParams, var removed: Boolean = false)
 
-private class Food(val view: FoodView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float, val cell: Int)
-
-private class Coin(val view: CoinView, val lp: WindowManager.LayoutParams, val x: Float, val y: Float)
+private class Food(val view: FoodView, val x: Float, val y: Float)
 
 /**
- * Lil Betito, Gauntlet rules: the gap in the ceiling is always open and is the only way out.
- * Get through it before it shrinks and before the rising floor squishes him.
- * Casino layer: bet part of your score on each level, and coin bricks spin a 3-reel slot.
+ * Lil Betito, strategy maze: swim up through a flooded room of walls, using currents as tools
+ * and hazards, and escape through the gap in the ceiling before the rising floor catches him.
+ * Casino layer: bet part of your score on each level; apples spin a 3-reel slot.
  */
 class ShotService : Service(), Choreographer.FrameCallback {
     private lateinit var wm: WindowManager
@@ -63,7 +49,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var hud: HudView? = null
     private var tapLayer: View? = null
     private var closeBtn: CloseView? = null
-    private var wagerBtn: WagerView? = null
     private var spinBtn: SpinButtonView? = null
     private var parts: PartsView? = null
     private var mascot: MascotView? = null
@@ -73,10 +58,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private lateinit var tlp: WindowManager.LayoutParams
     private lateinit var mlp: WindowManager.LayoutParams
     private lateinit var spinLp: WindowManager.LayoutParams
-    private val obstacles = ArrayList<Barrier>()
-    private val coins = ArrayList<Coin>()
-    private var lastNx = 0f
-    private var lastNy = -1f
+    private val walls = ArrayList<Wall>()
+    private val foods = ArrayList<Food>()
     private val handler = Handler(Looper.getMainLooper())
 
     // turtle physics (velocities are pixels per 60fps frame)
@@ -86,28 +69,19 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var vy = 0f
     private var r = 0f
     private var lastNs = 0L
-    private var lastHitMs = 0L
     private var levelStartMs = 0L
     private var dying = false
-    private val toCrush = ArrayList<Barrier>()
-    private val foods = ArrayList<Food>()
     private var flash = 0f
-    private var maxBricks = 14
-    private var gCols = 5
-    private var gRows = 6
-    private var gMargin = 0f
-    private var gCellW = 0f
-    private var gCellH = 0f
-    private var gTopY = 0f
     private var dyingUntil = 0L
 
-    // speed: drifts back to base; two-finger climb/brake pushes it between min and max
-    private val speedBase get() = 8f * d
-    private val speedMin get() = 4f * d
-    private val speedMax get() = 10f * d
-    private val climbForce get() = 3f * d
-    private val brakeForce get() = 3f * d
+    // a swimmer, not a pinball: slow, and walls soak up speed
+    private val speedBase get() = 3.5f * d
+    private val speedMin get() = 2f * d
+    private val speedMax get() = 5f * d
+    private val climbForce get() = 1.5f * d
+    private val brakeForce get() = 1.5f * d
     private val dragK = 0.02f
+    private val bounce = 0.15f
 
     // touch
     private var steering = false
@@ -131,8 +105,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var gapC = 0f
     private var gapW0 = 0f
     private var gapBase = 0f
-    private var respawns = 0
     private var floorDrop = 0f
+    private var mazeTop = 0f
+    private var mazeBot = 0f
 
     // game state
     private var level = 1
@@ -140,21 +115,29 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var score = 0
     private var launched = false
     private var over = false
-    private var combo = 0
-    private var lastComboMs = 0L
-    private val comboWindow = 1500L
     private var lives = 3
 
-    // spin meter (was energy): fuel for two-finger control, tap SPIN when full
+    // style bonuses
+    private var touchedWallThisLevel = false
+    private var currentsVisited = 0
+    private var visitedAllCurrents = false
+    private val visitedZoneIds = HashSet<Int>()
+
+    // celebrations: rows passed, chime ladder, maze facts for the fancy moves
+    private var rowYs = FloatArray(0)
+    private var nextRow = -1
+    private var touchedSinceRow = false
+    private var ripRowIdx = -1
+    private var narrowC = 0f
+    private var narrowW = 0f
+    private var cheerStreak = 0
+    private val smooth = arrayOf("SMOOTH!", "SLICK!", "SHELL YEAH!", "SWIM-TASTIC!", "SO FRESH!")
+    private val yum = arrayOf("SWEET!", "YUMMY!", "TASTY!", "DELICIOUS!")
+    private val rides = arrayOf("NICE RIDE!", "SURF'S UP!", "WHEEE!")
+
+    // spin meter: fuel for two-finger control, tap SPIN when full
     private var energy = 0f
     private var spinShown = false
-
-    // wager
-    private var wagerPct = 10
-    private var wager = 0
-    private var wagerLocked = false
-    private var betsCloseMs = 0L
-    private val betWindow = 4000L
 
     // slot reels: 0 cherry, 1 bell, 2 bar, 3 seven, 4 coin. Sevens are the rarest.
     private val reels = intArrayOf(-1, -1, -1)
@@ -163,31 +146,17 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var pendingFills = 0
     private val symbolWeights = intArrayOf(30, 20, 15, 7, 28)
 
-    // water: currents push him around. (wx, wy) is the water speed where he is right now,
-    // (mx, my) is momentum he carries out of a current, a slingshot or a tail kick.
+    // water: currents push him only while he is in them
     private val zones = ArrayList<WaterZone>()
     private var wx = 0f
     private var wy = 0f
     private var mx = 0f
     private var my = 0f
-    private var whirlMs = 0L          // how long he has been circling in a whirlpool
-    private var inWhirl = false
-    private var lastWx = 0f
-    private var lastWy = 0f
-    private val kickCost = 8f
-
-    // tail kick: a quick swipe with any finger
-    private val downT = LongArray(10)
-    private val downX = FloatArray(10)
-    private val downY = FloatArray(10)
 
     private val kFloor = 0
     private val kWall = 1
-    private val kObstacle = 2
     private val kCeil = 3
-    private val kCoinBrick = 4
     private val kSolid = 5
-    private val bounce = 1f
 
     private val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -250,13 +219,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sh = resources.displayMetrics.heightPixels
         r = 14 * d
         ceilY = 64 * d
-        // the ground starts at the bottom of the screen, so there is a lot of room
-        val bottom = sh - 70 * d
-        floorStartY = bottom
+        floorStartY = sh - 70 * d
         floorY = floorStartY
         val prefs = getSharedPreferences("betito", MODE_PRIVATE)
         best = prefs.getInt("best_score", 0)
-        wagerPct = prefs.getInt("wager_pct", 10)
 
         val h = HudView(this)
         h.ceilY = ceilY
@@ -280,12 +246,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val tv = View(this)
         tlp = params(sw, sh)
         tv.setOnTouchListener { _, e ->
-            // raw coordinates for every pointer (getRawX(index) needs a newer Android)
             val ox = e.rawX - e.getX(0)
             val oy = e.rawY - e.getY(0)
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    noteDown(e.getPointerId(0), e.getX(0) + ox, e.getY(0) + oy)
                     ptr1 = e.getPointerId(0)
                     ptr2 = -1
                     p1x = e.getX(0) + ox
@@ -294,7 +258,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 MotionEvent.ACTION_POINTER_DOWN -> {
                     val i = e.actionIndex
                     val id = e.getPointerId(i)
-                    noteDown(id, e.getX(i) + ox, e.getY(i) + oy)
                     if (ptr2 == -1 && id != ptr1) {
                         ptr2 = id
                         p2x = e.getX(i) + ox
@@ -303,34 +266,21 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val i1 = e.findPointerIndex(ptr1)
-                    if (i1 >= 0) {
-                        p1x = e.getX(i1) + ox
-                        p1y = e.getY(i1) + oy
-                    }
+                    if (i1 >= 0) { p1x = e.getX(i1) + ox; p1y = e.getY(i1) + oy }
                     val i2 = e.findPointerIndex(ptr2)
-                    if (i2 >= 0) {
-                        p2x = e.getX(i2) + ox
-                        p2y = e.getY(i2) + oy
-                    }
+                    if (i2 >= 0) { p2x = e.getX(i2) + ox; p2y = e.getY(i2) + oy }
                 }
                 MotionEvent.ACTION_POINTER_UP -> {
                     val id = e.getPointerId(e.actionIndex)
-                    noteUp(id, e.getX(e.actionIndex) + ox, e.getY(e.actionIndex) + oy)
                     if (id == ptr2) {
                         ptr2 = -1
                     } else if (id == ptr1) {
                         // the anchor lifted: the other finger becomes the anchor
-                        ptr1 = ptr2
-                        p1x = p2x
-                        p1y = p2y
-                        ptr2 = -1
+                        ptr1 = ptr2; p1x = p2x; p1y = p2y; ptr2 = -1
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (e.actionMasked == MotionEvent.ACTION_UP)
-                        noteUp(e.getPointerId(0), e.getX(0) + ox, e.getY(0) + oy)
-                    ptr1 = -1
-                    ptr2 = -1
+                    ptr1 = -1; ptr2 = -1
                 }
             }
             steering = ptr1 != -1 && !over
@@ -349,16 +299,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
         xv.setOnClickListener { stopSelf() }
         wm.addView(xv, xlp)
         closeBtn = xv
-
-        // wager - / + buttons, just left of the close button
-        val wv = WagerView(this)
-        val wlp = params((124 * d).toInt(), (40 * d).toInt())
-        wlp.x = sw - ((58 + 124) * d).toInt()
-        wlp.y = (ceilY + 40 * d).toInt()
-        wv.onMinus = { changeWager(-10) }
-        wv.onPlus = { changeWager(10) }
-        wm.addView(wv, wlp)
-        wagerBtn = wv
 
         // SPIN button: only shows (and only takes touches) when the meter is full
         val bv = SpinButtonView(this)
@@ -394,39 +334,36 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private fun startLevel() {
         handler.removeCallbacksAndMessages(null)
         stopFx()
-        clearObstacles()
+        clearRoom()
         floorY = floorStartY
         launched = true
         over = false
         steering = false
         levelStartMs = SystemClock.uptimeMillis()
         dying = false
-        respawns = 0
         floorDrop = 0f
-        combo = 0
         thrust = 0
         cx = sw / 2f
         cy = floorY - r
-        // he is moving the moment the room appears: straight up at base speed
         vx = 0f
         vy = -speedBase
         mx = 0f
         my = 0f
         wx = 0f
         wy = 0f
-        inWhirl = false
-        whirlMs = 0L
 
-        // betting is open for the first few seconds of every level
-        wagerLocked = false
-        wager = 0
-        betsCloseMs = levelStartMs + betWindow
+        touchedWallThisLevel = false
+        currentsVisited = 0
+        visitedAllCurrents = false
+        visitedZoneIds.clear()
+        touchedSinceRow = false
+        cheerStreak = 0
+        hud?.let { it.stars = 0; it.praise = null }
 
-        // fresh reels each level
         resetReels()
 
-        // the gap starts wide and sits somewhere new every level
-        val gapW = max(2 * r + 14f * d, 90f * d - (level - 1) * 5f * d)
+        // the exit gap: fixed width for the whole level, somewhere new every level
+        val gapW = max(2 * r + 14f * d, 90f * d - (level - 1) * 4f * d)
         val margin = 20f * d
         val center = margin + gapW / 2f + Random.nextFloat() * (sw - 2 * margin - gapW)
         gapC = center
@@ -435,19 +372,20 @@ class ShotService : Service(), Choreographer.FrameCallback {
         gapL = center - gapW / 2f
         gapR = center + gapW / 2f
 
-        energy = 30f      // a little spin to start, so the tail kick works right away
+        energy = 30f
         flash = 0f
         updateSpinReady()
-        buildCurrents()
-        buildRoom()
+        buildMaze()
+        for (k in 0 until (if (level >= 5) 3 else 2)) spawnFood()
         sv?.let { it.heading = -90f; it.radiusPx = r; it.charged = false; it.invalidate() }
         pushHud()
         hud?.let {
             it.message = "LEVEL $level"
-            it.banner = "PLACE YOUR BET   - / +"
+            it.banner = "READ THE ROOM"
             it.invalidate()
         }
         handler.postDelayed({ hud?.let { it.message = null; it.invalidate() } }, 1400)
+        handler.postDelayed({ hud?.let { if (it.banner == "READ THE ROOM") { it.banner = null; it.invalidate() } } }, 2500)
         applyPos()
         moveMascot()
     }
@@ -461,9 +399,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.best = best
             it.score = score
             it.worth = worth()
-            it.combo = combo
-            it.comboMult = comboMult()
-            it.comboLeft = 0f
             it.lives = lives
             it.energy = energy
             it.spinReady = energy >= 100f
@@ -471,13 +406,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.reels = reels
             it.reelResolving = reelResolving
             it.zones = zones
-            it.wagerLocked = wagerLocked
-            it.wager = if (wagerLocked) wager else pendingWager()
-            it.wagerPct = wagerPct
-            it.betSecs = 0
+            it.cleanRun = !touchedWallThisLevel
+            it.currentsVisited = currentsVisited
+            it.currentsTotal = zones.size
             it.invalidate()
         }
-        wagerBtn?.let { it.pct = wagerPct; it.locked = wagerLocked; it.invalidate() }
     }
 
     /** Escape points before the level band: 100 / 300 / 600, and 1000 right at the last moment. */
@@ -500,273 +433,197 @@ class ShotService : Service(), Choreographer.FrameCallback {
         else -> 5
     }
 
-    /** Points for escaping right now. */
     private fun worth(): Int = tier() * band()
 
-    /** How hard your finger turns him. Steering only changes direction, never speed. */
-    private fun steerForce(): Float = 1.5f * d
+    private fun steerForce(): Float = 0.7f * d
 
-    private fun riseSpeed(): Float = min(1.2f, 0.30f + 0.05f * (level - 1)) * d
+    private fun riseSpeed(): Float = min(0.9f, 0.25f + 0.04f * (level - 1)) * d
 
-    // ---------- wager ----------
+    // ---------- the maze ----------
 
-    private fun pendingWager(): Int = score * wagerPct / 100
-
-    private fun changeWager(step: Int) {
-        if (wagerLocked) {
-            snd("wrong", 0.3f, 200L)
-            return
-        }
-        val np = (wagerPct + step).coerceIn(0, 100)
-        if (np == wagerPct) return
-        wagerPct = np
-        getSharedPreferences("betito", MODE_PRIVATE).edit().putInt("wager_pct", wagerPct).apply()
-        if (step > 0) sfx?.play("coin", 0.7f, 60L, 1.4f) else snd("tick", 0.8f, 60L)
-        pushHud()
+    private fun placeWall(l: Float, t: Float, w: Float, h: Float) {
+        if (w < 6 * d || h < 6 * d) return
+        val bv = BarrierView(this)
+        bv.value = 0
+        bv.solid = true
+        val lp = params(w.toInt(), h.toInt(), touchable = false)
+        lp.x = l.toInt()
+        lp.y = t.toInt()
+        wm.addView(bv, lp)
+        walls.add(Wall(bv, lp))
     }
 
-    private fun lockWager() {
-        if (wagerLocked) return
-        wagerLocked = true
-        wager = pendingWager()
-        snd("clink", 1f)
-        if (!over) {
-            hud?.let { it.banner = if (wager > 0) "BETS CLOSED - WAGER $wager" else "BETS CLOSED"; it.invalidate() }
-            handler.postDelayed({ hud?.let { if (it.banner?.startsWith("BETS") == true) { it.banner = null; it.invalidate() } } }, 1400)
+    /** A random gap center at least minApart away from the last one, so you have to zigzag. */
+    private fun pickGap(gapW: Float, prev: Float, minApart: Float): Float {
+        val lo = 16 * d + gapW / 2f
+        val hi = sw - 16 * d - gapW / 2f
+        var best = lo + Random.nextFloat() * (hi - lo)
+        for (k in 0 until 30) {
+            val c = lo + Random.nextFloat() * (hi - lo)
+            best = c
+            if (abs(c - prev) >= minApart) break
         }
-        pushHud()
+        return best
     }
-
-    // ---------- currents ----------
 
     /**
-     * Lay out this level's water. Levels 1-3: an updraft and a side stream. 4+: a riptide
-     * pulling down toward the floor. 7+: a whirlpool you can slingshot out of.
-     * 10+: a second side stream. 11+: some currents pulse on and off.
+     * Rows of walls across the room, each with a gap, zigzagging so you have to cross every row.
+     * Currents are placed on purpose:
+     *  - an updraft carries you up through one gap like an elevator
+     *  - a side stream in a lane flows toward the gap above it
+     *  - level 4+: a riptide guards one gap; that row also gets a second, narrow gap
+     *  - level 7+: a whirlpool spins in one lane
+     *  - level 10+: a second side stream, flowing the wrong way
+     *  - level 11+: some currents pulse (6s on, 6s off)
      */
-    private fun buildCurrents() {
+    private fun buildMaze() {
         zones.clear()
-        val top = ceilY
-        val bot = floorStartY
-        val hh = bot - top
+        val wallH = 14 * d
+        mazeTop = ceilY + 160 * d
+        mazeBot = floorStartY - 110 * d
+        val rows = min(3 + (level - 1) / 3, 6)
+        val ys = FloatArray(rows) { mazeTop + (mazeBot - mazeTop) * it / max(1, rows - 1) }
+        rowYs = ys
+        nextRow = rows - 1
+        val gapW = max(3.6f * r, 78 * d - (level - 1) * 2f * d)
+        val gaps = FloatArray(rows)
+
+        // which rows get special currents
+        val upRow = Random.nextInt(rows)
+        val ripRow = if (level >= 4 && rows > 1) (upRow + 1 + Random.nextInt(rows - 1)) % rows else -1
+        ripRowIdx = ripRow
+
+        var prev = sw / 2f
+        for (i in rows - 1 downTo 0) {
+            val gc = pickGap(gapW, prev, sw * 0.35f)
+            gaps[i] = gc
+            prev = gc
+            val y = ys[i]
+            if (i == ripRow) {
+                // the riptide gap, plus a narrow clean gap on the far side
+                val narrow = 2.6f * r
+                val nc = if (gc < sw / 2f) sw - 20 * d - narrow / 2f else 20 * d + narrow / 2f
+                narrowC = nc
+                narrowW = narrow
+                val a = min(gc - gapW / 2f, nc - narrow / 2f)
+                val aR = min(gc + gapW / 2f, nc + narrow / 2f)
+                val b = max(gc - gapW / 2f, nc - narrow / 2f)
+                val bR = max(gc + gapW / 2f, nc + narrow / 2f)
+                placeWall(0f, y, a, wallH)
+                placeWall(aR, y, b - aR, wallH)
+                placeWall(bR, y, sw - bR, wallH)
+            } else {
+                placeWall(0f, y, gc - gapW / 2f, wallH)
+                placeWall(gc + gapW / 2f, y, sw - (gc + gapW / 2f), wallH)
+            }
+        }
+
+        // lane i is the open water just below row i (down to the next row or the start area)
+        fun laneTop(i: Int) = ys[i] + wallH
+        fun laneBot(i: Int) = if (i + 1 < rows) ys[i + 1] else floorStartY
         val pulse = level >= 11
-        val upW = 76 * d
-        val upLeft = Random.nextBoolean()
-        val upX = if (upLeft) 20 * d + Random.nextFloat() * (sw * 0.35f - upW)
-                  else sw * 0.65f + Random.nextFloat() * (sw * 0.35f - upW - 20 * d)
-        zones.add(WaterZone(WaterZone.UP, upX, top + 0.22f * hh, upX + upW, bot, 0f, -1f, 5.5f * d,
-            pulse = pulse && Random.nextBoolean(), phaseMs = Random.nextLong(5000)))
 
-        // a band of water flowing left or right across most of the room
-        fun side(yFrac: Float, flowLeft: Boolean) {
-            val bandH = 58 * d
-            val y = top + yFrac * hh
-            val l = if (flowLeft) sw * 0.2f else 0f
-            val r = if (flowLeft) sw.toFloat() else sw * 0.8f
-            zones.add(WaterZone(WaterZone.SIDE, l, y, r, y + bandH, if (flowLeft) -1f else 1f, 0f, 4.5f * d,
-                pulse = pulse, phaseMs = Random.nextLong(5000)))
+        // updraft: an elevator through the gap of upRow
+        run {
+            val colW = min(gapW - 8 * d, 60 * d)
+            val t = if (upRow > 0) ys[upRow - 1] + wallH else ceilY + 110 * d
+            zones.add(WaterZone(WaterZone.UP, gaps[upRow] - colW / 2f, t, gaps[upRow] + colW / 2f, laneBot(upRow),
+                0f, -1f, 4f * d, pulse = pulse && Random.nextBoolean(), phaseMs = Random.nextLong(12000)))
         }
-        // the main side stream flows toward the updraft, so you can surf one into the other
-        side(0.42f + Random.nextFloat() * 0.18f, flowLeft = upLeft)
-        // later, a lower stream flows the other way, toward the riptide side
-        if (level >= 10) side(0.70f + Random.nextFloat() * 0.08f, flowLeft = !upLeft)
 
-        if (level >= 4) {
-            // riptide on the other side of the room, low down: the danger current
-            val ripW = 66 * d
-            val ripX = if (upLeft) sw * 0.55f + Random.nextFloat() * (sw * 0.4f - ripW)
-                       else 20 * d + Random.nextFloat() * (sw * 0.4f - ripW)
-            zones.add(WaterZone(WaterZone.RIP, ripX, top + 0.35f * hh, ripX + ripW, bot, 0f, 1f,
-                (3.0f + min(1.5f, 0.15f * (level - 4))) * d,
-                pulse = pulse, phaseMs = Random.nextLong(5000)))
+        // side stream: in a lane, flowing toward the gap in the row above it
+        fun sideStream(row: Int, towardGap: Boolean) {
+            val lt = laneTop(row)
+            val lb = laneBot(row)
+            if (row + 1 >= rows && lb - lt > 120 * d) return
+            val target = if (row >= 1) gaps[row] else gaps[0]
+            val flowLeft = if (towardGap) target < sw / 2f else target >= sw / 2f
+            val bandH = min(54 * d, (lb - lt) * 0.7f)
+            val mid = (lt + lb) / 2f
+            val l = if (flowLeft) min(target, sw * 0.5f) - 10 * d else 0f
+            val rr = if (flowLeft) sw.toFloat() else max(target, sw * 0.5f) + 10 * d
+            zones.add(WaterZone(WaterZone.SIDE, l.coerceAtLeast(0f), mid - bandH / 2f, rr.coerceAtMost(sw.toFloat()),
+                mid + bandH / 2f, if (flowLeft) -1f else 1f, 0f, 3.2f * d,
+                pulse = pulse, phaseMs = Random.nextLong(12000)))
         }
-        if (level >= 7) {
-            val rad = 72 * d
-            val wcx = rad + 30 * d + Random.nextFloat() * (sw - 2 * rad - 60 * d)
-            val wcy = top + (0.30f + Random.nextFloat() * 0.25f) * hh
-            zones.add(WaterZone(WaterZone.WHIRL, wcx - rad, wcy - rad, wcx + rad, wcy + rad, 0f, 0f, 5.5f * d,
+        // pick a lane that isn't the updraft's lane when possible
+        val sideRow = if (rows > 1) (upRow + 1) % rows else 0
+        sideStream(if (sideRow == rows - 1 && rows > 1) sideRow - 1 else sideRow, towardGap = true)
+
+        // riptide: pushes down through the guarded gap
+        if (ripRow >= 0) {
+            val colW = min(gapW - 6 * d, 64 * d)
+            val t = if (ripRow > 0) ys[ripRow - 1] + wallH else ceilY + 110 * d
+            zones.add(WaterZone(WaterZone.RIP, gaps[ripRow] - colW / 2f, t, gaps[ripRow] + colW / 2f,
+                laneTop(ripRow) + 40 * d, 0f, 1f, (2.0f + min(1.0f, 0.1f * (level - 4))) * d,
+                pulse = pulse, phaseMs = Random.nextLong(12000)))
+        }
+
+        // whirlpool: spins in a lane, turns you to a new heading
+        if (level >= 7 && rows >= 2) {
+            val lane = Random.nextInt(rows - 1)
+            val lt = laneTop(lane)
+            val lb = laneBot(lane)
+            val rad = min(64 * d, (lb - lt) / 2f + 10 * d)
+            val wcx = rad + 20 * d + Random.nextFloat() * (sw - 2 * rad - 40 * d)
+            val wcy = (lt + lb) / 2f
+            zones.add(WaterZone(WaterZone.WHIRL, wcx - rad, wcy - rad, wcx + rad, wcy + rad, 0f, 0f, 3.5f * d,
                 spin = if (Random.nextBoolean()) 1f else -1f))
         }
-    }
 
-    /** Fade pulsing currents on and off: 2.5s on, 2.5s off. */
-    private fun updatePulses(now: Long, dt: Float) {
-        for (z in zones) {
-            if (!z.pulse) { z.power = 1f; continue }
-            val on = ((now - levelStartMs + z.phaseMs) / 2500L) % 2L == 0L
-            val target = if (on) 1f else 0f
-            z.power += (target - z.power) * min(1f, 0.08f * dt)
+        // a second stream flowing the wrong way
+        if (level >= 10 && rows >= 3) sideStream((sideRow + 1) % (rows - 1), towardGap = false)
+
+        // pillars in the lanes from level 3: extra walls to route around, never blocking a gap
+        val pillars = if (level >= 3) min((level - 1) / 2, 6) else 0
+        var placed = 0
+        var tries = 0
+        while (placed < pillars && tries < 60) {
+            tries++
+            val lane = Random.nextInt(rows - 1).coerceAtLeast(0)
+            if (rows < 2) break
+            val lt = laneTop(lane)
+            val lb = laneBot(lane)
+            val size = 30 * d
+            if (lb - lt < size + 2 * r + 20 * d) continue
+            val px = 20 * d + Random.nextFloat() * (sw - 40 * d - size)
+            val py = lt + (lb - lt - size) / 2f
+            val pcx = px + size / 2f
+            // keep clear of the gaps above and below this lane
+            if (abs(pcx - gaps[lane]) < gapW + size) continue
+            if (lane + 1 < rows && abs(pcx - gaps[lane + 1]) < gapW + size) continue
+            placeWall(px, py, size, size)
+            placed++
         }
     }
 
-    /** Water speed at (x, y), into wx/wy. Returns the whirlpool he is in, if any. */
-    private fun sampleWater(x: Float, y: Float): WaterZone? {
-        wx = 0f
-        wy = 0f
-        var whirl: WaterZone? = null
-        for (z in zones) {
-            if (z.power < 0.02f) continue
-            if (z.kind == WaterZone.WHIRL) {
-                val ddx = x - z.cx
-                val ddy = y - z.cy
-                val dist = hypot(ddx, ddy)
-                if (dist < z.rad && dist > 1f) {
-                    val ux = ddx / dist
-                    val uy = ddy / dist
-                    // spin around the middle, with a gentle pull inward so he keeps circling
-                    val s = z.speed * z.power * (0.6f + 0.4f * dist / z.rad)
-                    wx += -uy * z.spin * s - ux * s * 0.25f
-                    wy += ux * z.spin * s - uy * s * 0.25f
-                    whirl = z
-                }
-            } else if (x >= z.l && x <= z.r && y >= z.t && y <= z.b) {
-                wx += z.dx * z.speed * z.power
-                wy += z.dy * z.speed * z.power
-            }
+    private fun overlapsWall(x: Float, y: Float, pad: Float): Boolean {
+        for (w in walls) {
+            val l = w.lp.x - pad
+            val t = w.lp.y - pad
+            if (x > l && x < w.lp.x + w.lp.width + pad && y > t && y < w.lp.y + w.lp.height + pad) return true
         }
-        return whirl
+        return false
     }
 
-    private fun noteDown(id: Int, x: Float, y: Float) {
-        if (id !in 0..9) return
-        downT[id] = SystemClock.uptimeMillis()
-        downX[id] = x
-        downY[id] = y
-    }
-
-    /** A quick swipe (under a quarter second, at least 35dp) is a tail kick that way. */
-    private fun noteUp(id: Int, x: Float, y: Float) {
-        if (id !in 0..9 || downT[id] == 0L) return
-        val held = SystemClock.uptimeMillis() - downT[id]
-        downT[id] = 0L
-        val ddx = x - downX[id]
-        val ddy = y - downY[id]
-        val dist = hypot(ddx, ddy)
-        if (held < 250L && dist > 35f * d) tailKick(ddx / dist, ddy / dist)
-    }
-
-    private fun tailKick(dirX: Float, dirY: Float) {
-        if (over || !launched) return
-        if (energy < kickCost) {
-            snd("wrong", 0.3f, 200L)
-            hud?.let { it.popup = "NEED SPIN TO KICK"; it.popupAt = SystemClock.uptimeMillis(); it.invalidate() }
-            return
-        }
-        energy -= kickCost
-        updateSpinReady()
-        val mag = hypot(vx, vy).coerceAtLeast(speedBase)
-        vx = dirX * mag
-        vy = dirY * mag
-        mx += dirX * 10f * d
-        my += dirY * 10f * d
-        sv?.kick()
-        sfx?.play("woo", 0.8f, 150L, 1.2f)
-        parts?.burst(cx - dirX * r, cy - dirY * r, -dirX, -dirY, 8f * d, false, 0)
-    }
-
-    // ---------- the room: a grid of cells holding bricks, black boxes and food ----------
-
-    private fun layoutGrid() {
-        gMargin = 14 * d
-        gCellW = (sw - 2 * gMargin) / gCols
-        gTopY = ceilY + 150 * d
-        val botY = floorStartY - 90 * d
-        gRows = max(3, ((botY - gTopY) / (52 * d)).toInt())
-        gCellH = (botY - gTopY) / gRows
-    }
-
-    private fun cellFree(cell: Int): Boolean {
-        for (b in obstacles) if (b.cell == cell) return false
-        for (f in foods) if (f.cell == cell) return false
-        return true
-    }
-
-    /** Empty cells that are comfortably above the rising floor, in random order. */
-    private fun freeCells(): MutableList<Int> {
-        val out = ArrayList<Int>()
-        for (cell in 0 until gCols * gRows) {
-            val bottom = gTopY + (cell / gCols + 1) * gCellH
-            if (bottom < floorY - 50 * d && cellFree(cell)) out.add(cell)
-        }
-        out.shuffle()
-        return out
-    }
-
-    private fun brickCount(): Int = obstacles.count { !it.solid }
-
-    private fun placeBrick(cell: Int, wDp: Float, hDp: Float, value: Int, solid: Boolean, bar: Boolean, coin: Boolean = false) {
-        val w = (wDp * d).toInt()
-        val h = (hDp * d).toInt()
-        val jx = (Random.nextFloat() - 0.5f) * max(0f, gCellW - w - 4 * d) * 0.8f
-        val jy = (Random.nextFloat() - 0.5f) * max(0f, gCellH - h - 4 * d) * 0.8f
-        val bv = BarrierView(this)
-        bv.value = value
-        bv.coin = coin
-        bv.solid = solid
-        bv.bar = bar
-        val lp = params(w, h, touchable = false)
-        lp.x = (gMargin + (cell % gCols) * gCellW + (gCellW - w) / 2f + jx).toInt()
-        lp.y = (gTopY + (cell / gCols) * gCellH + (gCellH - h) / 2f + jy).toInt()
-        wm.addView(bv, lp)
-        obstacles.add(Barrier(bv, lp, coin, value = value, solid = solid, cell = cell))
-    }
-
-    /** Smaller bricks are worth more. Long flat bars are worth extra. Gold bricks spin the slot. */
-    private fun spawnBrick(cell: Int) {
-        val roll = Random.nextInt(100)
-        when {
-            roll < 28 -> placeBrick(cell, 44f, 18f, 10, false, false)
-            roll < 42 -> placeBrick(cell, 18f, 44f, 10, false, false)
-            roll < 56 -> placeBrick(cell, 30f, 14f, 25, false, false)
-            roll < 66 -> placeBrick(cell, 14f, 30f, 25, false, false)
-            roll < 76 -> placeBrick(cell, 20f, 10f, 50, false, false, coin = true)
-            roll < 86 -> placeBrick(cell, 26f, 26f, 30, false, false, coin = true)   // gold slot brick
-            else -> placeBrick(cell, 64f, 10f, 40, false, true)
-        }
-    }
-
-    private fun buildRoom() {
-        layoutGrid()
-        // permanent black boxes: they never pop, they bounce him around and get in the way
-        val blacks = min(3 + level / 2, 9)
-        var cells = freeCells()
-        for (k in 0 until min(blacks, cells.size)) {
-            if (Random.nextBoolean()) placeBrick(cells[k], 36f, 36f, 0, true, false)
-            else placeBrick(cells[k], 62f, 16f, 0, true, false)
-        }
-        maxBricks = min(14 + 2 * (level - 1), 26)
-        cells = freeCells()
-        for (k in 0 until min(maxBricks, cells.size)) spawnBrick(cells[k])
-        for (k in 0 until (if (level >= 5) 3 else 2)) spawnFood()
-    }
-
-    /** Apples go in tight spots right next to the black boxes, so you have to steer in for them. */
+    /** Apples sit somewhere in the maze, often out of your way: is a slot pull worth the detour? */
     private fun spawnFood() {
         if (over) return
-        val free = freeCells()
-        if (free.isEmpty()) return
-        var cell = free[0]
-        for (fc in free) {
-            val col = fc % gCols
-            val row = fc / gCols
-            var near = false
-            for (b in obstacles) {
-                if (b.solid && abs(b.cell % gCols - col) + abs(b.cell / gCols - row) == 1) near = true
-            }
-            if (near) {
-                cell = fc
-                break
-            }
-        }
         val size = (24 * d).toInt()
-        val x = gMargin + (cell % gCols) * gCellW + gCellW / 2f
-        val y = gTopY + (cell / gCols) * gCellH + gCellH / 2f
-        val fv = FoodView(this)
-        val lp = params(size, size, touchable = false)
-        lp.x = (x - size / 2f).toInt()
-        lp.y = (y - size / 2f).toInt()
-        wm.addView(fv, lp)
-        foods.add(Food(fv, lp, x, y, cell))
+        for (k in 0 until 40) {
+            val x = 30 * d + Random.nextFloat() * (sw - 60 * d)
+            val y = mazeTop - 40 * d + Random.nextFloat() * (mazeBot - mazeTop + 40 * d)
+            if (y > floorY - 60 * d) continue
+            if (overlapsWall(x, y, 20 * d)) continue
+            if (foods.any { hypot(it.x - x, it.y - y) < 80 * d }) continue
+            val fv = FoodView(this)
+            val lp = params(size, size, touchable = false)
+            lp.x = (x - size / 2f).toInt()
+            lp.y = (y - size / 2f).toInt()
+            wm.addView(fv, lp)
+            foods.add(Food(fv, x, y))
+            return
+        }
     }
 
     private fun collectFood() {
@@ -776,8 +633,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 foods.remove(f)
                 snd("pop", 1f, 40L)
                 sfx?.play("coin", 0.8f, 40L, 1.5f)
-                addEnergy(25f)
+                addEnergy(15f)
                 addPoints(25)
+                celebrate(yum.random())
+                fillReel()
                 handler.postDelayed({ spawnFood() }, 2500)
             } else if (floorY <= f.y + 12 * d) {
                 wm.removeView(f.view)
@@ -787,16 +646,118 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
     }
 
-    /** Above this line (the top 40% of the room) no more bricks come back, so you can rush the gap. */
-    private fun commitLine(): Float = ceilY + 0.4f * (floorStartY - ceilY)
+    private fun clearRoom() {
+        for (w in walls) {
+            if (!w.removed) {
+                w.removed = true
+                wm.removeView(w.view)
+            }
+        }
+        walls.clear()
+        for (f in foods) wm.removeView(f.view)
+        foods.clear()
+    }
 
-    private fun respawnOne() {
-        if (over || brickCount() >= maxBricks || respawns >= maxBricks || cy < commitLine()) return
-        respawns++
-        val cells = freeCells()
-        if (cells.isEmpty()) return
-        spawnBrick(cells[0])
-        snd("pop", 0.6f, 150L)
+    /** The rising floor swallows any wall it reaches, so he can never get pinned under one. */
+    private fun swallowWall(w: Wall) {
+        w.removed = true
+        wm.removeView(w.view)
+        walls.remove(w)
+        snd("bust", 0.4f, 300L)
+        parts?.smash(w.lp.x + w.lp.width / 2f, w.lp.y + w.lp.height / 2f)
+    }
+
+    // ---------- currents ----------
+
+    /** Pulsing currents: 6s on, 6s off, fading in slowly so you can see them coming. */
+    private fun updatePulses(now: Long, dt: Float) {
+        for (z in zones) {
+            if (!z.pulse) { z.power = 1f; continue }
+            val target = if (now < z.forcedUntil) 1f
+                else if (((now - levelStartMs + z.phaseMs) / 6000L) % 2L == 0L) 1f else 0f
+            z.power += (target - z.power) * min(1f, 0.04f * dt)
+        }
+    }
+
+    /** Water speed at (x, y), into wx/wy. Records which currents he has visited. */
+    private fun sampleWater(x: Float, y: Float): WaterZone? {
+        wx = 0f
+        wy = 0f
+        var whirl: WaterZone? = null
+        for (z in zones) {
+            if (z.power < 0.02f) continue
+            var inside = false
+            if (z.kind == WaterZone.WHIRL) {
+                val ddx = x - z.cx
+                val ddy = y - z.cy
+                val dist = hypot(ddx, ddy)
+                if (dist < z.rad && dist > 1f) {
+                    val ux = ddx / dist
+                    val uy = ddy / dist
+                    val s = z.speed * z.power * (0.6f + 0.4f * dist / z.rad)
+                    wx += -uy * z.spin * s - ux * s * 0.25f
+                    wy += ux * z.spin * s - uy * s * 0.25f
+                    whirl = z
+                    inside = true
+                }
+            } else if (x >= z.l && x <= z.r && y >= z.t && y <= z.b) {
+                wx += z.dx * z.speed * z.power
+                wy += z.dy * z.speed * z.power
+                inside = true
+            }
+            if (inside && z.power > 0.5f && visitedZoneIds.add(z.id)) {
+                currentsVisited++
+                if (currentsVisited >= zones.size) {
+                    visitedAllCurrents = true
+                    celebrate("EXPLORER!", big = true)
+                } else celebrate(rides.random())
+            }
+        }
+        return whirl
+    }
+
+    // ---------- celebrations ----------
+
+    /**
+     * Candy-crush style praise: big bouncy word, a chime that climbs higher each time this level,
+     * and for big moments confetti, casino lights and a mascot dance.
+     */
+    private fun celebrate(text: String, big: Boolean = false) {
+        cheerStreak++
+        hud?.let {
+            it.praise = text
+            it.praiseAt = SystemClock.uptimeMillis()
+            it.praiseBig = big
+            it.invalidate()
+        }
+        sfx?.play("ding", 0.9f, 0L, min(2f, 0.9f + 0.1f * cheerStreak))
+        if (big) {
+            sfx?.play("coins", 1f, 200L)
+            parts?.confetti(cx, cy)
+            parts?.confetti(sw * (0.2f + 0.6f * Random.nextFloat()), sh * 0.3f)
+            showFx()
+            val dance = arrayOf(MascotView.Move.TWERK, MascotView.Move.FLOSS, MascotView.Move.SPIN, MascotView.Move.CHEER).random()
+            mascot?.play(dance, text)
+        }
+    }
+
+    /** Called every frame: did he just swim up past the next row of walls? */
+    private fun checkRows() {
+        while (nextRow >= 0 && nextRow < rowYs.size && cy + r < rowYs[nextRow]) {
+            val row = nextRow
+            nextRow--
+            val passed = rowYs.size - row
+            when {
+                row == ripRowIdx && narrowW > 0f && abs(cx - narrowC) < narrowW -> celebrate("THREADED THE NEEDLE!", big = true)
+                row == ripRowIdx -> celebrate("BEAT THE RIPTIDE!", big = true)
+                !touchedSinceRow -> celebrate(smooth.random())
+                else -> {
+                    sfx?.play("ding", 0.6f, 0L, min(2f, 0.9f + 0.1f * passed))
+                    hud?.let { it.popup = "ROW $passed/${rowYs.size}"; it.popupAt = SystemClock.uptimeMillis() }
+                }
+            }
+            touchedSinceRow = false
+        }
     }
 
     // ---------- spin meter: fill it, then tap SPIN to cash it in ----------
@@ -807,7 +768,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
         updateSpinReady()
     }
 
-    /** Shows or hides the SPIN button (and his glow) depending on whether the meter is full. */
     private fun updateSpinReady() {
         val ready = energy >= 100f && !over
         if (ready == spinShown) return
@@ -824,12 +784,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }
     }
 
-    /** Tap SPIN: free slot spin, every brick blows up for double points, and the floor drops. */
+    /** Tap SPIN: free slot spin, every pulsing current forced on for 5s, and the floor drops. */
     private fun spendSpin() {
         if (over || energy < 100f) return
         energy = 0f
         updateSpinReady()
         blast()
+        celebrate("SPIN TIME!", big = true)
         freeSpin()
     }
 
@@ -839,30 +800,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
         snd("bust", 1f)
         showFx()
         parts?.smash(cx, cy)
-        // every brick explodes for double points (the black boxes stay)
-        for (b in obstacles.toList()) {
-            if (b.solid || b.removed) continue
-            val mx = b.lp.x + b.lp.width / 2f
-            val my = b.lp.y + b.lp.height / 2f
-            b.removed = true
-            wm.removeView(b.view)
-            obstacles.remove(b)
-            parts?.smash(mx, my)
-            addPoints(b.value * 2)
-        }
-        addPoints(100)
-        // the ground drops, which buys a lot of time
-        floorDrop += 0.35f * (floorStartY - (ceilY + 2 * r))
-        hud?.let { it.banner = "SPIN! BRICKS BLOWN, FLOOR DROPS"; it.invalidate() }
-        handler.postDelayed({ hud?.let { if (it.banner?.startsWith("SPIN!") == true) { it.banner = null; it.invalidate() } } }, 1800)
-        // bricks come back only if he is still low in the room
+        val until = SystemClock.uptimeMillis() + 5000L
+        for (z in zones) if (z.pulse) z.forcedUntil = until
+        floorDrop += 0.30f * (floorStartY - (ceilY + 2 * r))
+        hud?.let { it.banner = "CURRENTS OPEN! FLOOR DROPS"; it.invalidate() }
         handler.postDelayed({
-            if (!over && cy > commitLine()) {
-                val cells = freeCells()
-                for (k in 0 until min(maxBricks - brickCount(), cells.size)) spawnBrick(cells[k])
-                snd("pop", 1f, 0L)
-            }
-        }, 900)
+            hud?.let { if (it.banner?.startsWith("CURRENTS") == true) { it.banner = null; it.invalidate() } }
+        }, 1800)
     }
 
     // ---------- slot reels ----------
@@ -885,7 +829,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         return 0
     }
 
-    /** A coin brick was crushed: the next reel lands on a symbol. */
+    /** An apple was eaten: the next reel lands on a symbol. */
     private fun fillReel() {
         if (over) return
         if (reelResolving || reelCount >= 3) {
@@ -903,7 +847,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         if (reelCount == 3) resolveReels()
     }
 
-    /** Free spin from the SPIN button: fills whatever reels are left, no coin bricks needed. */
+    /** Free spin from the SPIN button: fills whatever reels are left. */
     private fun freeSpin() {
         if (reelResolving) {
             pendingFills += 3
@@ -912,10 +856,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         while (reelCount < 3 && !reelResolving) fillReel()
     }
 
-    /**
-     * Three reels are full. 3 of a kind = 5x the escape tier (three sevens = 10x jackpot),
-     * a pair = 2x, nothing = half. Slot wins are NOT multiplied by the level band.
-     */
+    /** 3 of a kind = 5x the escape tier (777 = 10x), a pair = 2x, nothing = half. Not band-multiplied. */
     private fun resolveReels() {
         reelResolving = true
         val a = reels[0]
@@ -929,9 +870,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 pay = base * 10
                 text = "777 JACKPOT! +$pay"
                 sfx?.play("jackpot", 1f, 0L)
+                celebrate("777!!!", big = true)
             } else {
                 pay = base * 5
                 text = "3 OF A KIND! +$pay"
+                celebrate("JACKPOT!", big = true)
             }
             sfx?.play("siren", 1f, 0L)
             snd("fanfare")
@@ -940,7 +883,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         } else if (a == b || b == c || a == c) {
             pay = base * 2
             text = "PAIR! +$pay"
-            snd("ding", 1f)
+            celebrate("NICE PAIR!")
         } else {
             pay = base / 2
             text = "NO MATCH +$pay"
@@ -962,113 +905,9 @@ class ShotService : Service(), Choreographer.FrameCallback {
         }, 1300)
     }
 
-    // ---------- bricks, coins, points ----------
-
-    /** He crushes a brick on contact: score + spin meter. Coin bricks also spin a reel. */
-    private fun crushBrick(b: Barrier) {
-        if (b.removed) return
-        val mx = b.lp.x + b.lp.width / 2f
-        val my = b.lp.y + b.lp.height / 2f
-        b.removed = true
-        wm.removeView(b.view)
-        obstacles.remove(b)
-        parts?.smash(mx, my)
-        snd("bust", 0.7f, 100L)
-        addPoints(b.value * comboMult())
-        addEnergy(5f)
-        if (b.coin) fillReel()
-        handler.postDelayed({ respawnOne() }, 900)
-    }
-
     private fun addPoints(v: Int) {
         score += v
         hud?.let { it.score = score; it.invalidate() }
-    }
-
-    /** Fast brick chains pay more: x2 at a combo of 5, x3 at 10, x4 at 15. */
-    private fun comboMult(): Int = min(4, 1 + combo / 5)
-
-    private fun clearObstacles() {
-        for (b in obstacles) {
-            if (!b.removed) {
-                b.removed = true
-                wm.removeView(b.view)
-            }
-        }
-        obstacles.clear()
-        for (c in coins) wm.removeView(c.view)
-        coins.clear()
-        for (f in foods) wm.removeView(f.view)
-        foods.clear()
-    }
-
-    /** A coin pops out of a coin brick, in the direction he bounced. */
-    private fun spawnCoin() {
-        val x = (cx + lastNx * 60 * d).coerceIn(r + 10 * d, sw - r - 10 * d)
-        val y = (cy + lastNy * 60 * d).coerceIn(ceilY + 20 * d, max(ceilY + 21 * d, floorY - 30 * d))
-        val size = (22 * d).toInt()
-        val cv = CoinView(this)
-        val lp = params(size, size, touchable = false)
-        lp.x = (x - size / 2f).toInt()
-        lp.y = (y - size / 2f).toInt()
-        wm.addView(cv, lp)
-        coins.add(Coin(cv, lp, x, y))
-        snd("pop", 0.7f, 100L)
-    }
-
-    private fun collectCoins() {
-        for (c in coins.toList()) {
-            if (hypot(cx - c.x, cy - c.y) < r + 12 * d) {
-                wm.removeView(c.view)
-                coins.remove(c)
-                addPoints(25)
-                addEnergy(15f)
-                snd("coin", 1f, 40L)
-            } else if (floorY <= c.y + 12 * d) {
-                wm.removeView(c.view)
-                coins.remove(c)
-            }
-        }
-    }
-
-    /** The rising floor smashes any obstacle it reaches. */
-    private fun crushObstacle(b: Barrier) {
-        val mx = b.lp.x + b.lp.width / 2f
-        val my = b.lp.y + b.lp.height / 2f
-        b.removed = true
-        wm.removeView(b.view)
-        obstacles.remove(b)
-        snd("bust", 0.6f, 250L)
-        parts?.smash(mx, my)
-        if (!b.solid) handler.postDelayed({ respawnOne() }, 900)
-    }
-
-    /** Skimming past a black box without touching it: +10 spin, once per box per level. */
-    private fun checkCloseCalls() {
-        val zone = 10f * d
-        for (b in obstacles) {
-            if (!b.solid || b.closeCall) continue
-            val l = b.lp.x.toFloat()
-            val t = b.lp.y.toFloat()
-            val qx = cx.coerceIn(l, l + b.lp.width)
-            val qy = cy.coerceIn(t, t + b.lp.height)
-            val gap = hypot(cx - qx, cy - qy) - r
-            if (gap < zone) {
-                if (!b.near) {
-                    b.near = true
-                    b.nearHit = false
-                }
-            } else if (b.near) {
-                b.near = false
-                if (!b.nearHit) {
-                    b.closeCall = true
-                    addEnergy(10f)
-                    sfx?.play("woo", 0.7f, 300L)
-                    parts?.burst(qx, qy, 0f, -1f, 6f * d, true, 3)
-                    hud?.let { it.popup = "CLOSE CALL +10 SPIN"; it.popupAt = SystemClock.uptimeMillis(); it.invalidate() }
-                }
-            }
-        }
     }
 
     // ---------- end of a level ----------
@@ -1081,7 +920,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
     }
 
     private fun levelClear() {
-        lockWager()
         over = true
         updateSpinReady()
         vx = 0f
@@ -1091,60 +929,76 @@ class ShotService : Service(), Choreographer.FrameCallback {
         val pts = worth()
         val secs = (SystemClock.uptimeMillis() - levelStartMs) / 1000f
         val bonus = when {
-            secs < 5f -> 500
-            secs < 8f -> 250
-            secs < 12f -> 100
+            secs < 8f -> 500
+            secs < 14f -> 250
+            secs < 20f -> 100
             else -> 0
         }
-        val wagerWin = wager * bandM
-        score += pts + bonus + wagerWin
+
+        // style bonuses: three ways to solve a room
+        val cleanBonus = if (!touchedWallThisLevel) 500 * bandM else 0
+        val explorerBonus = if (visitedAllCurrents) 300 * bandM else 0
+        val directBonus = if (currentsVisited == 0) 200 * bandM else 0
+
+        score += pts + bonus + cleanBonus + explorerBonus + directBonus
         saveBest()
         snd("fanfare")
-        if (wagerWin > 0) sfx?.play("kaching", 1f, 0L)
+
+        // 1 star for escaping, +1 for any style bonus, +1 for two bonuses / a clutch or fast escape
+        val styles = (if (cleanBonus > 0) 1 else 0) + (if (explorerBonus > 0) 1 else 0) + (if (directBonus > 0) 1 else 0)
+        val clutch = tier() >= 1000
+        val stars = 1 + (if (styles >= 1) 1 else 0) + (if (styles >= 2 || clutch || bonus >= 250) 1 else 0)
+        val cheer = when {
+            clutch -> "CLUTCH!!"
+            cleanBonus > 0 && styles >= 2 -> "TURTLEY AWESOME!"
+            cleanBonus > 0 -> "SHELLTASTIC!"
+            directBonus > 0 -> "STRAIGHT SHOT!"
+            explorerBonus > 0 -> "EXPLORER!"
+            else -> "ESCAPED!"
+        }
+        celebrate(cheer, big = true)
+        if (stars == 3) sfx?.play("jackpot", 1f, 0L)
+        for (k in 0 until 4) {
+            handler.postDelayed({ parts?.confetti(sw * (0.15f + 0.7f * Random.nextFloat()), sh * (0.2f + 0.4f * Random.nextFloat())) }, 250L * k)
+        }
+        hud?.let { it.stars = stars; it.starsAt = SystemClock.uptimeMillis() }
         mascot?.play(MascotView.Move.BACKFLIP, "ESCAPED!")
         showFx()
         val lines = ArrayList<String>()
         lines.add("ESCAPE +${pts + bonus}")
-        lines.add("TIME %.1fs".format(secs))
-        if (wager > 0) lines.add("WAGER +$wagerWin")
+        lines.add("%.1fs".format(secs))
+        if (cleanBonus > 0) lines.add("CLEAN +$cleanBonus")
+        if (explorerBonus > 0) lines.add("EXPLORER +$explorerBonus")
+        if (directBonus > 0) lines.add("DIRECT +$directBonus")
         hud?.let {
             it.message = "LEVEL $level CLEARED!"
-            it.banner = lines.joinToString("   ")
+            it.banner = lines.joinToString("  ")
             it.invalidate()
         }
         level++
-        // bets for the next level open now
-        wagerLocked = false
-        wager = 0
         pushHud()
-        handler.postDelayed({ hud?.let { it.banner = "NEXT LEVEL - SET YOUR BET   - / +"; it.invalidate() } }, 1600)
-        handler.postDelayed({ startLevel() }, 3000)
+        handler.postDelayed({ startLevel() }, 3200)
     }
 
     private fun squished() {
-        lockWager()
         over = true
         updateSpinReady()
         vx = 0f
         vy = 0f
         steering = false
-        val lost = min(wager, score)
-        score -= lost
         saveBest()
         snd("squish")
         sv?.bump()
         dying = true
         dyingUntil = SystemClock.uptimeMillis() + 900L
-        mascot?.play(MascotView.Move.FACEPALM, "SQUISHED!")
+        val soClose = abs(cx - gapC) < 70 * d
+        mascot?.play(MascotView.Move.FACEPALM, if (soClose) "SO CLOSE!" else "SQUISHED!")
         lives--
-        wagerLocked = false
-        wager = 0
-        val lostTxt = if (lost > 0) "LOST $lost.  " else ""
         if (lives > 0) {
             pushHud()
             hud?.let {
-                it.banner = lostTxt + (if (lives == 1) "LAST LIFE!" else "$lives LIVES LEFT")
-                it.message = "SQUISHED!"
+                it.banner = if (lives == 1) "LAST LIFE!" else "$lives LIVES LEFT"
+                it.message = if (soClose) "SO CLOSE!" else "SQUISHED!"
                 it.invalidate()
             }
             handler.postDelayed({ startLevel() }, 2600)
@@ -1226,52 +1080,23 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sfx?.play(name, vol, gap)
     }
 
-    /**
-     * Walls, ceiling and floor are a soft tick. Bricks are a bonk plus a chip clink and build
-     * the combo; the combo adds rarer sounds on top: coin drop at 3-4, slot ding at 5-7, siren at 8+.
-     */
+    /** Every surface is the same soft thud. Touching a wall or the ceiling breaks a CLEAN run. */
     private fun hit(speed: Float, x: Float, y: Float, nx: Float, ny: Float, kind: Int) {
-        if (speed <= 2.5f * d) return
-        lastHitMs = SystemClock.uptimeMillis()
+        if (speed <= 1.5f * d) return
         sv?.bump()
-        val sp = (speed / (14f * d)).coerceIn(0.3f, 1f)
-        if (kind == kSolid) {
-            // black boxes: a heavy thunk, no points, no combo
-            snd("bonk", 0.9f, 120L)
-            parts?.burst(x, y, nx, ny, speed, false, 0)
-            return
-        }
-        if (kind != kObstacle && kind != kCoinBrick) {
-            // walls, ceiling, floor: just a tick, no points
-            snd("tick", 0.45f + 0.35f * sp, 40L)
-            parts?.burst(x, y, nx, ny, speed, false, 0)
-            return
-        }
-        combo++
-        lastComboMs = SystemClock.uptimeMillis()
-        if (kind == kObstacle) {
-            snd("bonk", 0.8f + 0.2f * sp, 120L)
-            sfx?.play("clink", 1f, 60L)
-        } else {
-            snd("bonk", 0.6f, 120L)
-            sfx?.play("kaching", 1f, 100L)
-        }
-        when {
-            combo >= 8 -> sfx?.play("siren", 1f, 900L)
-            combo >= 5 -> sfx?.play("slot", 1f, 250L)
-            combo >= 3 -> sfx?.play("coins", 1f, 250L)
-        }
-        hud?.let { it.combo = combo; it.invalidate() }
-        parts?.burst(x, y, nx, ny, speed, true, combo)
-        if (combo == 3 || combo == 5 || combo == 10) {
-            val dance = arrayOf(MascotView.Move.TWERK, MascotView.Move.FLOSS, MascotView.Move.SPIN).random()
-            mascot?.play(dance, if (combo == 3) "WOO!" else if (combo == 5) "x2 POINTS!" else "x3 POINTS!")
+        val sp = (speed / (6f * d)).coerceIn(0.2f, 1f)
+        snd("tick", 0.3f + 0.3f * sp, 60L)
+        parts?.burst(x, y, nx, ny, speed, false, 0)
+        if (kind != kFloor) touchedSinceRow = true
+        if (kind != kFloor && !touchedWallThisLevel) {
+            touchedWallThisLevel = true
+            hud?.let { it.cleanRun = false; it.invalidate() }
         }
     }
 
     // ---------- physics loop ----------
 
-    /** Circle-vs-rectangle bounce for the ceiling pieces and the obstacles. */
+    /** Circle-vs-rectangle. Walls soak up the hit: you stop, then push off. */
     private fun collide(l: Float, t: Float, rr: Float, bb: Float, kind: Int): Boolean {
         val qx = cx.coerceIn(l, rr)
         val qy = cy.coerceIn(t, bb)
@@ -1290,18 +1115,16 @@ class ShotService : Service(), Choreographer.FrameCallback {
         } else {
             cy = t - r
         }
-        val mn = mx * nx + my * ny
-        if (mn < 0f) {
-            mx = (mx - 2 * mn * nx) * 0.6f
-            my = (my - 2 * mn * ny) * 0.6f
-        }
         val vn = vx * nx + vy * ny
         if (vn < 0f) {
+            val vtx = vx - vn * nx
+            val vty = vy - vn * ny
+            val newVn = -vn * bounce
+            vx = newVn * nx + vtx * 0.2f
+            vy = newVn * ny + vty * 0.2f
+            mx *= 0.3f
+            my *= 0.3f
             hit(-vn, cx - nx * r, cy - ny * r, nx, ny, kind)
-            vx -= (1 + bounce) * vn * nx
-            vy -= (1 + bounce) * vn * ny
-            lastNx = nx
-            lastNy = ny
             return true
         }
         return false
@@ -1314,7 +1137,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
         if (launched && !over) {
             val now = SystemClock.uptimeMillis()
-            if (!wagerLocked && now >= betsCloseMs) lockWager()
 
             // two fingers only work while there is spin in the meter; it burns 15 per second
             val twoActive = twoFinger && energy > 0f
@@ -1346,8 +1168,15 @@ class ShotService : Service(), Choreographer.FrameCallback {
 
             val hdt = dt / 3f
             val rise = riseSpeed()
-            val ct = ceilThick()
-            val topBar = ceilY - ct
+            val topBar = ceilY - ceilThick()
+            // the gap is fixed for the level; from level 10 it drifts slowly
+            if (level >= 10) {
+                val gm = 20f * d + gapW0 / 2f
+                gapC = (gapBase + sin((now - levelStartMs) / 3000.0).toFloat() * 30f * d).coerceIn(gm, sw - gm)
+            }
+            gapL = gapC - gapW0 / 2f
+            gapR = gapC + gapW0 / 2f
+
             for (step in 0 until 3) {
                 floorY -= rise * hdt
                 if (floorDrop > 0f) {
@@ -1357,120 +1186,76 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 if (floorY > floorStartY) floorY = floorStartY
 
-                // the gap shrinks to half its size over 45 seconds; after level 5 it drifts
-                val elapsed = now - levelStartMs
-                val prog = (elapsed / 45000f).coerceIn(0f, 1f)
-                val gw = max(2 * r + 8f * d, gapW0 * (1f - 0.5f * prog))
-                if (level > 5) {
-                    val gm = 20f * d + gw / 2f
-                    gapC = (gapBase + sin(elapsed / 1400.0).toFloat() * 50f * d).coerceIn(gm, sw - gm)
-                }
-                gapL = gapC - gw / 2f
-                gapR = gapC + gw / 2f
-
-                // water: currents push him on top of his own swimming
+                // water pushes him only while he is in it
                 val whirl = sampleWater(cx, cy)
                 var grip = 1f
                 if (thrust == -1 && (wx != 0f || wy != 0f)) grip = 0.15f   // braking = dig in and hold
-                if (whirl != null) {
+                if (whirl != null && (!steering || twoActive)) {
                     // the whirlpool drags his heading around with it
-                    if (!steering || twoActive) {
-                        val ddx = cx - whirl.cx
-                        val ddy = cy - whirl.cy
-                        steerToward(-ddy * whirl.spin, ddx * whirl.spin, hdt * 0.9f)
-                    }
-                    whirlMs += (hdt * 16.67f).toLong()
-                    inWhirl = true
-                } else if (inWhirl) {
-                    // flung out of a whirlpool after circling: SLINGSHOT
-                    inWhirl = false
-                    if (whirlMs > 600L) {
-                        mx += lastWx * 1.8f + vx * 0.5f
-                        my += lastWy * 1.8f + vy * 0.5f
-                        sfx?.play("launch", 1f, 300L)
-                        sv?.kick()
-                        hud?.let { it.popup = "SLINGSHOT!"; it.popupAt = SystemClock.uptimeMillis(); it.invalidate() }
-                    }
-                    whirlMs = 0L
-                } else if ((lastWx != 0f || lastWy != 0f) && wx == 0f && wy == 0f) {
-                    // shooting out the end of a current: keep some of that speed
-                    mx += lastWx * 0.7f
-                    my += lastWy * 0.7f
+                    val ddx = cx - whirl.cx
+                    val ddy = cy - whirl.cy
+                    steerToward(-ddy * whirl.spin, ddx * whirl.spin, hdt * 0.9f)
                 }
-                lastWx = wx
-                lastWy = wy
                 cx += (vx + wx * grip + mx) * hdt
                 cy += (vy + wy * grip + my) * hdt
-                val fade = Math.pow(0.985, (hdt * 3f).toDouble()).toFloat()
+                val fade = Math.pow(0.90, (hdt * 3f).toDouble()).toFloat()
                 mx *= fade
                 my *= fade
 
-                // side walls
+                // side walls of the screen
                 if (cx < r) {
                     hit(abs(vx), 0f, cy, 1f, 0f, kWall)
                     cx = r
-                    vx = abs(vx)
-                    mx = abs(mx) * 0.6f
+                    vx = abs(vx) * bounce
+                    vy *= 0.2f
+                    mx = 0f
                 }
                 if (cx > sw - r) {
                     hit(abs(vx), sw.toFloat(), cy, -1f, 0f, kWall)
                     cx = sw - r
-                    vx = -abs(vx)
-                    mx = -abs(mx) * 0.6f
+                    vx = -abs(vx) * bounce
+                    vy *= 0.2f
+                    mx = 0f
                 }
 
-                // the floor is moving up, so bounce relative to it
+                // the floor is moving up: it pushes him, it doesn't count against a clean run
                 if (cy > floorY - r) {
                     cy = floorY - r
-                    combo = 0
-                    if (my > 0f) my = -my * 0.5f
                     val rel = vy + rise
                     if (rel > 0f) {
                         hit(rel, cx, floorY, 0f, -1f, kFloor)
-                        vy = -rise - rel
+                        vy = -rise - rel * bounce
                     }
+                    if (my > 0f) my = 0f
                 }
 
-                // ceiling pieces on each side of the gap, then the obstacles
+                // ceiling pieces on each side of the gap, then the walls
                 collide(-50f * d, topBar, gapL, ceilY, kCeil)
                 collide(gapR, topBar, sw + 50f * d, ceilY, kCeil)
-                for (b in obstacles) {
-                    val l = b.lp.x.toFloat()
-                    val t = b.lp.y.toFloat()
-                    val bounced = collide(l, t, l + b.lp.width, t + b.lp.height, if (b.solid) kSolid else if (b.coin) kCoinBrick else kObstacle)
-                    if (bounced && b.solid) {
-                        b.near = true
-                        b.nearHit = true
-                    }
-                    if (bounced && !b.solid) {
-                        if (b.coin && !b.coinSpawned) {
-                            b.coinSpawned = true
-                            spawnCoin()
-                        }
-                        toCrush.add(b)
-                    }
-                }
-                if (toCrush.isNotEmpty()) {
-                    for (b in toCrush) crushBrick(b)
-                    toCrush.clear()
+                for (w in walls) {
+                    val l = w.lp.x.toFloat()
+                    val t = w.lp.y.toFloat()
+                    collide(l, t, l + w.lp.width, t + w.lp.height, kSolid)
                 }
 
                 if (steering) {
+                    // inside a current you go where the water goes: your finger only trims
+                    val inCurrent = (wx != 0f || wy != 0f)
+                    val authority = if (inCurrent) 0.2f else 1f
                     if (twoActive) {
-                        // sideways offset of finger 2 steers, vertical offset climbs or brakes
                         val hdx = p2x - p1x
-                        if (abs(hdx) > 12f * d) steerToward(sign(hdx), 0f, hdt)
+                        if (abs(hdx) > 12f * d) steerToward(sign(hdx), 0f, hdt * authority)
                         if (thrust == 1) {
-                            vy -= climbForce * hdt
+                            vy -= climbForce * hdt * authority
                         } else if (thrust == -1) {
+                            // braking stays full strength: it's how you get out of a current
                             val nvy = max(0f, abs(vy) - brakeForce * hdt)
                             vy = sign(vy) * nvy
                         }
                     } else {
-                        // one finger: turn toward it
                         val sdx = steerX - cx
                         val sdy = steerY - cy
-                        if (hypot(sdx, sdy) > 20f * d) steerToward(sdx, sdy, hdt)
+                        if (hypot(sdx, sdy) > 20f * d) steerToward(sdx, sdy, hdt * authority)
                     }
                 }
                 settleSpeed()
@@ -1481,13 +1266,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
             }
 
             if (!over) {
-                collectCoins()
+                checkRows()
                 collectFood()
-                checkCloseCalls()
-                val sinceCombo = now - lastComboMs
-                if (combo > 0 && sinceCombo > comboWindow) combo = 0
-                for (b in obstacles.toList()) {
-                    if (!b.removed && floorY - 2 * r <= b.lp.y + b.lp.height) crushObstacle(b)
+                for (w in walls.toList()) {
+                    if (!w.removed && floorY - 2 * r <= w.lp.y + w.lp.height) swallowWall(w)
                 }
                 var hd = Math.toDegrees(atan2(vy.toDouble(), vx.toDouble())).toFloat()
                 if (steering && !twoActive) {
@@ -1504,15 +1286,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     it.gapL = gapL
                     it.gapR = gapR
                     it.worth = worth()
-                    it.combo = combo
-                    it.comboMult = comboMult()
-                    it.comboLeft = if (combo > 0) (1f - sinceCombo / comboWindow.toFloat()).coerceIn(0f, 1f) else 0f
                     it.energy = energy
                     it.spinReady = energy >= 100f
-                    it.wagerLocked = wagerLocked
-                    it.wager = if (wagerLocked) wager else pendingWager()
-                    it.wagerPct = wagerPct
-                    it.betSecs = if (wagerLocked) 0 else ((betsCloseMs - now + 999) / 1000).toInt()
+                    it.cleanRun = !touchedWallThisLevel
+                    it.currentsVisited = currentsVisited
+                    it.currentsTotal = zones.size
                     it.steerOn = steering
                     it.steerTwo = twoActive
                     it.steerMode = if (twoActive) thrust else 0
@@ -1522,17 +1300,13 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     it.sy1 = if (twoActive) p2y else steerY
                     it.invalidate()
                 }
-                wagerBtn?.let {
-                    if (it.locked != wagerLocked) {
-                        it.locked = wagerLocked
-                        it.invalidate()
-                    }
-                }
                 moveMascot()
             }
             applyPos()
             s.invalidate()
         }
+        // keep the celebration animations moving between levels
+        if (over) hud?.invalidate()
         if (flash > 0f) {
             flash = max(0f, flash - 0.04f * dt)
             hud?.let { it.flash = flash; it.invalidate() }
@@ -1555,11 +1329,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         handler.removeCallbacksAndMessages(null)
         if (::wm.isInitialized) {
             stopFx()
-            clearObstacles()
+            clearRoom()
             sv?.let { wm.removeView(it) }
             tapLayer?.let { wm.removeView(it) }
             closeBtn?.let { wm.removeView(it) }
-            wagerBtn?.let { wm.removeView(it) }
             spinBtn?.let { wm.removeView(it) }
             parts?.let { wm.removeView(it) }
             mascot?.let { wm.removeView(it) }
@@ -1570,7 +1343,6 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sv = null
         tapLayer = null
         closeBtn = null
-        wagerBtn = null
         spinBtn = null
         parts = null
         mascot = null

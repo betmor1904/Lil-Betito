@@ -78,6 +78,16 @@ class PartsView(ctx: Context) : View(ctx) {
         kick()
     }
 
+    /** Bright party confetti for celebrations. */
+    fun confetti(x: Float, y: Float) {
+        for (i in 0 until 40) {
+            val angle = Random.nextFloat() * 6.2832f
+            val sp = (3f + Random.nextFloat() * 9f) * d
+            spawn(x, y, angle, sp, neon[Random.nextInt(neon.size)], Random.nextBoolean(), 4f + Random.nextFloat() * 4f)
+        }
+        kick()
+    }
+
     /** Green splat when the Sticky Bomb sticks. */
     fun goo(x: Float, y: Float) {
         val cols = intArrayOf(Color.parseColor("#76FF03"), Color.parseColor("#B2FF59"), Color.parseColor("#00C853"))
