@@ -10,19 +10,30 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
-/** A wall rectangle. Pillars can be blown up by bomb shells; everything else is permanent. */
+/** A wall rectangle. Pillars are small rocks in the lanes. */
 class Block(val l: Float, val t: Float, val r: Float, val b: Float, val pillar: Boolean = false) {
     var alive = true
 }
 
-/** Something to pick up: an apple (spins a slot reel), a shell (ammo) or speed kelp. */
+/** Something to pick up: an apple (spins a slot reel) or speed kelp (stronger shots). */
 class Pickup(val x: Float, val y: Float, val type: Int, val seed: Float = Random.nextFloat() * 6f)
 
-/** A fired shell. */
-class Shell(var x: Float, var y: Float, var vx: Float, var vy: Float, val type: Int, var bounces: Int, var life: Float)
-
-/** A seaweed patch: swim inside and the shark loses sight of you. */
+/** A seaweed patch: a sticky landing spot that soaks up speed. */
 class Weed(val l: Float, val t: Float, val r: Float, val b: Float, val seed: Float = Random.nextFloat() * 6f)
+
+/** A buoy target. Hit it with a shot and its linked current flips direction. */
+class Target(val x: Float, val y: Float, val zone: WaterZone) {
+    var hitAt = 0L
+}
+
+/** A shark on patrol between two points. He never eats Betito, he just knocks his shots off course. */
+class Shark(var x: Float, var y: Float, val ax: Float, val ay: Float, val bx: Float, val by: Float, val speed: Float) {
+    var toB = true
+    var vx = 0f
+    var vy = 0f
+    var heading = 0f
+    var bumpAt = 0L
+}
 
 class Fish(var x: Float, var y: Float, var vx: Float, val size: Float, val color: Int)
 
@@ -31,23 +42,16 @@ class Bubble(var x: Float, var y: Float, val rad: Float, val speed: Float, val s
 /**
  * All the game rules for Lil Betito, independent of how it is drawn.
  *
- * Landscape strategy maze: Betito starts on the left and must reach the exit gap in the
- * right wall. A stinging tide creeps in from the left, and a shark hunts him through the
- * maze. He can hide in seaweed, eat speed kelp, and pick up shells to fire at the shark:
- * green flies straight, red bounces off walls, orange bomb shells explode.
+ * Underwater golf: Betito is the ball. Pull back and let go to shoot him toward the exit gap
+ * in the right wall in as few shots as possible (par). Currents are boost lanes: ride several
+ * in one shot for combos. Hit buoys to flip a current's direction. Sharks patrol and knock
+ * your shots off course.
  */
 class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.content.SharedPreferences) {
 
     companion object {
         const val P_APPLE = 0
-        const val P_GREEN = 1
-        const val P_RED = 2
-        const val P_BOMB = 3
         const val P_SPEED = 4
-
-        const val MODE_HUNT = 0
-        const val MODE_SEARCH = 1
-        const val MODE_WANDER = 2
     }
 
     // ---------- screen + layout ----------
@@ -69,7 +73,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     val zones = ArrayList<WaterZone>()
     val weeds = ArrayList<Weed>()
     val pickups = ArrayList<Pickup>()
-    val shells = ArrayList<Shell>()
+    val targets = ArrayList<Target>()
+    val sharks = ArrayList<Shark>()
     val fish = ArrayList<Fish>()
     val bubbles = ArrayList<Bubble>()
     var colX = FloatArray(0)
@@ -78,7 +83,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private var narrowC = 0f
     private var narrowH = 0f
     private var nextCol = 0
-    var tideX = 0f
+    val targetR get() = 13f * d
+    val sharkR get() = 15f * d
 
     // ---------- the turtle ----------
     val r get() = 13f * d
@@ -92,7 +98,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var bumpAt = 0L
     var kickAt = 0L
     var speedUntil = 0L
-    var hidden = false
 
     // ---------- slingshot input (set by the view) ----------
     var aiming = false
@@ -100,70 +105,43 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var aimDY = 0f
     var aimPower = 0f     // 0..1, how far you pulled back
     var launchQueued = false
-    var fireQueued = false
 
-    // ---------- slingshot rules ----------
-    val readySpeed get() = 0.9f * d     // he can only launch when he has (nearly) stopped
-    val loudPower = 0.7f                // shots harder than this make noise the shark can hear
+    // ---------- shot rules ----------
+    val readySpeed get() = 0.9f * d     // he can only shoot again once he has (nearly) stopped
     private val waterDrag = 0.025f
+    private val rideDrag = 0.006f       // riding a current barely slows you
     private val weedDrag = 0.16f
+    private val bounceK = 0.65f         // how much speed a bounce keeps (into the wall)
+    private val slideK = 0.85f          // how much speed is kept sliding along the wall
+    private val maxSpeed get() = 15f * d
     var ready = true
     var shots = 0
     var par = 5
+    var maxShots = 10
     private var bouncesThisShot = 0
-    var spotted = false
+    private val shotZones = HashSet<Int>()
+    var shotCombo = 0                   // currents ridden in the current shot
+    var comboAt = 0L
+    private var targetsThisShot = 0
+    private var sharkThisShot = false
+    var bestCombo = 0
 
     // aim preview: the first part of the path, simulated with real physics
     val pvMax = 30
     val previewX = FloatArray(pvMax)
     val previewY = FloatArray(pvMax)
     var previewN = 0
-    val ammo = ArrayList<Int>()
-    val maxAmmo = 4
-
-    // ---------- the shark ----------
-    var chActive = false
-    var chX = 0f
-    var chY = 0f
-    var chVx = 0f
-    var chVy = 0f
-    var chHeading = 0f
-    var stunnedUntil = 0L
-    private var chSpawnAt = 0L
-    var chMode = MODE_WANDER
-    private var lastSeenAt = 0L
-    private var lastSeenX = 0f
-    private var lastSeenY = 0f
-    private var wanderX = 0f
-    private var wanderY = 0f
-    private var repathAt = 0L
-    private var pathLen = 0
-    private var pathIdx = 0
-    private var pathBuf = IntArray(0)
-    private val chR get() = 14f * d
-
-    // pathfinding grid
-    private val cell get() = 14f * d
-    private var gCols = 0
-    private var gRows = 0
-    private var blocked = BooleanArray(0)
-    private var parent = IntArray(0)
-    private var queue = IntArray(0)
 
     // ---------- game state ----------
     var level = 1
     var score = 0
     var best = prefs.getInt("best_score", 0)
-    var lives = 3
     var over = false
     private var resumeAt = 0L
-    private var resumeNewGame = false
     var levelStartMs = 0L
-    var dying = false
+    var levelEndMs = 0L
 
-    // style bonuses
-    var touchedWall = false
-    private var touchedSinceCol = false
+    // explorer bonus
     var currentsVisited = 0
     private val visited = HashSet<Int>()
 
@@ -188,12 +166,12 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var starsAt = 0L
     var flash = 0f
     var flashColor = 0
+    var shakeAt = 0L
+    var shakeAmp = 0f
     var octoText: String? = null
     var octoAt = 0L
     private var octoNextAt = 0L
     private var cheerStreak = 0
-    private var warnedTide = false
-    private var lastCloseWarn = 0L
 
     // particles
     val pMax = 420
@@ -210,9 +188,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private val neon = intArrayOf(
         0xFFFFEB3B.toInt(), 0xFFFF4081.toInt(), 0xFF00E5FF.toInt(), 0xFF76FF03.toInt(), 0xFFE040FB.toInt()
     )
-    private val smooth = arrayOf("SMOOTH!", "SLICK!", "SHELL YEAH!", "SWIM-TASTIC!", "SO FRESH!")
-    private val yum = arrayOf("SWEET!", "YUMMY!", "TASTY!", "DELICIOUS!")
-    private val rides = arrayOf("NICE RIDE!", "SURF'S UP!", "WHEEE!")
+    private val smooth = arrayOf("SMOOTH!", "SLICK!", "SHELL YEAH!", "NICE!!", "SO FRESH!")
+    private val yum = arrayOf("SWEET!", "YUMMY!", "TASTY!")
 
     // ============================================================
     // setup
@@ -253,9 +230,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun newGame() {
         level = 1
         score = 0
-        lives = 3
-        ammo.clear()
-        ammo.add(P_GREEN)   // one shell to start, so you can try the FIRE button
         startLevel()
     }
 
@@ -277,39 +251,37 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     fun startLevel() {
         started = true
         over = false
-        dying = false
         resumeAt = 0L
         val now = android.os.SystemClock.uptimeMillis()
         levelStartMs = now
+        levelEndMs = 0L
         playT = topInset + 50 * d
         playB = H - 12 * d
         exitX = W - 18 * d
-        message = "LEVEL $level"
+        message = "HOLE $level"
         stars = 0
         praise = null
         cheerStreak = 0
-        touchedWall = false
-        touchedSinceCol = false
         shots = 0
         bouncesThisShot = 0
-        spotted = false
+        shotZones.clear()
+        shotCombo = 0
+        targetsThisShot = 0
+        sharkThisShot = false
+        bestCombo = 0
         ready = true
         aiming = false
         launchQueued = false
         previewN = 0
         currentsVisited = 0
         visited.clear()
-        warnedTide = false
         resetReels()
-        shells.clear()
         speedUntil = 0L
-        hidden = false
-        fireQueued = false
 
         buildMaze()
-        buildGrid()
         par = colX.size + 2
-        banner = "PULL BACK & LET GO  ·  PAR $par"
+        maxShots = par * 2
+        banner = "PAR $par  ·  HIT BUOYS TO FLIP CURRENTS"
         bannerUntil = now + 3000
 
         cx = 48 * d
@@ -319,23 +291,18 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         faceX = 1f
         faceY = 0f
         heading = 0f
-        tideX = -30 * d
 
-        chActive = false
-        chSpawnAt = now + (if (level == 1) 2500L else 1200L)
-        chMode = MODE_WANDER
-        stunnedUntil = 0L
-        pathLen = 0
+        placeSharks()
 
         say(when (level) {
-            1 -> "Pull back anywhere and let go to swim! Reach the exit in $par shots."
-            2 -> "Bounce off walls for bank shots! Seaweed stops you dead."
-            else -> "Par is $par. Big shots are loud... the shark listens!"
+            1 -> "Pull back and let go! Ride currents for combos. Par is $par."
+            2 -> "Hit a buoy to flip its current. Sharks bump your shots!"
+            else -> "Par $par. Chain currents for a DEADLY COMBO!"
         }, true)
     }
 
     // ============================================================
-    // the maze
+    // the course
     // ============================================================
 
     private fun pickGap(gapH: Float, prev: Float, minApart: Float): Float {
@@ -362,6 +329,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         zones.clear()
         weeds.clear()
         pickups.clear()
+        targets.clear()
         val playH = playB - playT
         val mid = (playT + playB) / 2f
 
@@ -383,7 +351,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         colGap = FloatArray(n)
         val gapH = max(3.6f * r, 80 * d - (level - 1) * 2 * d)
         val fwdCol = Random.nextInt(n)
-        ripCol = if (level >= 4 && n > 1) (fwdCol + 1 + Random.nextInt(n - 1)) % n else -1
+        ripCol = if (level >= 3 && n > 1) (fwdCol + 1 + Random.nextInt(n - 1)) % n else -1
         narrowH = 0f
         var prev = mid
         for (i in 0 until n) {
@@ -412,54 +380,61 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         nextCol = 0
         val pulse = level >= 11
 
-        // forward stream: carries you right through one gap like a conveyor belt
-        run {
+        // forward stream: a boost lane carrying you right through one gap
+        val fwd = run {
             val h = min(gapH - 8 * d, 56 * d)
-            zones.add(WaterZone(WaterZone.UP, laneL(fwdCol - 1), colGap[fwdCol] - h / 2f, laneR(fwdCol),
+            val z = WaterZone(WaterZone.UP, laneL(fwdCol - 1), colGap[fwdCol] - h / 2f, laneR(fwdCol),
                 colGap[fwdCol] + h / 2f, 1f, 0f, 3.6f * d, pulse = pulse && Random.nextBoolean(),
-                phaseMs = Random.nextLong(12000)))
+                phaseMs = Random.nextLong(12000))
+            zones.add(z)
+            z
         }
 
-        // up/down stream in a lane, flowing toward the gap of the next column
-        fun laneStream(lane: Int, towardGap: Boolean) {
-            if (lane < 0 || lane + 1 >= n) return
+        // up/down stream in a lane. Sometimes it starts the wrong way: hit its buoy to flip it.
+        fun laneStream(lane: Int, towardGap: Boolean): WaterZone? {
+            if (lane < 0 || lane + 1 >= n) return null
             val target = colGap[lane + 1]
             val up = if (towardGap) target < mid else target >= mid
             val lw = laneR(lane) - laneL(lane)
             val bw = min(50 * d, lw * 0.55f)
             val cxL = (laneL(lane) + laneR(lane)) / 2f
-            val t = if (up) min(target, mid) - 10 * d else playT
-            val b = if (up) playB else max(target, mid) + 10 * d
-            zones.add(WaterZone(WaterZone.SIDE, cxL - bw / 2f, max(playT, t), cxL + bw / 2f, min(playB, b),
-                0f, if (up) -1f else 1f, 3f * d, pulse = pulse, phaseMs = Random.nextLong(12000)))
+            // the stream covers the whole lane height so it can be flipped and still be useful
+            val z = WaterZone(WaterZone.SIDE, cxL - bw / 2f, playT + 4 * d, cxL + bw / 2f, playB - 4 * d,
+                0f, if (up) -1f else 1f, 3f * d, pulse = pulse, phaseMs = Random.nextLong(12000))
+            zones.add(z)
+            return z
         }
         val streamLane = if (n > 1) (fwdCol + 1) % (n - 1) else 0
-        laneStream(streamLane, true)
+        val lane1 = laneStream(streamLane, Random.nextFloat() < 0.5f)
 
-        // riptide: pushes you back left through the guarded gap
+        // riptide: pushes you back left through the guarded gap (flip it with its buoy!)
+        var rip: WaterZone? = null
         if (ripCol >= 0) {
             val h = min(gapH - 6 * d, 60 * d)
-            zones.add(WaterZone(WaterZone.RIP, colX[ripCol] - 50 * d, colGap[ripCol] - h / 2f, laneR(ripCol),
-                colGap[ripCol] + h / 2f, -1f, 0f, (2.0f + min(1.0f, 0.1f * (level - 4))) * d,
-                pulse = pulse, phaseMs = Random.nextLong(12000)))
+            rip = WaterZone(WaterZone.RIP, colX[ripCol] - 50 * d, colGap[ripCol] - h / 2f, laneR(ripCol),
+                colGap[ripCol] + h / 2f, -1f, 0f, (2.4f + min(1.0f, 0.1f * (level - 3))) * d,
+                pulse = pulse, phaseMs = Random.nextLong(12000))
+            zones.add(rip)
         }
 
         // whirlpool in a lane
-        if (level >= 7 && n >= 2) {
+        var whirl: WaterZone? = null
+        if (level >= 6 && n >= 2) {
             val lane = Random.nextInt(n - 1)
             val lw = laneR(lane) - laneL(lane)
             val rad = min(56 * d, lw / 2f + 6 * d)
             val wcx = (laneL(lane) + laneR(lane)) / 2f
             val wcy = playT + rad + Random.nextFloat() * max(1f, playH - 2 * rad)
-            zones.add(WaterZone(WaterZone.WHIRL, wcx - rad, wcy - rad, wcx + rad, wcy + rad, 0f, 0f, 3.2f * d,
-                spin = if (Random.nextBoolean()) 1f else -1f))
+            whirl = WaterZone(WaterZone.WHIRL, wcx - rad, wcy - rad, wcx + rad, wcy + rad, 0f, 0f, 3.2f * d,
+                spin = if (Random.nextBoolean()) 1f else -1f)
+            zones.add(whirl)
         }
 
-        // a second stream flowing the wrong way
-        if (level >= 10 && n >= 3) laneStream((streamLane + 1) % (n - 1), false)
+        // a second lane stream from level 9
+        val lane2 = if (level >= 9 && n >= 3) laneStream((streamLane + 1) % (n - 1), Random.nextBoolean()) else null
 
-        // pillars in the lanes from level 3 (bomb shells can blow these up)
-        val pillars = if (level >= 3) min((level - 1) / 2, 6) else 0
+        // pillars in the lanes from level 4
+        val pillars = if (level >= 4) min((level - 2) / 2, 5) else 0
         var placed = 0
         var tries = 0
         while (placed < pillars && tries < 80 && n >= 2) {
@@ -468,40 +443,65 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val size = 28 * d
             val lw = laneR(lane) - laneL(lane)
             if (lw < size + 2 * r + 16 * d) continue
-            val pxx = (laneL(lane) + laneR(lane)) / 2f - size / 2f
+            val pxx = laneL(lane) + 10 * d + Random.nextFloat() * (lw - size - 20 * d)
             val pyy = playT + 12 * d + Random.nextFloat() * (playH - size - 24 * d)
             val pcy = pyy + size / 2f
             if (abs(pcy - colGap[lane]) < gapH + size) continue
             if (abs(pcy - colGap[lane + 1]) < gapH + size) continue
-            if (blocks.any { it.pillar && abs(it.t - pyy) < size * 2 && abs(it.l - pxx) < 4 * d }) continue
+            if (blocks.any { it.pillar && abs(it.t - pyy) < size * 2 && abs(it.l - pxx) < size * 2 }) continue
             addWall(pxx, pyy, pxx + size, pyy + size, pillar = true)
             placed++
         }
 
-        // seaweed hiding spots
-        val weedCount = 1 + min(3, level / 3)
+        // seaweed landing pads
+        val weedCount = 1 + min(2, level / 4)
         tries = 0
         while (weeds.size < weedCount && tries < 80) {
             tries++
             val lane = Random.nextInt(n)
             val ww = 44 * d
-            val wh = 60 * d
+            val wh = 54 * d
             val lw = laneR(lane) - laneL(lane)
             if (lw < ww + 8 * d) continue
             val wl = laneL(lane) + 4 * d + Random.nextFloat() * (lw - ww - 8 * d)
             val wt = playT + 6 * d + Random.nextFloat() * (playH - wh - 12 * d)
             if (rectHitsWall(wl, wt, wl + ww, wt + wh, 6 * d)) continue
+            if (zones.any { it.kind != WaterZone.WHIRL && wl < it.r && wl + ww > it.l && wt < it.b && wt + wh > it.t }) continue
             if (weeds.any { it.l < wl + ww + 10 * d && wl < it.r + 10 * d && it.t < wt + wh + 10 * d && wt < it.b + 10 * d }) continue
             weeds.add(Weed(wl, wt, wl + ww, wt + wh))
         }
 
+        // buoys that flip currents
+        lane1?.let { placeTarget(it) }
+        rip?.let { placeTarget(it) }
+        if (level >= 5) placeTarget(fwd)        // careful: hitting this one sends the boost lane backward
+        whirl?.let { if (level >= 8) placeTarget(it) }
+        lane2?.let { placeTarget(it) }
+
         // things to pick up
         repeat(if (level >= 5) 3 else 2) { spawnPickup(P_APPLE) }
-        spawnPickup(P_GREEN)
-        spawnPickup(P_RED)
         spawnPickup(P_SPEED)
-        if (level >= 3) spawnPickup(P_BOMB)
     }
+
+    private fun placeTarget(z: WaterZone) {
+        val pad = targetR + 10 * d
+        for (k in 0 until 80) {
+            val near = k < 50
+            val x = if (near) z.cx + (Random.nextFloat() - 0.5f) * 300 * d else 110 * d + Random.nextFloat() * (exitX - 150 * d)
+            val y = if (near) z.cy + (Random.nextFloat() - 0.5f) * 240 * d else playT + pad + Random.nextFloat() * (playB - playT - 2 * pad)
+            if (x < 100 * d || x > exitX - 30 * d || y < playT + pad || y > playB - pad) continue
+            if (pointInWall(x, y, pad)) continue
+            if (zones.any { insideZone(it, x, y, targetR) }) continue
+            if (weeds.any { x > it.l - pad && x < it.r + pad && y > it.t - pad && y < it.b + pad }) continue
+            if (targets.any { hypot(it.x - x, it.y - y) < 60 * d }) continue
+            targets.add(Target(x, y, z))
+            return
+        }
+    }
+
+    private fun insideZone(z: WaterZone, x: Float, y: Float, pad: Float): Boolean =
+        if (z.kind == WaterZone.WHIRL) hypot(x - z.cx, y - z.cy) < z.rad + pad
+        else x > z.l - pad && x < z.r + pad && y > z.t - pad && y < z.b + pad
 
     private fun rectHitsWall(l: Float, t: Float, rr: Float, b: Float, pad: Float): Boolean {
         for (w in blocks) {
@@ -519,129 +519,126 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         return false
     }
 
+    private fun clearLine(x0: Float, y0: Float, x1: Float, y1: Float, pad: Float): Boolean {
+        val dist = hypot(x1 - x0, y1 - y0)
+        val steps = max(1, (dist / (8 * d)).toInt())
+        for (i in 0..steps) {
+            val t = i / steps.toFloat()
+            if (pointInWall(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, pad)) return false
+        }
+        return true
+    }
+
     private fun spawnPickup(type: Int) {
         for (k in 0 until 60) {
             val x = 110 * d + Random.nextFloat() * (exitX - 140 * d)
             val y = playT + 20 * d + Random.nextFloat() * (playB - playT - 40 * d)
-            if (x < tideX + 120 * d) continue
             if (pointInWall(x, y, 18 * d)) continue
             if (pickups.any { hypot(it.x - x, it.y - y) < 60 * d }) continue
+            if (targets.any { hypot(it.x - x, it.y - y) < 40 * d }) continue
             pickups.add(Pickup(x, y, type))
             return
         }
     }
 
-    private fun randomPickupType(): Int {
-        val roll = Random.nextInt(100)
-        return when {
-            roll < 35 -> P_GREEN
-            roll < 60 -> P_RED
-            roll < 75 && level >= 2 -> P_BOMB
-            else -> P_SPEED
-        }
-    }
-
     // ============================================================
-    // pathfinding for the shark
+    // sharks: patrol only
     // ============================================================
 
-    private fun buildGrid() {
-        gCols = max(1, (W / cell).toInt() + 1)
-        gRows = max(1, (H / cell).toInt() + 1)
-        val n = gCols * gRows
-        blocked = BooleanArray(n)
-        parent = IntArray(n)
-        queue = IntArray(n)
-        pathBuf = IntArray(n)
-        refreshGrid()
+    private fun placeSharks() {
+        sharks.clear()
+        val count = when {
+            level < 2 -> 0
+            level < 8 -> 1
+            else -> 2
+        }
+        val sp = min(2.2f, 1.1f + 0.06f * level) * d
+        val n = colX.size
+        var tries = 0
+        while (sharks.size < count && tries < 40 && n >= 2) {
+            tries++
+            val ax: Float
+            val ay: Float
+            val bx: Float
+            val by: Float
+            if (Random.nextBoolean()) {
+                // guard a gap: swim back and forth through it
+                val i = 1 + Random.nextInt(n - 1)
+                val g = colGap[i]
+                ax = (laneL(i - 1) + laneR(i - 1)) / 2f
+                bx = (laneL(i) + laneR(i)) / 2f
+                ay = g
+                by = g
+            } else {
+                // sweep up and down a lane
+                val lane = Random.nextInt(n - 1)
+                val lw = laneR(lane) - laneL(lane)
+                val x = laneL(lane) + lw * (if (Random.nextBoolean()) 0.3f else 0.7f)
+                ax = x
+                bx = x
+                ay = playT + sharkR + 6 * d
+                by = playB - sharkR - 6 * d
+            }
+            if (!clearLine(ax, ay, bx, by, sharkR * 0.9f)) continue
+            if (hypot(ax - cx, ay - cy) < 120 * d) continue
+            if (sharks.any { abs(it.ax - ax) < 40 * d && abs(it.bx - bx) < 40 * d }) continue
+            val k = Random.nextFloat()
+            sharks.add(Shark(ax + (bx - ax) * k, ay + (by - ay) * k, ax, ay, bx, by, sp))
+        }
+        if (sharks.isNotEmpty() && level == 2) say("A shark! He won't bite, but he'll wreck your shot.", true)
     }
 
-    private fun refreshGrid() {
-        for (gy in 0 until gRows) {
-            for (gx in 0 until gCols) {
-                val x = (gx + 0.5f) * cell
-                val y = (gy + 0.5f) * cell
-                blocked[gy * gCols + gx] = y < playT + chR * 0.6f || y > playB - chR * 0.6f || x > exitX ||
-                    pointInWall(x, y, chR * 0.85f)
+    private fun updateSharks(now: Long, dt: Float) {
+        for (s in sharks) {
+            val tx = if (s.toB) s.bx else s.ax
+            val ty = if (s.toB) s.by else s.ay
+            val dx = tx - s.x
+            val dy = ty - s.y
+            val len = hypot(dx, dy)
+            if (len < 4 * d) {
+                s.toB = !s.toB
+                continue
+            }
+            s.vx += (dx / len * s.speed - s.vx) * min(1f, 0.08f * dt)
+            s.vy += (dy / len * s.speed - s.vy) * min(1f, 0.08f * dt)
+            s.x += s.vx * dt
+            s.y += s.vy * dt
+            if (hypot(s.vx, s.vy) > 0.2f * d) s.heading = Math.toDegrees(atan2(s.vy.toDouble(), s.vx.toDouble())).toFloat()
+        }
+    }
+
+    /** Betito bounces off a shark like a moving rock, but it soaks up more of his speed. */
+    private fun collideSharks(now: Long) {
+        for (s in sharks) {
+            val dx = cx - s.x
+            val dy = cy - s.y
+            val dist = hypot(dx, dy)
+            val minD = r + sharkR * 0.85f
+            if (dist >= minD || dist < 0.01f) continue
+            val nx = dx / dist
+            val ny = dy / dist
+            cx += nx * (minD - dist)
+            cy += ny * (minD - dist)
+            val rvx = vx - s.vx
+            val rvy = vy - s.vy
+            val vn = rvx * nx + rvy * ny
+            if (vn < 0f) {
+                val tx = rvx - vn * nx
+                val ty = rvy - vn * ny
+                vx = -vn * 0.45f * nx + tx * 0.55f + s.vx
+                vy = -vn * 0.45f * ny + ty * 0.55f + s.vy
+                if (now - s.bumpAt > 600L) {
+                    s.bumpAt = now
+                    bumpAt = now
+                    sharkThisShot = true
+                    sfx?.play("bonk", 0.9f, 0L)
+                    popup = "SHARK BUMP!"
+                    popupAt = now
+                    shake(5f, now)
+                    say(arrayOf("Hey! Watch where you swim, shark!", "The shark knocked you off course!", "Bonk! Rude shark!").random())
+                }
             }
         }
-        pathLen = 0
-    }
-
-    private fun cellOf(x: Float, y: Float): Int {
-        val gx = (x / cell).toInt().coerceIn(0, gCols - 1)
-        val gy = (y / cell).toInt().coerceIn(0, gRows - 1)
-        return gy * gCols + gx
-    }
-
-    private fun nearestFree(c: Int): Int {
-        if (!blocked[c]) return c
-        val gx0 = c % gCols
-        val gy0 = c / gCols
-        for (rad in 1 until 8) {
-            for (dy in -rad..rad) for (dx in -rad..rad) {
-                val gx = gx0 + dx
-                val gy = gy0 + dy
-                if (gx < 0 || gy < 0 || gx >= gCols || gy >= gRows) continue
-                val k = gy * gCols + gx
-                if (!blocked[k]) return k
-            }
-        }
-        return c
-    }
-
-    /** Breadth-first search from the shark to (tx, ty). Fills pathBuf with cells, start to goal. */
-    private fun findPath(tx: Float, ty: Float) {
-        val start = nearestFree(cellOf(chX, chY))
-        val goal = nearestFree(cellOf(tx, ty))
-        pathLen = 0
-        pathIdx = 0
-        if (start == goal) return
-        java.util.Arrays.fill(parent, -1)
-        var head = 0
-        var tail = 0
-        queue[tail++] = start
-        parent[start] = start
-        var found = false
-        while (head < tail) {
-            val c = queue[head++]
-            if (c == goal) { found = true; break }
-            val gx = c % gCols
-            val gy = c / gCols
-            for (k in 0 until 4) {
-                val nx = gx + (if (k == 0) 1 else if (k == 1) -1 else 0)
-                val ny = gy + (if (k == 2) 1 else if (k == 3) -1 else 0)
-                if (nx < 0 || ny < 0 || nx >= gCols || ny >= gRows) continue
-                val nc = ny * gCols + nx
-                if (blocked[nc] || parent[nc] != -1) continue
-                parent[nc] = c
-                queue[tail++] = nc
-            }
-        }
-        if (!found) return
-        var c = goal
-        var len = 0
-        while (c != start && len < pathBuf.size) {
-            pathBuf[len++] = c
-            c = parent[c]
-        }
-        // reverse into start -> goal order
-        for (i in 0 until len / 2) {
-            val t = pathBuf[i]
-            pathBuf[i] = pathBuf[len - 1 - i]
-            pathBuf[len - 1 - i] = t
-        }
-        pathLen = len
-    }
-
-    private fun clearLine(x0: Float, y0: Float, x1: Float, y1: Float): Boolean {
-        val dist = hypot(x1 - x0, y1 - y0)
-        val steps = max(1, (dist / (8 * d)).toInt())
-        for (i in 1 until steps) {
-            val t = i / steps.toFloat()
-            if (pointInWall(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, chR * 0.7f)) return false
-        }
-        return true
     }
 
     // ============================================================
@@ -651,7 +648,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private var wx = 0f
     private var wy = 0f
 
-    private fun sampleWater(x: Float, y: Float, record: Boolean): WaterZone? {
+    /** Adds up the water push at (x, y). When record is true, counts currents for combos and the explorer bonus. */
+    private fun sampleWater(x: Float, y: Float, record: Boolean, now: Long): WaterZone? {
         wx = 0f
         wy = 0f
         var whirl: WaterZone? = null
@@ -676,10 +674,12 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 wy += z.dy * z.speed * z.power
                 inside = true
             }
-            if (record && inside && z.power > 0.5f && visited.add(z.id)) {
-                currentsVisited++
-                if (currentsVisited >= zones.size) celebrate("EXPLORER!", true)
-                else celebrate(rides.random())
+            if (record && inside && z.power > 0.5f) {
+                if (visited.add(z.id)) {
+                    currentsVisited++
+                    if (currentsVisited >= zones.size && zones.size >= 2) celebrate("EXPLORER!", true)
+                }
+                if (shots > 0 && !ready && shotZones.add(z.id)) comboStep(now)
             }
         }
         return whirl
@@ -695,6 +695,74 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     // ============================================================
+    // combos + target hits
+    // ============================================================
+
+    private fun comboStep(now: Long) {
+        shotCombo = shotZones.size
+        comboAt = now
+        if (shotCombo > bestCombo) bestCombo = shotCombo
+        val b = band()
+        when (shotCombo) {
+            1 -> sfx?.play("wee", 0.6f, 200L)
+            2 -> {
+                score += 100 * b
+                celebrate("NICE!!")
+                sfx?.play("coins", 0.8f, 0L)
+            }
+            3 -> {
+                score += 300 * b
+                celebrate("DEADLY COMBO!!", true)
+                sfx?.play("slot", 1f, 0L)
+                fillReel(now)
+                shake(6f, now)
+            }
+            else -> {
+                score += 600 * b * (shotCombo - 3)
+                celebrate("KING OF THE SEA!!", true)
+                sfx?.play("siren", 1f, 0L)
+                sfx?.play("jackpot", 1f, 0L)
+                flash = 0.5f
+                flashColor = 0xFFFFF59D.toInt()
+                fillReel(now)
+                shake(10f, now)
+            }
+        }
+    }
+
+    private fun checkTargets(now: Long) {
+        val sp = hypot(vx, vy)
+        if (sp < readySpeed) return
+        for (t in targets) {
+            if (now - t.hitAt < 700L) continue
+            if (hypot(cx - t.x, cy - t.y) > r + targetR) continue
+            t.hitAt = now
+            t.zone.flip()
+            targetsThisShot++
+            vx *= 0.85f
+            vy *= 0.85f
+            val b = band()
+            sfx?.play("ding", 1f, 0L, 1.6f)
+            sfx?.play("kaching", 0.9f, 0L)
+            burst(t.x, t.y, 0xFFFFFFFF.toInt(), 16)
+            confetti(t.x, t.y)
+            if (bouncesThisShot > 0) {
+                score += 300 * b
+                celebrate("TRICK SHOT!!", true)
+            } else {
+                score += 150 * b
+                celebrate("BULLSEYE!")
+            }
+            say(when (t.zone.kind) {
+                WaterZone.UP -> "Current flipped! It's pushing you FORWARD now!"
+                WaterZone.RIP -> "Uh oh, that current flips backward now!"
+                WaterZone.WHIRL -> "The whirlpool spins the other way!"
+                else -> "Current flipped! It flows the other way now!"
+            }, true)
+        }
+    }
+
+    // ============================================================
     // the frame
     // ============================================================
 
@@ -702,15 +770,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         if (W <= 0f || !started) return
         updateScenery(now, dt)
         updateParticles(dt)
+        updateSharks(now, dt)
         if (flash > 0f) flash = max(0f, flash - 0.04f * dt)
         if (reelResolving && now >= reelClearAt) finishReels()
         if (banner != null && bannerUntil in 1..now) banner = null
 
         if (over) {
-            if (dying) tideX += 0.15f * riseSpeed() * dt
             if (resumeAt in 1..now) {
                 resumeAt = 0L
-                if (resumeNewGame) newGame() else startLevel()
+                startLevel()
             }
             return
         }
@@ -718,8 +786,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         updatePulses(now, dt)
 
-        // slingshot: launch only once he has (nearly) stopped
+        // he can shoot again once he has (nearly) stopped
+        val wasMoving = !ready
         ready = hypot(vx, vy) < readySpeed
+        if (wasMoving && ready) endShot(now)
         if (launchQueued) {
             launchQueued = false
             if (ready) launch(now) else {
@@ -728,23 +798,31 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 popupAt = now
             }
         }
-        if (fireQueued) {
-            fireQueued = false
-            fire(now)
-        }
+        if (ready && shots >= maxShots) { outOfShots(now); return }
 
         val hdt = dt / 3f
-        val rise = riseSpeed()
         for (step in 0 until 3) {
-            tideX += rise * hdt
-
-            val whirl = sampleWater(cx, cy, true)
-            // seaweed is a sticky landing spot: it soaks up speed and shelters you from currents
+            val whirl = sampleWater(cx, cy, true, now)
             val sticky = inWeed(cx, cy)
+            val inFlow = (wx != 0f || wy != 0f) && !sticky
             val grip = if (sticky) 0.25f else 1f
-            val k = 1f - min(1f, (if (sticky) weedDrag else waterDrag) * hdt)
+            val drag = if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
+            val k = 1f - min(1f, drag * hdt)
             vx *= k
             vy *= k
+            if (inFlow && whirl == null && !ready) {
+                // ride the current: speed builds up along the flow (not across it)
+                val wl = hypot(wx, wy)
+                val fx = wx / wl
+                val fy = wy / wl
+                val along = vx * fx + vy * fy
+                val want = wl * 2.6f
+                if (along < want) {
+                    val add = (want - along) * min(1f, 0.035f * hdt)
+                    vx += fx * add
+                    vy += fy * add
+                }
+            }
             if (whirl != null) {
                 // a whirlpool bends your glide around its center
                 val ddx = cx - whirl.cx
@@ -754,15 +832,22 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 vx += (-ddy / len * whirl.spin * sp - vx) * 0.04f * hdt
                 vy += (ddx / len * whirl.spin * sp - vy) * 0.04f * hdt
             }
+            val sp0 = hypot(vx, vy)
+            if (sp0 > maxSpeed) {
+                vx = vx / sp0 * maxSpeed
+                vy = vy / sp0 * maxSpeed
+            }
             cx += (vx + wx * grip) * hdt
             cy += (vy + wy * grip) * hdt
 
             if (cx < r) { cx = r; vx = abs(vx) * 0.6f }
             for (w in blocks) if (w.alive) collideTurtle(w.l, w.t, w.r, w.b, now)
+            collideSharks(now)
+            checkTargets(now)
 
             val sp = hypot(vx, vy)
             if (aiming && sp < readySpeed) {
-                // turn to face where you're aiming
+                // pivot to face where you're aiming
                 faceX = aimDX
                 faceY = aimDY
             } else if (sp > 0.4f * d) {
@@ -770,31 +855,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 faceY = vy / sp
             }
 
-            // escaped through the exit gap
+            // in the hole: through the exit gap
             if (cx > exitX + wallThick * 0.5f && cy > exitGapT && cy < exitGapB) { levelClear(now); return }
-            // caught by the tide
-            if (cx - r * 0.6f < tideX) { caught(now, "THE TIDE GOT YOU!"); return }
         }
         heading = Math.toDegrees(atan2(faceY.toDouble(), faceX.toDouble())).toFloat()
         if (aiming) computePreview(now) else previewN = 0
 
-        updateShark(now, dt)
-        if (over) return
-        updateShells(now, dt)
-        if (over) return
         collectPickups(now)
         checkColumns()
-
-        // keep a few pickups around
-        if (pickups.count { it.type != P_APPLE } < 3 && Random.nextFloat() < 0.004f * dt) spawnPickup(randomPickupType())
-
-        if (!warnedTide && tideX > cx - 130 * d) {
-            warnedTide = true
-            say("The tide is coming! Swim!", true)
-        }
     }
-
-    private fun riseSpeed(): Float = min(0.75f, 0.22f + 0.04f * (level - 1)) * d
 
     private fun collideTurtle(l: Float, t: Float, rr: Float, b: Float, now: Long) {
         val qx = cx.coerceIn(l, rr)
@@ -828,50 +897,59 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 for (k in 0 until 4) spawnParticle(cx - nx * r, cy - ny * r, nx * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d,
                     ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xCCB39DDB.toInt(), 2.5f * d, 20f)
             }
-            touchedSinceCol = true
-            touchedWall = true
         }
     }
-
-    private val bounceK = 0.65f   // how much speed a bounce keeps (into the wall)
-    private val slideK = 0.85f    // how much speed is kept sliding along the wall
 
     private fun inWeed(x: Float, y: Float): Boolean =
         weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
 
     private fun launchSpeed(now: Long): Float = (if (now < speedUntil) 12f else 9f) * d
 
+    /** How far a shot of this power glides in still water (for the distance ring). */
+    fun stillDistance(now: Long): Float {
+        val v = launchSpeed(now) * aimPower.coerceIn(0.12f, 1f)
+        val k = 1f - waterDrag / 3f
+        return v / 3f * k / (1f - k)
+    }
+
     private fun launch(now: Long) {
         val p = aimPower.coerceIn(0.12f, 1f)
         val sp = launchSpeed(now) * p
         vx = aimDX * sp
         vy = aimDY * sp
+        ready = false
         shots++
         bouncesThisShot = 0
+        shotZones.clear()
+        shotCombo = 0
+        targetsThisShot = 0
+        sharkThisShot = false
         kickAt = now
         sfx?.play("launch", 0.4f + 0.5f * p, 0L, 1.6f - 0.5f * p)
         for (k in 0 until 8) spawnParticle(cx - aimDX * r, cy - aimDY * r,
             -aimDX * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d, -aimDY * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d,
             0x99FFFFFF.toInt(), 3 * d, 25f)
-        if (p > loudPower) makeNoise(now)
-        if (shots == par + 1) say("Over par now... every shot counts!", true)
+        when (shots) {
+            par -> say("This shot is for PAR!", true)
+            par + 1 -> say("Over par now... make it count!", true)
+            maxShots -> say("Last shot! Make it count!", true)
+        }
     }
 
-    /** A big splashy launch: the shark hears it and comes to look. */
-    private fun makeNoise(now: Long) {
-        for (k in 0 until 18) {
-            val a = k * 0.349f
-            spawnParticle(cx, cy, cos(a) * 4 * d, sin(a) * 4 * d, 0x66FFFFFF, 2.5f * d, 22f)
+    /** A shot has come to rest: the big combo-plus-buoy shots get the top praise. */
+    private fun endShot(now: Long) {
+        if (shots == 0) return
+        val b = band()
+        if (shotCombo >= 2 && targetsThisShot > 0 && !sharkThisShot) {
+            score += 500 * b
+            celebrate("PERFECT!!", true)
+            sfx?.play("jackpot", 1f, 0L)
+            fillReel(now)
+        } else if (inWeed(cx, cy) && shotCombo == 0) {
+            score += 50 * b
+            celebrate("STUCK THE LANDING!")
         }
-        val hear = min(440f, 260f + 12f * (level - 1)) * d
-        if (chActive && now >= stunnedUntil && chMode != MODE_HUNT && hypot(chX - cx, chY - cy) < hear) {
-            chMode = MODE_SEARCH
-            lastSeenX = cx
-            lastSeenY = cy
-            pathLen = 0
-            sfx?.play("click", 1f, 0L)
-            say(arrayOf("SPLASH! He heard that!", "Too loud! He's coming to look!", "Shhh! Smaller shots!").random(), true)
-        }
+        shotCombo = 0
     }
 
     // simulation state for the aim preview
@@ -889,14 +967,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         svy = aimDY * sp
         previewN = 0
         // only part of the path is shown: reading the rest is the skill
-        val frames = pvMax
-        for (f in 0 until frames) {
+        for (f in 0 until pvMax) {
             for (s in 0 until 3) {
                 val hdt = 1f / 3f
-                sampleWater(sx, sy, false)
+                sampleWater(sx, sy, false, now)
                 val sticky = inWeed(sx, sy)
+                val inFlow = (wx != 0f || wy != 0f) && !sticky
                 val grip = if (sticky) 0.25f else 1f
-                val k = 1f - (if (sticky) weedDrag else waterDrag) * hdt
+                val k = 1f - (if (sticky) weedDrag else if (inFlow) rideDrag else waterDrag) * hdt
                 svx *= k
                 svy *= k
                 sx += (svx + wx * grip) * hdt
@@ -932,306 +1010,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     // ============================================================
-    // the shark
-    // ============================================================
-
-    private fun chaseSpeed(): Float = min(3.3f, 2.3f + 0.07f * (level - 1)) * d
-
-    private fun updateShark(now: Long, dt: Float) {
-        // seaweed hides him, unless the shark is right on top of him
-        val inWeed = weeds.any { cx > it.l && cx < it.r && cy > it.t && cy < it.b }
-        val distToShark = if (chActive) hypot(chX - cx, chY - cy) else 9999f
-        val nowHidden = inWeed && distToShark > 60 * d
-        if (nowHidden && !hidden) {
-            sfx?.play("click", 0.8f, 200L)
-            if (chActive) say("Shhh... he can't see you!", true)
-        }
-        hidden = nowHidden
-
-        if (!chActive) {
-            if (now >= chSpawnAt) {
-                // the shark starts out patrolling somewhere in the middle of the maze
-                chActive = true
-                var sx = W * 0.55f
-                var sy = (playT + playB) / 2f
-                for (k in 0 until 60) {
-                    val x = W * 0.35f + Random.nextFloat() * W * 0.4f
-                    val y = playT + 20 * d + Random.nextFloat() * (playB - playT - 40 * d)
-                    if (pointInWall(x, y, chR * 1.2f)) continue
-                    if (hypot(x - cx, y - cy) < 250 * d) continue
-                    sx = x
-                    sy = y
-                    break
-                }
-                chX = sx
-                chY = sy
-                chVx = 0f
-                chVy = 0f
-                chMode = MODE_WANDER
-                pickWander()
-                say("A shark patrols this maze. Don't let him see you!", true)
-            }
-            return
-        }
-
-        val stunned = now < stunnedUntil
-        // can the shark see him? close enough, nothing in the way, not hiding in seaweed
-        val sight = min(300f, 170f + 9f * (level - 1)) * d
-        val sees = !stunned && !hidden && distToShark < sight && clearLine(chX, chY, cx, cy)
-        if (sees) {
-            if (chMode != MODE_HUNT) {
-                spotted = true
-                sfx?.play("siren", 0.6f, 0L)
-                say(arrayOf("He spotted you! RUN!", "SHARK! Swim, Betito!", "Uh oh... he sees you!").random(), true)
-                pathLen = 0
-            }
-            chMode = MODE_HUNT
-            lastSeenX = cx
-            lastSeenY = cy
-            lastSeenAt = now
-        } else if (chMode == MODE_HUNT && now - lastSeenAt > 1500L) {
-            // lost him: go look where he was last seen
-            chMode = MODE_SEARCH
-            pathLen = 0
-        }
-
-        var tx = if (chMode == MODE_HUNT && !sees) lastSeenX else cx
-        var ty = if (chMode == MODE_HUNT && !sees) lastSeenY else cy
-        when (chMode) {
-            MODE_SEARCH -> {
-                tx = lastSeenX
-                ty = lastSeenY
-                if (hypot(chX - tx, chY - ty) < 20 * d) {
-                    chMode = MODE_WANDER
-                    pickWander()
-                    pathLen = 0
-                    say("Phew... he lost you.", true)
-                }
-            }
-            MODE_WANDER -> {
-                tx = wanderX
-                ty = wanderY
-                if (hypot(chX - tx, chY - ty) < 24 * d) {
-                    pickWander()
-                    pathLen = 0
-                }
-            }
-        }
-
-        val hdt = dt / 3f
-        val speed = when (chMode) {
-            MODE_HUNT -> chaseSpeed()
-            MODE_SEARCH -> 2.2f * d
-            else -> 1.5f * d
-        }
-        for (step in 0 until 3) {
-            if (stunned) {
-                chVx *= 0.9f
-                chVy *= 0.9f
-            } else {
-                // straight at the target when nothing is in the way, otherwise follow the path
-                var gx = tx
-                var gy = ty
-                val direct = hypot(tx - chX, ty - chY) < 160 * d && clearLine(chX, chY, tx, ty)
-                if (!direct) {
-                    if (pathLen == 0 || now >= repathAt) {
-                        findPath(tx, ty)
-                        repathAt = now + 350L
-                    }
-                    while (pathIdx < pathLen) {
-                        val c = pathBuf[pathIdx]
-                        val wxp = (c % gCols + 0.5f) * cell
-                        val wyp = (c / gCols + 0.5f) * cell
-                        if (hypot(wxp - chX, wyp - chY) < 10 * d && pathIdx < pathLen - 1) pathIdx++ else {
-                            gx = wxp
-                            gy = wyp
-                            break
-                        }
-                    }
-                }
-                val dx = gx - chX
-                val dy = gy - chY
-                val len = hypot(dx, dy)
-                if (len > 0.5f) {
-                    chVx += (dx / len * speed - chVx) * 0.2f * hdt * 3f
-                    chVy += (dy / len * speed - chVy) * 0.2f * hdt * 3f
-                }
-            }
-            sampleWater(chX, chY, false)
-            chX += (chVx + wx * 0.6f) * hdt
-            chY += (chVy + wy * 0.6f) * hdt
-            // push out of walls
-            for (w in blocks) {
-                if (!w.alive) continue
-                val qx = chX.coerceIn(w.l, w.r)
-                val qy = chY.coerceIn(w.t, w.b)
-                val ddx = chX - qx
-                val ddy = chY - qy
-                val d2 = ddx * ddx + ddy * ddy
-                val rr = chR * 0.8f
-                if (d2 < rr * rr && d2 > 0.0001f) {
-                    val dist = sqrt(d2)
-                    chX += ddx / dist * (rr - dist)
-                    chY += ddy / dist * (rr - dist)
-                }
-            }
-            chX = chX.coerceIn(chR, exitX - chR)
-            chY = chY.coerceIn(playT + chR * 0.6f, playB - chR * 0.6f)
-        }
-        val chSp = hypot(chVx, chVy)
-        if (chSp > 0.3f * d) chHeading = Math.toDegrees(atan2(chVy.toDouble(), chVx.toDouble())).toFloat()
-
-        if (!stunned) {
-            val dist = hypot(chX - cx, chY - cy)
-            if (dist < r + chR * 0.75f) {
-                caught(now, "CHOMPED!")
-                return
-            }
-            if (chMode == MODE_HUNT && dist < 120 * d && now - lastCloseWarn > 5000) {
-                lastCloseWarn = now
-                say("It's right behind you!", true)
-            }
-        }
-    }
-
-    private fun pickWander() {
-        val sniff = level >= 6 && Random.nextFloat() < 0.4f
-        for (k in 0 until 40) {
-            val x = if (sniff) (cx + (Random.nextFloat() - 0.5f) * 240 * d).coerceIn(40 * d, exitX - 40 * d)
-                else 60 * d + Random.nextFloat() * (exitX - 100 * d)
-            val y = playT + 20 * d + Random.nextFloat() * (playB - playT - 40 * d)
-            if (!pointInWall(x, y, chR)) {
-                wanderX = x
-                wanderY = y
-                return
-            }
-        }
-        wanderX = cx
-        wanderY = cy
-    }
-
-    // ============================================================
-    // shells
-    // ============================================================
-
-    private fun fire(now: Long) {
-        if (ammo.isEmpty()) {
-            sfx?.play("wrong", 0.3f, 200L)
-            popup = "NO SHELLS - GRAB SOME!"
-            popupAt = now
-            return
-        }
-        val type = ammo.removeAt(0)
-        var dx = faceX
-        var dy = faceY
-        if (chActive) {
-            val ddx = chX - cx
-            val ddy = chY - cy
-            val len = hypot(ddx, ddy)
-            if (len > 1f) {
-                dx = ddx / len
-                dy = ddy / len
-            }
-        }
-        val sp = 9f * d
-        shells.add(Shell(cx + dx * (r + 6 * d), cy + dy * (r + 6 * d), dx * sp, dy * sp, type,
-            if (type == P_RED) 5 else 0, 150f))
-        sfx?.play("launch", 0.8f, 80L, 1.2f)
-    }
-
-    private fun shellColor(type: Int): Int = when (type) {
-        P_GREEN -> 0xFF43A047.toInt()
-        P_RED -> 0xFFE53935.toInt()
-        else -> 0xFFFF9100.toInt()
-    }
-
-    private fun updateShells(now: Long, dt: Float) {
-        val hdt = dt / 3f
-        val sr = 6f * d
-        val it = shells.iterator()
-        while (it.hasNext()) {
-            val s = it.next()
-            var dead = false
-            for (step in 0 until 3) {
-                val ox = s.x
-                val oy = s.y
-                s.x += s.vx * hdt
-                s.y += s.vy * hdt
-                s.life -= hdt
-                if (s.life <= 0f || s.x < -20 * d) { dead = true; break }
-                // hit the shark
-                if (chActive && hypot(s.x - chX, s.y - chY) < sr + chR) {
-                    if (s.type == P_BOMB) explode(s.x, s.y, now) else {
-                        stunnedUntil = now + 2500L
-                        chVx += s.vx * 0.4f
-                        chVy += s.vy * 0.4f
-                        score += 150
-                        sfx?.play("bonk", 1f, 0L)
-                        celebrate("BONK!", false)
-                        say("BONK! Ha! Got him!", true)
-                        burst(s.x, s.y, shellColor(s.type), 18)
-                    }
-                    dead = true
-                    break
-                }
-                // hit a wall
-                if (pointInWall(s.x, s.y, sr)) {
-                    when (s.type) {
-                        P_RED -> {
-                            if (s.bounces <= 0) { dead = true; burst(s.x, s.y, shellColor(s.type), 8); break }
-                            s.bounces--
-                            // reflect off whichever side we came through
-                            val hitX = pointInWall(s.x, oy, sr)
-                            val hitY = pointInWall(ox, s.y, sr)
-                            if (hitX || !hitY) s.vx = -s.vx
-                            if (hitY || !hitX) s.vy = -s.vy
-                            s.x = ox
-                            s.y = oy
-                            sfx?.play("clink", 0.6f, 60L, 1.5f)
-                        }
-                        P_BOMB -> { explode(s.x, s.y, now); dead = true; break }
-                        else -> { burst(s.x, s.y, shellColor(s.type), 8); sfx?.play("tick", 0.5f, 60L); dead = true; break }
-                    }
-                }
-            }
-            if (dead) it.remove()
-        }
-    }
-
-    private fun explode(x: Float, y: Float, now: Long) {
-        val rad = 95 * d
-        flash = 0.5f
-        flashColor = 0xFFFFAB40.toInt()
-        sfx?.play("bust", 1f, 0L)
-        sfx?.play("rumble", 0.8f, 0L)
-        for (k in 0 until 50) {
-            val a = Random.nextFloat() * 6.283f
-            val sp = (1 + Random.nextFloat() * 6) * d
-            spawnParticle(x, y, cos(a) * sp, sin(a) * sp,
-                if (Random.nextBoolean()) 0xFFFF9100.toInt() else 0xFFFFEB3B.toInt(), (3 + Random.nextFloat() * 4) * d, 40f)
-        }
-        if (chActive && hypot(chX - x, chY - y) < rad) {
-            stunnedUntil = now + 5000L
-            val dd = hypot(chX - x, chY - y).coerceAtLeast(1f)
-            chVx = (chX - x) / dd * 6 * d
-            chVy = (chY - y) / dd * 6 * d
-            score += 300
-            say("KABOOM! He's seeing stars!", true)
-        }
-        var broke = false
-        for (w in blocks) {
-            if (!w.pillar || !w.alive) continue
-            if (hypot((w.l + w.r) / 2f - x, (w.t + w.b) / 2f - y) < rad) {
-                w.alive = false
-                broke = true
-                burst((w.l + w.r) / 2f, (w.t + w.b) / 2f, 0xFF8D6E63.toInt(), 24)
-            }
-        }
-        if (broke) refreshGrid()
-        celebrate("KABOOM!", true)
-    }
-
-    // ============================================================
     // pickups, columns, celebrations
     // ============================================================
 
@@ -1240,39 +1018,21 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val it = pickups.iterator()
         while (it.hasNext()) {
             val p = it.next()
-            if (p.x < tideX) { it.remove(); continue }
             if (hypot(cx - p.x, cy - p.y) > r + 13 * d) continue
-            when (p.type) {
-                P_APPLE -> {
-                    score += 25
-                    sfx?.play("pop", 1f, 40L)
-                    celebrate(yum.random())
-                    fillReel(now)
-                }
-                P_SPEED -> {
-                    speedUntil = now + 5000L
-                    sfx?.play("woo", 1f, 0L)
-                    celebrate("ZOOOM!")
-                    say("Speed kelp! ZOOOM!", true)
-                }
-                else -> {
-                    if (ammo.size >= maxAmmo) {
-                        popup = "SHELL POUCH FULL"
-                        popupAt = now
-                        continue
-                    }
-                    ammo.add(p.type)
-                    sfx?.play("clink", 1f, 0L)
-                    say(when (p.type) {
-                        P_GREEN -> "Green shell! Tap the shell button to fire!"
-                        P_RED -> "Red shells bounce off walls!"
-                        else -> "BOMB shell! It blows up pillars too!"
-                    }, true)
-                }
+            if (p.type == P_APPLE) {
+                score += 25
+                sfx?.play("pop", 1f, 40L)
+                celebrate(yum.random())
+                fillReel(now)
+                applesEaten++
+            } else {
+                speedUntil = now + 8000L
+                sfx?.play("woo", 1f, 0L)
+                celebrate("POWER UP!")
+                say("Speed kelp! Your shots go further for 8 seconds!", true)
             }
-            burst(p.x, p.y, if (p.type == P_APPLE) 0xFFE53935.toInt() else if (p.type == P_SPEED) 0xFFFFEB3B.toInt() else shellColor(p.type), 12)
+            burst(p.x, p.y, if (p.type == P_APPLE) 0xFFE53935.toInt() else 0xFFFFEB3B.toInt(), 12)
             it.remove()
-            if (p.type == P_APPLE) applesEaten++
         }
         repeat(applesEaten) { spawnPickup(P_APPLE) }
     }
@@ -1284,15 +1044,13 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             when {
                 col == ripCol && narrowH > 0f && abs(cy - narrowC) < narrowH -> celebrate("THREADED THE NEEDLE!", true)
                 col == ripCol -> celebrate("BEAT THE RIPTIDE!", true)
-                bouncesThisShot > 0 && hypot(vx, vy) > readySpeed -> celebrate("BANK SHOT!", true)
-                !touchedSinceCol -> celebrate(smooth.random())
+                bouncesThisShot > 0 && !ready -> celebrate("BANK SHOT!")
                 else -> {
                     sfx?.play("ding", 0.6f, 0L, min(2f, 0.9f + 0.1f * nextCol))
                     popup = "WALL $nextCol/${colX.size}"
                     popupAt = android.os.SystemClock.uptimeMillis()
                 }
             }
-            touchedSinceCol = false
         }
     }
 
@@ -1306,7 +1064,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             sfx?.play("coins", 1f, 200L)
             confetti(cx, cy)
             confetti(W * (0.2f + 0.6f * Random.nextFloat()), H * 0.35f)
+            shake(4f, praiseAt)
         }
+    }
+
+    private fun shake(amp: Float, now: Long) {
+        if (now - shakeAt < 250L && shakeAmp > amp) return
+        shakeAt = now
+        shakeAmp = amp * d
     }
 
     fun say(text: String, force: Boolean = false) {
@@ -1355,7 +1120,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val a = reels[0]
             val b = reels[1]
             val c = reels[2]
-            val base = tier()
+            val base = 200 * band()
             val pay: Int
             val text: String
             if (a == b && b == c) {
@@ -1388,28 +1153,13 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     private fun finishReels() {
-        resetReelsKeepPending()
+        reels[0] = -1; reels[1] = -1; reels[2] = -1
+        reelCount = 0
+        reelResolving = false
         val n = min(3, pendingFills)
         pendingFills -= n
         val now = android.os.SystemClock.uptimeMillis()
         repeat(n) { fillReel(now) }
-    }
-
-    private fun resetReelsKeepPending() {
-        reels[0] = -1; reels[1] = -1; reels[2] = -1
-        reelCount = 0
-        reelResolving = false
-    }
-
-    /** Escape points: 100 / 300 / 600, and 1000 when the tide is almost on you. */
-    fun tier(): Int {
-        val frac = ((tideX - 0f) / exitX).coerceIn(0f, 1f)
-        return when {
-            frac >= 0.9f -> 1000
-            frac >= 2f / 3f -> 600
-            frac >= 1f / 3f -> 300
-            else -> 100
-        }
     }
 
     fun band(): Int = when {
@@ -1420,7 +1170,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     // ============================================================
-    // end of level
+    // end of a hole
     // ============================================================
 
     private fun saveBest() {
@@ -1430,88 +1180,93 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
     }
 
+    fun golfName(shotsTaken: Int, parN: Int): String {
+        val under = parN - shotsTaken
+        return when {
+            shotsTaken == 1 -> "HOLE IN ONE!!"
+            under >= 3 -> "ALBATROSS!!!"
+            under == 2 -> "EAGLE!!"
+            under == 1 -> "BIRDIE!"
+            under == 0 -> "PAR"
+            under == -1 -> "BOGEY"
+            under == -2 -> "DOUBLE BOGEY"
+            else -> "+${-under} OVER PAR"
+        }
+    }
+
     private fun levelClear(now: Long) {
         over = true
-        val bandM = band()
-        val pts = tier() * bandM
+        levelEndMs = now
+        endShot(now)
+        val b = band()
         val secs = (now - levelStartMs) / 1000f
-        val bonus = when {
-            secs < 12f -> 500
-            secs < 20f -> 250
-            secs < 30f -> 100
+        val under = par - shots
+        val name = golfName(shots, par)
+        val parPts = when {
+            shots == 1 -> 3000 * b
+            under >= 0 -> (300 + 400 * under) * b
             else -> 0
         }
-        // golf-style: fewer shots = more points
-        val underPar = par - shots
-        val parPts = if (underPar >= 0) (200 + 150 * underPar) * bandM else 0
-        val sneaky = if (!spotted) 300 * bandM else 0
-        val explorer = if (zones.isNotEmpty() && currentsVisited >= zones.size) 300 * bandM else 0
-        val direct = if (currentsVisited == 0) 200 * bandM else 0
-        score += pts + bonus + parPts + sneaky + explorer + direct
+        val speed = when {
+            secs < par * 3f -> 500 * b
+            secs < par * 5f -> 250 * b
+            secs < par * 8f -> 100 * b
+            else -> 0
+        }
+        val explorer = if (zones.size >= 2 && currentsVisited >= zones.size) 300 * b else 0
+        score += 200 * b + parPts + speed + explorer
         saveBest()
         sfx?.play("fanfare", 1f, 0L)
 
-        val styles = (if (sneaky > 0) 1 else 0) + (if (explorer > 0) 1 else 0) + (if (direct > 0) 1 else 0)
-        val clutch = tier() >= 1000
-        val holeInOne = shots == 1
-        stars = if (underPar >= 0) {
-            2 + (if (holeInOne || underPar >= 2 || styles >= 1 || clutch) 1 else 0)
-        } else {
-            1 + (if (styles >= 1) 1 else 0)
+        stars = when {
+            under >= 1 -> 3
+            under == 0 -> 2
+            else -> 1
         }
         starsAt = now
-        if (stars == 3) sfx?.play("jackpot", 1f, 0L)
+        if (under >= 1) {
+            sfx?.play("jackpot", 1f, 0L)
+            sfx?.play("siren", 0.8f, 0L)
+            flash = 0.5f
+            flashColor = 0xFFFFF59D.toInt()
+            shake(10f, now)
+        }
         celebrate(when {
-            holeInOne -> "HOLE IN ONE!!"
-            clutch -> "CLUTCH!!"
-            underPar >= 2 -> "UNDER PAR!"
-            sneaky > 0 && styles >= 2 -> "TURTLEY AWESOME!"
-            sneaky > 0 -> "SNEAKY!"
-            direct > 0 -> "STRAIGHT SHOT!"
-            explorer > 0 -> "EXPLORER!"
-            underPar == 0 -> "RIGHT ON PAR!"
-            else -> "ESCAPED!"
-        }, true)
-        for (k in 0 until 4) confetti(W * (0.15f + 0.7f * Random.nextFloat()), H * (0.25f + 0.4f * Random.nextFloat()))
+            under >= 0 -> name
+            else -> "IN THE HOLE!"
+        }, under >= 0)
+        for (k in 0 until (if (under >= 1) 7 else 3)) confetti(W * (0.15f + 0.7f * Random.nextFloat()), H * (0.25f + 0.4f * Random.nextFloat()))
         val lines = ArrayList<String>()
-        lines.add("ESCAPE +${pts + bonus}")
-        lines.add("$shots SHOTS (PAR $par)")
-        if (parPts > 0) lines.add("PAR +$parPts")
-        if (sneaky > 0) lines.add("SNEAKY +$sneaky")
+        lines.add("$shots SHOTS · PAR $par")
+        if (parPts > 0) lines.add("${if (shots == 1) "ACE" else name.trimEnd('!')} +$parPts")
+        if (speed > 0) lines.add("SPEED +$speed")
         if (explorer > 0) lines.add("EXPLORER +$explorer")
-        if (direct > 0) lines.add("DIRECT +$direct")
-        message = "LEVEL $level CLEARED!"
+        if (bestCombo >= 2) lines.add("BEST COMBO x$bestCombo")
+        lines.add("%.1fs".format(secs))
+        message = "HOLE $level: $name"
         banner = lines.joinToString("  ")
-        bannerUntil = now + 3000L
-        say(arrayOf("You made it!", "Woohoo! Next room!", "Betito is unstoppable!").random(), true)
+        bannerUntil = now + 3200L
+        say(when {
+            shots == 1 -> "A HOLE IN ONE?! You're the KING OF THE SEA!"
+            under >= 2 -> "Incredible! The currents obey you!"
+            under == 1 -> "Birdie! Smooth swimming!"
+            under == 0 -> "Right on par. Try chaining currents for a birdie!"
+            else -> "Made it! Use the currents and buoys to save shots."
+        }, true)
         level++
-        resumeNewGame = false
-        resumeAt = now + 3400L
+        resumeAt = now + 3600L
     }
 
-    private fun caught(now: Long, why: String) {
+    private fun outOfShots(now: Long) {
         over = true
-        dying = true
+        levelEndMs = now
         saveBest()
-        sfx?.play("squish", 1f, 0L)
-        bumpAt = now
-        val soClose = cx > exitX - 70 * d && cy > exitGapT - 30 * d && cy < exitGapB + 30 * d
-        lives--
-        say(if (why == "CHOMPED!") "Noooo! The shark got him!" else "Ouch! Too slow for the tide!", true)
-        if (lives > 0) {
-            message = if (soClose) "SO CLOSE!" else why
-            banner = if (lives == 1) "LAST LIFE!" else "$lives LIVES LEFT"
-            bannerUntil = now + 2500L
-            resumeNewGame = false
-            resumeAt = now + 2600L
-        } else {
-            sfx?.play("lose", 1f, 0L)
-            message = "GAME OVER"
-            banner = "FINAL SCORE $score  (LEVEL $level)"
-            bannerUntil = now + 3400L
-            resumeNewGame = true
-            resumeAt = now + 3600L
-        }
+        sfx?.play("lose", 1f, 0L)
+        message = "OUT OF SHOTS"
+        banner = "TRY HOLE $level AGAIN  ·  PAR $par"
+        bannerUntil = now + 2500L
+        say("Ride the currents to go further! Flip the red ones with buoys.", true)
+        resumeAt = now + 2700L
     }
 
     // ============================================================
@@ -1549,8 +1304,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 b.x = Random.nextFloat() * W
             }
         }
-        // speed trail
-        if (!over && now < speedUntil) spawnParticle(cx - faceX * r, cy - faceY * r, 0f, 0f, 0xAAFFEB3B.toInt(), 4 * d, 18f)
+        // trail while riding a combo or boosted
+        if (!over && !ready) {
+            if (shotCombo >= 2) spawnParticle(cx - faceX * r, cy - faceY * r, 0f, 0f, neon[((now / 80) % neon.size).toInt()], 4 * d, 20f)
+            else if (now < speedUntil) spawnParticle(cx - faceX * r, cy - faceY * r, 0f, 0f, 0xAAFFEB3B.toInt(), 4 * d, 18f)
+        }
     }
 
     fun spawnParticle(x: Float, y: Float, vx0: Float, vy0: Float, color: Int, size: Float, life: Float) {

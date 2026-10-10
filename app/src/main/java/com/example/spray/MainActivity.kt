@@ -73,26 +73,19 @@ class MainActivity : Activity() {
         }
 
         box.addView(TextView(this).apply {
-            text = "\nHow to play (turn your phone sideways): Lil Betito is in a flooded maze. Swim to " +
-                "the glowing exit in the right wall before the stinging tide from the left catches him. " +
-                "3 lives.\n\n" +
-                "Controls: SLINGSHOT. Put a finger down anywhere, pull back, and let go. Betito launches " +
-                "the opposite way you pulled; a longer pull is a stronger shot. He glides and slows down, " +
-                "and you can only launch again once he has stopped (green ring). The dotted line shows the " +
-                "start of your shot. Tap FIRE to throw a shell.\n\n" +
-                "Strategy: each room has a PAR (shot count). Fewer shots = more stars. Rocks bounce you, " +
-                "so bank shots get around corners. Seaweed stops you dead: a safe landing spot. Big shots " +
-                "(red LOUD aim) make a splash the shark can hear.\n\n" +
-                "The shark patrols the maze. If he sees you he chases (! over his head). Break his line of " +
-                "sight or hide in seaweed and he searches (?), then gives up. Seaweed hides you unless " +
-                "he's right on top of you.\n\n" +
-                "Shells (grab them in the maze, they aim at the shark for you): GREEN flies straight and " +
-                "stuns him. RED bounces off walls. Orange BOMB shells explode, stun him longer, and blow " +
-                "up the brown pillar blocks. Yellow SPEED KELP makes you fast for 5 seconds.\n\n" +
-                "Currents (arrows show the flow): blue pushes you toward the exit, green up or down, red " +
-                "pushes you back, purple whirlpools bend your shot.\n\n" +
-                "Bonuses: PAR (fewer shots), SNEAKY (never spotted), DIRECT (never touch a current), EXPLORER (ride " +
-                "every current). Apples spin the slot reels. Clear a room for 1-3 stars."
+            text = "\nHow to play (turn your phone sideways): UNDERWATER GOLF. Lil Betito is the ball. " +
+                "Get him through the glowing exit in the right wall in as few shots as you can.\n\n" +
+                "Shooting: when he's stopped (green ring), put a finger down anywhere, pull back and let go. " +
+                "He pivots to face your aim. The ring around him is your POWER GAUGE, and the dashed circle " +
+                "shows how far that power glides in still water. The dotted line shows the start of the path.\n\n" +
+                "Currents are boost lanes: ride with one and you speed up. Ride 2 in one shot = NICE!!, " +
+                "3 = DEADLY COMBO!!, 4+ = KING OF THE SEA!!. Rocks bounce you, so bank shots work. Seaweed " +
+                "stops you dead.\n\n" +
+                "BUOYS: hit one with a shot and its linked current FLIPS direction. Turn a red riptide into a " +
+                "blue boost lane! A combo plus a buoy hit in one shot = PERFECT!!\n\n" +
+                "Sharks patrol back and forth. They won't eat you, but they bump your shot off course.\n\n" +
+                "Scoring: PAR, BIRDIE (1 under), EAGLE (2 under), ALBATROSS (3 under), HOLE IN ONE. Fast holes " +
+                "get a speed bonus. Big combos and apples spin the slot reels. Use double par and you replay the hole."
         })
         setContentView(ScrollView(this).apply { addView(box) })
     }

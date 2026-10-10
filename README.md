@@ -1,14 +1,13 @@
 # Lil Betito
 
-A sideways Android game that floats over your screen. Lil Betito is in a flooded maze with a shark on patrol. Sneak, hide in seaweed, throw shells, and reach the exit before the stinging tide catches him.
+A sideways Android game that floats over your screen: underwater golf. Lil Betito is the ball. Shoot him through a flooded maze to the exit in as few shots as you can.
 
 ## How to play
-- Turn your phone sideways. Slingshot controls: touch anywhere, pull back, let go. Launch again once he stops (green ring). FIRE throws a shell.
-- Each room has a PAR. Fewer shots = more stars. Rocks bounce you (bank shots), seaweed stops you dead, and loud full-power shots alert the shark.
-- The shark chases when he sees you (!), searches when he loses you (?). Seaweed hides you.
-- Shells aim at the shark: green stuns, red bounces off walls, orange bombs explode and break pillars. Speed kelp = 5s boost.
-- Currents push you around: blue forward, green up/down, red backward, purple whirlpools.
-- Bonuses: PAR, SNEAKY, DIRECT, EXPLORER. Apples spin the slot reels. 1-3 stars per room. 3 lives.
+- Turn your phone sideways. When he's stopped (green ring), touch anywhere, pull back, let go. The ring around him is the power gauge; the dashed circle shows how far the shot glides in still water.
+- Currents are boost lanes. Ride several in one shot for combos: NICE!!, DEADLY COMBO!!, KING OF THE SEA!!
+- Hit a buoy to flip its linked current's direction. Combo + buoy in one shot = PERFECT!!
+- Rocks bounce you (bank shots), seaweed stops you dead, sharks bump your shot off course.
+- Golf scoring: par, birdie, eagle, albatross, hole in one, plus a speed bonus. Big combos and apples spin the slot reels.
 
 ## Install
 Open the Actions tab, tap the latest Build APK run, download the screen-skater-apk artifact, and install the APK. Allow Display over other apps when asked.
