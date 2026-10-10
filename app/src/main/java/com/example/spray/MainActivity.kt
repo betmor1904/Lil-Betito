@@ -76,9 +76,13 @@ class MainActivity : Activity() {
             text = "\nHow to play (turn your phone sideways): Lil Betito is in a flooded maze. Swim to " +
                 "the glowing exit in the right wall before the stinging tide from the left catches him. " +
                 "3 lives.\n\n" +
-                "Controls: put your LEFT thumb down anywhere and drag to swim (a joystick appears where " +
-                "you touch). RIGHT thumb: tap STROKE for a burst of speed, hold it to brake and dig in " +
-                "against currents. Tap FIRE to throw a shell.\n\n" +
+                "Controls: SLINGSHOT. Put a finger down anywhere, pull back, and let go. Betito launches " +
+                "the opposite way you pulled; a longer pull is a stronger shot. He glides and slows down, " +
+                "and you can only launch again once he has stopped (green ring). The dotted line shows the " +
+                "start of your shot. Tap FIRE to throw a shell.\n\n" +
+                "Strategy: each room has a PAR (shot count). Fewer shots = more stars. Rocks bounce you, " +
+                "so bank shots get around corners. Seaweed stops you dead: a safe landing spot. Big shots " +
+                "(red LOUD aim) make a splash the shark can hear.\n\n" +
                 "The shark patrols the maze. If he sees you he chases (! over his head). Break his line of " +
                 "sight or hide in seaweed and he searches (?), then gives up. Seaweed hides you unless " +
                 "he's right on top of you.\n\n" +
@@ -86,8 +90,8 @@ class MainActivity : Activity() {
                 "stuns him. RED bounces off walls. Orange BOMB shells explode, stun him longer, and blow " +
                 "up the brown pillar blocks. Yellow SPEED KELP makes you fast for 5 seconds.\n\n" +
                 "Currents (arrows show the flow): blue pushes you toward the exit, green up or down, red " +
-                "pushes you back, purple whirlpools spin you. Brake to hold still in one.\n\n" +
-                "Bonuses: CLEAN (never touch a wall), DIRECT (never touch a current), EXPLORER (ride " +
+                "pushes you back, purple whirlpools bend your shot.\n\n" +
+                "Bonuses: PAR (fewer shots), SNEAKY (never spotted), DIRECT (never touch a current), EXPLORER (ride " +
                 "every current). Apples spin the slot reels. Clear a room for 1-3 stars."
         })
         setContentView(ScrollView(this).apply { addView(box) })

@@ -89,21 +89,35 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var faceX = 1f
     var faceY = 0f
     var heading = 0f
-    private var ix = 0f
-    private var iy = 0f
     var bumpAt = 0L
     var kickAt = 0L
     var speedUntil = 0L
     var hidden = false
-    private var lastStrokeMs = 0L
 
-    // ---------- input (set by the view) ----------
-    var joyOn = false
-    var joyX = 0f      // -1..1
-    var joyY = 0f
-    var brakeHeld = false
-    var strokeQueued = false
+    // ---------- slingshot input (set by the view) ----------
+    var aiming = false
+    var aimDX = 1f        // launch direction (unit vector)
+    var aimDY = 0f
+    var aimPower = 0f     // 0..1, how far you pulled back
+    var launchQueued = false
     var fireQueued = false
+
+    // ---------- slingshot rules ----------
+    val readySpeed get() = 0.9f * d     // he can only launch when he has (nearly) stopped
+    val loudPower = 0.7f                // shots harder than this make noise the shark can hear
+    private val waterDrag = 0.025f
+    private val weedDrag = 0.16f
+    var ready = true
+    var shots = 0
+    var par = 5
+    private var bouncesThisShot = 0
+    var spotted = false
+
+    // aim preview: the first part of the path, simulated with real physics
+    val pvMax = 30
+    val previewX = FloatArray(pvMax)
+    val previewY = FloatArray(pvMax)
+    var previewN = 0
     val ammo = ArrayList<Int>()
     val maxAmmo = 4
 
@@ -271,13 +285,18 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         playB = H - 12 * d
         exitX = W - 18 * d
         message = "LEVEL $level"
-        banner = "SWIM TO THE EXIT ON THE RIGHT"
-        bannerUntil = now + 2500
         stars = 0
         praise = null
         cheerStreak = 0
         touchedWall = false
         touchedSinceCol = false
+        shots = 0
+        bouncesThisShot = 0
+        spotted = false
+        ready = true
+        aiming = false
+        launchQueued = false
+        previewN = 0
         currentsVisited = 0
         visited.clear()
         warnedTide = false
@@ -285,20 +304,18 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shells.clear()
         speedUntil = 0L
         hidden = false
-        joyOn = false
-        brakeHeld = false
-        strokeQueued = false
         fireQueued = false
 
         buildMaze()
         buildGrid()
+        par = colX.size + 2
+        banner = "PULL BACK & LET GO  ·  PAR $par"
+        bannerUntil = now + 3000
 
         cx = 48 * d
         cy = (playT + playB) / 2f
         vx = 0f
         vy = 0f
-        ix = 0f
-        iy = 0f
         faceX = 1f
         faceY = 0f
         heading = 0f
@@ -310,7 +327,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         stunnedUntil = 0L
         pathLen = 0
 
-        say(if (level == 1) "Swim right to the exit! Use the left thumb to steer." else "Here we go! Watch for the shark!", true)
+        say(when (level) {
+            1 -> "Pull back anywhere and let go to swim! Reach the exit in $par shots."
+            2 -> "Bounce off walls for bank shots! Seaweed stops you dead."
+            else -> "Par is $par. Big shots are loud... the shark listens!"
+        }, true)
     }
 
     // ============================================================
@@ -697,19 +718,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         updatePulses(now, dt)
 
-        // stroke: a burst of speed the way he's facing (tap), brake while held
-        if (strokeQueued) {
-            strokeQueued = false
-            if (now - lastStrokeMs > 450) {
-                lastStrokeMs = now
-                val p = (if (now < speedUntil) 5.5f else 4f) * d
-                ix += faceX * p
-                iy += faceY * p
-                kickAt = now
-                sfx?.play("bounce", 0.35f, 60L, 1.4f)
-                for (k in 0 until 6) spawnParticle(cx - faceX * r, cy - faceY * r,
-                    -faceX * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d, -faceY * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d,
-                    0x99FFFFFF.toInt(), 3 * d, 25f)
+        // slingshot: launch only once he has (nearly) stopped
+        ready = hypot(vx, vy) < readySpeed
+        if (launchQueued) {
+            launchQueued = false
+            if (ready) launch(now) else {
+                sfx?.play("tick", 0.3f, 150L)
+                popup = "WAIT TILL HE STOPS..."
+                popupAt = now
             }
         }
         if (fireQueued) {
@@ -717,51 +733,41 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             fire(now)
         }
 
-        val boosted = now < speedUntil
-        val maxSp = (if (boosted) 6f else 3.6f) * d
         val hdt = dt / 3f
         val rise = riseSpeed()
         for (step in 0 until 3) {
             tideX += rise * hdt
 
             val whirl = sampleWater(cx, cy, true)
-            val inCurrent = wx != 0f || wy != 0f
-            val grip = if (brakeHeld && inCurrent) 0.15f else 1f
-            if (brakeHeld) {
-                val k = 1f - min(1f, 0.15f * hdt)
-                vx *= k
-                vy *= k
-            } else if (joyOn) {
-                var a = 0.12f * hdt
-                if (inCurrent) a *= 0.35f
-                vx += (joyX * maxSp - vx) * min(1f, a)
-                vy += (joyY * maxSp - vy) * min(1f, a)
-            } else {
-                val a = 0.035f * hdt
-                vx -= vx * a
-                vy -= vy * a
-            }
-            if (whirl != null && !joyOn) {
+            // seaweed is a sticky landing spot: it soaks up speed and shelters you from currents
+            val sticky = inWeed(cx, cy)
+            val grip = if (sticky) 0.25f else 1f
+            val k = 1f - min(1f, (if (sticky) weedDrag else waterDrag) * hdt)
+            vx *= k
+            vy *= k
+            if (whirl != null) {
+                // a whirlpool bends your glide around its center
                 val ddx = cx - whirl.cx
                 val ddy = cy - whirl.cy
                 val len = hypot(ddx, ddy).coerceAtLeast(1f)
                 val sp = hypot(vx, vy)
-                vx += (-ddy / len * whirl.spin * sp - vx) * 0.05f * hdt
-                vy += (ddx / len * whirl.spin * sp - vy) * 0.05f * hdt
+                vx += (-ddy / len * whirl.spin * sp - vx) * 0.04f * hdt
+                vy += (ddx / len * whirl.spin * sp - vy) * 0.04f * hdt
             }
-            cx += (vx + wx * grip + ix) * hdt
-            cy += (vy + wy * grip + iy) * hdt
-            val fade = Math.pow(0.88, (hdt * 3f).toDouble()).toFloat()
-            ix *= fade
-            iy *= fade
+            cx += (vx + wx * grip) * hdt
+            cy += (vy + wy * grip) * hdt
 
-            if (cx < r) { cx = r; vx = max(0f, vx); ix = max(0f, ix) }
+            if (cx < r) { cx = r; vx = abs(vx) * 0.6f }
             for (w in blocks) if (w.alive) collideTurtle(w.l, w.t, w.r, w.b, now)
 
-            val sp = hypot(vx + ix, vy + iy)
-            if (sp > 0.4f * d) {
-                faceX = (vx + ix) / sp
-                faceY = (vy + iy) / sp
+            val sp = hypot(vx, vy)
+            if (aiming && sp < readySpeed) {
+                // turn to face where you're aiming
+                faceX = aimDX
+                faceY = aimDY
+            } else if (sp > 0.4f * d) {
+                faceX = vx / sp
+                faceY = vy / sp
             }
 
             // escaped through the exit gap
@@ -770,6 +776,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (cx - r * 0.6f < tideX) { caught(now, "THE TIDE GOT YOU!"); return }
         }
         heading = Math.toDegrees(atan2(faceY.toDouble(), faceX.toDouble())).toFloat()
+        if (aiming) computePreview(now) else previewN = 0
 
         updateShark(now, dt)
         if (over) return
@@ -809,20 +816,118 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
         val vn = vx * nx + vy * ny
         if (vn < 0f) {
+            // rocks bounce you: this is what makes bank shots work
             val vtx = vx - vn * nx
             val vty = vy - vn * ny
-            vx = -vn * 0.15f * nx + vtx * 0.2f
-            vy = -vn * 0.15f * ny + vty * 0.2f
-            ix *= 0.3f
-            iy *= 0.3f
+            vx = -vn * bounceK * nx + vtx * slideK
+            vy = -vn * bounceK * ny + vty * slideK
             if (-vn > 1.2f * d) {
                 bumpAt = now
-                sfx?.play("tick", 0.4f, 80L)
+                bouncesThisShot++
+                sfx?.play("clink", 0.25f + min(0.5f, -vn / (12 * d)), 60L, 1.3f)
                 for (k in 0 until 4) spawnParticle(cx - nx * r, cy - ny * r, nx * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d,
                     ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xCCB39DDB.toInt(), 2.5f * d, 20f)
             }
             touchedSinceCol = true
             touchedWall = true
+        }
+    }
+
+    private val bounceK = 0.65f   // how much speed a bounce keeps (into the wall)
+    private val slideK = 0.85f    // how much speed is kept sliding along the wall
+
+    private fun inWeed(x: Float, y: Float): Boolean =
+        weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
+
+    private fun launchSpeed(now: Long): Float = (if (now < speedUntil) 12f else 9f) * d
+
+    private fun launch(now: Long) {
+        val p = aimPower.coerceIn(0.12f, 1f)
+        val sp = launchSpeed(now) * p
+        vx = aimDX * sp
+        vy = aimDY * sp
+        shots++
+        bouncesThisShot = 0
+        kickAt = now
+        sfx?.play("launch", 0.4f + 0.5f * p, 0L, 1.6f - 0.5f * p)
+        for (k in 0 until 8) spawnParticle(cx - aimDX * r, cy - aimDY * r,
+            -aimDX * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d, -aimDY * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d,
+            0x99FFFFFF.toInt(), 3 * d, 25f)
+        if (p > loudPower) makeNoise(now)
+        if (shots == par + 1) say("Over par now... every shot counts!", true)
+    }
+
+    /** A big splashy launch: the shark hears it and comes to look. */
+    private fun makeNoise(now: Long) {
+        for (k in 0 until 18) {
+            val a = k * 0.349f
+            spawnParticle(cx, cy, cos(a) * 4 * d, sin(a) * 4 * d, 0x66FFFFFF, 2.5f * d, 22f)
+        }
+        val hear = min(440f, 260f + 12f * (level - 1)) * d
+        if (chActive && now >= stunnedUntil && chMode != MODE_HUNT && hypot(chX - cx, chY - cy) < hear) {
+            chMode = MODE_SEARCH
+            lastSeenX = cx
+            lastSeenY = cy
+            pathLen = 0
+            sfx?.play("click", 1f, 0L)
+            say(arrayOf("SPLASH! He heard that!", "Too loud! He's coming to look!", "Shhh! Smaller shots!").random(), true)
+        }
+    }
+
+    // simulation state for the aim preview
+    private var sx = 0f
+    private var sy = 0f
+    private var svx = 0f
+    private var svy = 0f
+
+    /** Runs the real swim physics forward a short way so the dotted aim line bends with currents and banks off walls. */
+    private fun computePreview(now: Long) {
+        val sp = launchSpeed(now) * aimPower.coerceIn(0.12f, 1f)
+        sx = cx
+        sy = cy
+        svx = aimDX * sp
+        svy = aimDY * sp
+        previewN = 0
+        // only part of the path is shown: reading the rest is the skill
+        val frames = pvMax
+        for (f in 0 until frames) {
+            for (s in 0 until 3) {
+                val hdt = 1f / 3f
+                sampleWater(sx, sy, false)
+                val sticky = inWeed(sx, sy)
+                val grip = if (sticky) 0.25f else 1f
+                val k = 1f - (if (sticky) weedDrag else waterDrag) * hdt
+                svx *= k
+                svy *= k
+                sx += (svx + wx * grip) * hdt
+                sy += (svy + wy * grip) * hdt
+                if (sx < r) { sx = r; svx = abs(svx) * 0.6f }
+                for (w in blocks) {
+                    if (!w.alive) continue
+                    val qx = sx.coerceIn(w.l, w.r)
+                    val qy = sy.coerceIn(w.t, w.b)
+                    val dx = sx - qx
+                    val dy = sy - qy
+                    val d2 = dx * dx + dy * dy
+                    if (d2 >= r * r || d2 < 0.0001f) continue
+                    val dist = sqrt(d2)
+                    val nx = dx / dist
+                    val ny = dy / dist
+                    sx += nx * (r - dist)
+                    sy += ny * (r - dist)
+                    val vn = svx * nx + svy * ny
+                    if (vn < 0f) {
+                        val vtx = svx - vn * nx
+                        val vty = svy - vn * ny
+                        svx = -vn * bounceK * nx + vtx * slideK
+                        svy = -vn * bounceK * ny + vty * slideK
+                    }
+                }
+            }
+            previewX[previewN] = sx
+            previewY[previewN] = sy
+            previewN++
+            if (sx > exitX || hypot(svx, svy) < 0.3f * d) break
         }
     }
 
@@ -875,6 +980,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val sees = !stunned && !hidden && distToShark < sight && clearLine(chX, chY, cx, cy)
         if (sees) {
             if (chMode != MODE_HUNT) {
+                spotted = true
                 sfx?.play("siren", 0.6f, 0L)
                 say(arrayOf("He spotted you! RUN!", "SHARK! Swim, Betito!", "Uh oh... he sees you!").random(), true)
                 pathLen = 0
@@ -1178,6 +1284,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             when {
                 col == ripCol && narrowH > 0f && abs(cy - narrowC) < narrowH -> celebrate("THREADED THE NEEDLE!", true)
                 col == ripCol -> celebrate("BEAT THE RIPTIDE!", true)
+                bouncesThisShot > 0 && hypot(vx, vy) > readySpeed -> celebrate("BANK SHOT!", true)
                 !touchedSinceCol -> celebrate(smooth.random())
                 else -> {
                     sfx?.play("ding", 0.6f, 0L, min(2f, 0.9f + 0.1f * nextCol))
@@ -1334,31 +1441,43 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             secs < 30f -> 100
             else -> 0
         }
-        val clean = if (!touchedWall) 500 * bandM else 0
+        // golf-style: fewer shots = more points
+        val underPar = par - shots
+        val parPts = if (underPar >= 0) (200 + 150 * underPar) * bandM else 0
+        val sneaky = if (!spotted) 300 * bandM else 0
         val explorer = if (zones.isNotEmpty() && currentsVisited >= zones.size) 300 * bandM else 0
         val direct = if (currentsVisited == 0) 200 * bandM else 0
-        score += pts + bonus + clean + explorer + direct
+        score += pts + bonus + parPts + sneaky + explorer + direct
         saveBest()
         sfx?.play("fanfare", 1f, 0L)
 
-        val styles = (if (clean > 0) 1 else 0) + (if (explorer > 0) 1 else 0) + (if (direct > 0) 1 else 0)
+        val styles = (if (sneaky > 0) 1 else 0) + (if (explorer > 0) 1 else 0) + (if (direct > 0) 1 else 0)
         val clutch = tier() >= 1000
-        stars = 1 + (if (styles >= 1) 1 else 0) + (if (styles >= 2 || clutch || bonus >= 250) 1 else 0)
+        val holeInOne = shots == 1
+        stars = if (underPar >= 0) {
+            2 + (if (holeInOne || underPar >= 2 || styles >= 1 || clutch) 1 else 0)
+        } else {
+            1 + (if (styles >= 1) 1 else 0)
+        }
         starsAt = now
         if (stars == 3) sfx?.play("jackpot", 1f, 0L)
         celebrate(when {
+            holeInOne -> "HOLE IN ONE!!"
             clutch -> "CLUTCH!!"
-            clean > 0 && styles >= 2 -> "TURTLEY AWESOME!"
-            clean > 0 -> "SHELLTASTIC!"
+            underPar >= 2 -> "UNDER PAR!"
+            sneaky > 0 && styles >= 2 -> "TURTLEY AWESOME!"
+            sneaky > 0 -> "SNEAKY!"
             direct > 0 -> "STRAIGHT SHOT!"
             explorer > 0 -> "EXPLORER!"
+            underPar == 0 -> "RIGHT ON PAR!"
             else -> "ESCAPED!"
         }, true)
         for (k in 0 until 4) confetti(W * (0.15f + 0.7f * Random.nextFloat()), H * (0.25f + 0.4f * Random.nextFloat()))
         val lines = ArrayList<String>()
         lines.add("ESCAPE +${pts + bonus}")
-        lines.add("%.1fs".format(secs))
-        if (clean > 0) lines.add("CLEAN +$clean")
+        lines.add("$shots SHOTS (PAR $par)")
+        if (parPts > 0) lines.add("PAR +$parPts")
+        if (sneaky > 0) lines.add("SNEAKY +$sneaky")
         if (explorer > 0) lines.add("EXPLORER +$explorer")
         if (direct > 0) lines.add("DIRECT +$direct")
         message = "LEVEL $level CLEARED!"

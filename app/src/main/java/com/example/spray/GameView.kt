@@ -13,8 +13,8 @@ import kotlin.math.sin
 
 /**
  * Draws the whole game in one view (sea, maze, currents, shark, turtle, effects, HUD, controls)
- * and turns touches into input. Left thumb anywhere: floating joystick. Right side: STROKE
- * button (tap = paddle burst, hold = brake) and the SHELL button.
+ * and turns touches into input. Slingshot: touch anywhere, pull back, let go. Bottom right:
+ * the SHELL (fire) button.
  */
 class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private val d = resources.displayMetrics.density
@@ -36,23 +36,19 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         Color.parseColor("#76FF03"), Color.parseColor("#E040FB")
     )
 
-    // touch state
-    private var joyPtr = -1
-    private var joyBX = 0f
-    private var joyBY = 0f
-    private var joyTX = 0f
-    private var joyTY = 0f
-    private var strokePtr = -1
-    private var strokeDownAt = 0L
-    private val joyRadius get() = 50 * d
+    // slingshot touch state: put a finger down anywhere, pull back, let go
+    private var aimPtr = -1
+    private var aimSX = 0f
+    private var aimSY = 0f
+    private var aimTX = 0f
+    private var aimTY = 0f
+    private val maxPull get() = 110 * d
+    private val deadPull get() = 14 * d
 
     // button positions
-    private val strokeX get() = width - 74 * d
-    private val strokeY get() = height - 72 * d
-    private val strokeR get() = 40 * d
-    private val shellX get() = width - 172 * d
+    private val shellX get() = width - 64 * d
     private val shellY get() = height - 58 * d
-    private val shellR get() = 30 * d
+    private val shellR get() = 32 * d
 
     var onResize: ((Int, Int) -> Unit)? = null
 
@@ -75,70 +71,52 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 val x = e.getX(i)
                 val y = e.getY(i)
                 when {
-                    hypot(x - strokeX, y - strokeY) < strokeR + 10 * d && strokePtr == -1 -> {
-                        strokePtr = id
-                        strokeDownAt = SystemClock.uptimeMillis()
-                    }
                     hypot(x - shellX, y - shellY) < shellR + 10 * d -> g.fireQueued = true
-                    joyPtr == -1 -> {
-                        joyPtr = id
-                        joyBX = x
-                        joyBY = y
-                        joyTX = x
-                        joyTY = y
-                        updateJoy()
+                    aimPtr == -1 -> {
+                        aimPtr = id
+                        aimSX = x
+                        aimSY = y
+                        aimTX = x
+                        aimTY = y
+                        updateAim()
                     }
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                val i = e.findPointerIndex(joyPtr)
+                val i = e.findPointerIndex(aimPtr)
                 if (i >= 0) {
-                    joyTX = e.getX(i)
-                    joyTY = e.getY(i)
-                    updateJoy()
+                    aimTX = e.getX(i)
+                    aimTY = e.getY(i)
+                    updateAim()
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                val id = if (e.actionMasked == MotionEvent.ACTION_CANCEL) -2 else e.getPointerId(e.actionIndex)
-                if (id == joyPtr || id == -2) {
-                    joyPtr = -1
-                    g.joyOn = false
-                    g.joyX = 0f
-                    g.joyY = 0f
-                }
-                if (id == strokePtr || id == -2) {
-                    // a quick tap paddles; a hold was a brake
-                    if (id != -2 && SystemClock.uptimeMillis() - strokeDownAt < 250) g.strokeQueued = true
-                    strokePtr = -1
-                    g.brakeHeld = false
+                val cancel = e.actionMasked == MotionEvent.ACTION_CANCEL
+                val id = if (cancel) -2 else e.getPointerId(e.actionIndex)
+                if (id == aimPtr || cancel) {
+                    // let go = launch (dragging back inside the small circle cancels)
+                    if (!cancel && g.aiming) g.launchQueued = true
+                    aimPtr = -1
+                    g.aiming = false
                 }
             }
         }
         return true
     }
 
-    private fun updateJoy() {
-        var dx = joyTX - joyBX
-        var dy = joyTY - joyBY
+    /** Pull vector = where you touched minus where your finger is now. He launches the opposite way you drag. */
+    private fun updateAim() {
+        val dx = aimSX - aimTX
+        val dy = aimSY - aimTY
         val len = hypot(dx, dy)
-        // the base follows your thumb if you drag far, so it never runs out of room
-        if (len > joyRadius) {
-            joyBX = joyTX - dx / len * joyRadius
-            joyBY = joyTY - dy / len * joyRadius
-            dx = joyTX - joyBX
-            dy = joyTY - joyBY
-        }
-        val l = hypot(dx, dy)
-        if (l < 6 * d) {
-            g.joyOn = false
-            g.joyX = 0f
-            g.joyY = 0f
+        if (len < deadPull) {
+            g.aiming = false
             return
         }
-        val mag = (l / joyRadius).coerceIn(0f, 1f)
-        g.joyOn = true
-        g.joyX = dx / l * mag
-        g.joyY = dy / l * mag
+        g.aiming = true
+        g.aimDX = dx / len
+        g.aimDY = dy / len
+        g.aimPower = ((len - deadPull) / (maxPull - deadPull)).coerceIn(0f, 1f)
     }
 
     // ============================================================
@@ -147,9 +125,6 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
 
     override fun onDraw(c: Canvas) {
         val now = SystemClock.uptimeMillis()
-        // a long press on STROKE is a brake
-        if (strokePtr != -1 && now - strokeDownAt >= 250) g.brakeHeld = true
-
         val w = width.toFloat()
         val h = height.toFloat()
         c.drawRect(0f, 0f, w, h, bg)
@@ -165,6 +140,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawTide(c, h, now)
         drawShells(c, now)
         if (g.chActive) drawShark(c, now)
+        drawAimPreview(c, now)
         drawTurtle(c, now)
         drawParticles(c)
         drawHud(c, w, now)
@@ -653,11 +629,16 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.drawText(lv, 14 * d, top + 17 * d, p)
         var x = 14 * d + p.measureText(lv) + 12 * d
         p.textSize = 10 * d
-        val clean = !g.touchedWall
-        p.color = if (clean) Color.parseColor("#76FF03") else Color.argb(120, 255, 255, 255)
-        val ct = if (clean) "CLEAN ✓" else "CLEAN ✗"
-        c.drawText(ct, x, top + 16 * d, p)
-        x += p.measureText(ct) + 8 * d
+        p.textSize = 12 * d
+        p.color = if (g.shots <= g.par) Color.parseColor("#76FF03") else Color.parseColor("#FF9100")
+        val st = "SHOTS ${g.shots}/${g.par}"
+        c.drawText(st, x, top + 16 * d, p)
+        x += p.measureText(st) + 8 * d
+        p.textSize = 10 * d
+        p.color = if (!g.spotted) Color.parseColor("#B388FF") else Color.argb(120, 255, 255, 255)
+        val sn = if (!g.spotted) "SNEAKY ✓" else "SNEAKY ✗"
+        c.drawText(sn, x, top + 16 * d, p)
+        x += p.measureText(sn) + 8 * d
         val direct = g.currentsVisited == 0
         p.color = if (direct) Color.parseColor("#FFD54F") else Color.argb(120, 255, 255, 255)
         val dt = if (direct) "DIRECT ✓" else "DIRECT ✗"
@@ -799,45 +780,85 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.drawText(txt, bx + 8 * d, oy + 4 * d, p)
     }
 
+    /** Color of the aim: grey while he's still moving, red when the shot is loud, white otherwise. */
+    private fun aimColor(): Int = when {
+        !g.ready -> Color.rgb(150, 160, 175)
+        g.aimPower > g.loudPower -> Color.rgb(255, 82, 82)
+        else -> Color.WHITE
+    }
+
+    /** The ready ring around Betito, and the dotted path preview while aiming. */
+    private fun drawAimPreview(c: Canvas, now: Long) {
+        if (g.over) return
+        if (g.ready) {
+            val pulse = 0.5f + 0.5f * sin(now / 180.0).toFloat()
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.color = Color.argb((90 + 90 * pulse).toInt(), 118, 255, 3)
+            c.drawCircle(g.cx, g.cy, g.r * 1.7f + pulse * 3 * d, p)
+            p.style = Paint.Style.FILL
+        }
+        if (!g.aiming || g.previewN == 0) return
+        val col = aimColor()
+        p.style = Paint.Style.FILL
+        for (i in 0 until g.previewN) {
+            if (i % 2 == 1) continue
+            // dots fade out: you only get to see the start of the shot
+            val a = (230 * (1f - i / g.pvMax.toFloat())).toInt().coerceIn(0, 255)
+            p.color = Color.argb(a, Color.red(col), Color.green(col), Color.blue(col))
+            c.drawCircle(g.previewX[i], g.previewY[i], (3.2f - 1.4f * i / g.pvMax) * d, p)
+        }
+    }
+
     private fun drawControls(c: Canvas, now: Long) {
-        // floating joystick
-        if (joyPtr != -1) {
+        // slingshot band: from where you touched to where your finger is
+        if (aimPtr != -1) {
             p.style = Paint.Style.STROKE
             p.strokeWidth = 2 * d
-            p.color = Color.argb(90, 255, 255, 255)
-            c.drawCircle(joyBX, joyBY, joyRadius, p)
+            p.color = Color.argb(70, 255, 255, 255)
+            c.drawCircle(aimSX, aimSY, deadPull, p)
+            if (g.aiming) {
+                val col = aimColor()
+                val pull = hypot(aimSX - aimTX, aimSY - aimTY).coerceAtMost(maxPull)
+                val ex = aimSX - g.aimDX * pull
+                val ey = aimSY - g.aimDY * pull
+                p.strokeCap = Paint.Cap.ROUND
+                p.strokeWidth = (5 - 2.5f * g.aimPower) * d   // the band thins as it stretches
+                p.color = Color.argb(200, Color.red(col), Color.green(col), Color.blue(col))
+                c.drawLine(aimSX, aimSY, ex, ey, p)
+                p.style = Paint.Style.FILL
+                c.drawCircle(ex, ey, 10 * d, p)
+                // power meter
+                p.textAlign = Paint.Align.CENTER
+                p.typeface = Typeface.DEFAULT_BOLD
+                p.textSize = 12 * d
+                p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                val label = when {
+                    !g.ready -> "WAIT..."
+                    g.aimPower > g.loudPower -> "LOUD! ${(g.aimPower * 100).toInt()}%"
+                    else -> "${(g.aimPower * 100).toInt()}%"
+                }
+                c.drawText(label, aimSX, aimSY - deadPull - 8 * d, p)
+                p.clearShadowLayer()
+            }
             p.style = Paint.Style.FILL
-            p.color = Color.argb(110, 255, 255, 255)
-            c.drawCircle(joyBX + g.joyX * joyRadius, joyBY + g.joyY * joyRadius, 20 * d, p)
-        } else if (now - g.levelStartMs < 6000) {
+        } else if (now - g.levelStartMs < 6000 && g.shots == 0) {
+            // how-to hint: a little animated pull-back
+            val k = ((now - g.levelStartMs) % 1400L) / 1400f
+            val hx = width * 0.3f
+            val hy = height - 70 * d
             p.style = Paint.Style.STROKE
-            p.strokeWidth = 2 * d
-            p.color = Color.argb(60, 255, 255, 255)
-            c.drawCircle(90 * d, height - 80 * d, joyRadius, p)
+            p.strokeWidth = 3 * d
+            p.strokeCap = Paint.Cap.ROUND
+            p.color = Color.argb(140, 255, 255, 255)
+            c.drawLine(hx, hy, hx - 60 * d * k, hy + 10 * d * k, p)
             p.style = Paint.Style.FILL
-            p.color = Color.argb(120, 255, 255, 255)
+            p.color = Color.argb(170, 255, 255, 255)
+            c.drawCircle(hx - 60 * d * k, hy + 10 * d * k, 9 * d, p)
             p.textAlign = Paint.Align.CENTER
             p.textSize = 11 * d
-            c.drawText("THUMB DOWN + DRAG", 90 * d, height - 76 * d, p)
+            c.drawText("TOUCH, PULL BACK, LET GO", hx, hy - 18 * d, p)
         }
-
-        // STROKE button: tap to paddle, hold to brake
-        val braking = g.brakeHeld
-        p.style = Paint.Style.FILL
-        p.color = if (braking) Color.argb(170, 255, 179, 0) else Color.argb(130, 0, 150, 136)
-        c.drawCircle(strokeX, strokeY, strokeR, p)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 3 * d
-        p.color = Color.argb(200, 255, 255, 255)
-        c.drawCircle(strokeX, strokeY, strokeR, p)
-        p.style = Paint.Style.FILL
-        p.color = Color.WHITE
-        p.textAlign = Paint.Align.CENTER
-        p.typeface = Typeface.DEFAULT_BOLD
-        p.textSize = 13 * d
-        c.drawText(if (braking) "BRAKE" else "STROKE", strokeX, strokeY + 2 * d, p)
-        p.textSize = 8 * d
-        c.drawText(if (braking) "" else "hold = brake", strokeX, strokeY + 14 * d, p)
 
         // SHELL button with the next shell and how many you have
         val has = g.ammo.isNotEmpty()
