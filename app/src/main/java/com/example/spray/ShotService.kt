@@ -163,6 +163,24 @@ class ShotService : Service(), Choreographer.FrameCallback {
     private var pendingFills = 0
     private val symbolWeights = intArrayOf(30, 20, 15, 7, 28)
 
+    // water: currents push him around. (wx, wy) is the water speed where he is right now,
+    // (mx, my) is momentum he carries out of a current, a slingshot or a tail kick.
+    private val zones = ArrayList<WaterZone>()
+    private var wx = 0f
+    private var wy = 0f
+    private var mx = 0f
+    private var my = 0f
+    private var whirlMs = 0L          // how long he has been circling in a whirlpool
+    private var inWhirl = false
+    private var lastWx = 0f
+    private var lastWy = 0f
+    private val kickCost = 8f
+
+    // tail kick: a quick swipe with any finger
+    private val downT = LongArray(10)
+    private val downX = FloatArray(10)
+    private val downY = FloatArray(10)
+
     private val kFloor = 0
     private val kWall = 1
     private val kObstacle = 2
@@ -197,6 +215,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
         sfx?.enabled = getSharedPreferences("betito", MODE_PRIVATE).getBoolean("sound", true)
         when (a) {
             "SHOT_SOLO", "SHOT_RESET" -> newGame()
+            "SHOT_TEST7" -> { newGame(); level = 7; startLevel() }
             else -> { if (fresh) newGame() }
         }
         return START_STICKY
@@ -266,6 +285,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             val oy = e.rawY - e.getY(0)
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    noteDown(e.getPointerId(0), e.getX(0) + ox, e.getY(0) + oy)
                     ptr1 = e.getPointerId(0)
                     ptr2 = -1
                     p1x = e.getX(0) + ox
@@ -274,6 +294,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 MotionEvent.ACTION_POINTER_DOWN -> {
                     val i = e.actionIndex
                     val id = e.getPointerId(i)
+                    noteDown(id, e.getX(i) + ox, e.getY(i) + oy)
                     if (ptr2 == -1 && id != ptr1) {
                         ptr2 = id
                         p2x = e.getX(i) + ox
@@ -294,6 +315,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 MotionEvent.ACTION_POINTER_UP -> {
                     val id = e.getPointerId(e.actionIndex)
+                    noteUp(id, e.getX(e.actionIndex) + ox, e.getY(e.actionIndex) + oy)
                     if (id == ptr2) {
                         ptr2 = -1
                     } else if (id == ptr1) {
@@ -305,6 +327,8 @@ class ShotService : Service(), Choreographer.FrameCallback {
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (e.actionMasked == MotionEvent.ACTION_UP)
+                        noteUp(e.getPointerId(0), e.getX(0) + ox, e.getY(0) + oy)
                     ptr1 = -1
                     ptr2 = -1
                 }
@@ -386,6 +410,12 @@ class ShotService : Service(), Choreographer.FrameCallback {
         // he is moving the moment the room appears: straight up at base speed
         vx = 0f
         vy = -speedBase
+        mx = 0f
+        my = 0f
+        wx = 0f
+        wy = 0f
+        inWhirl = false
+        whirlMs = 0L
 
         // betting is open for the first few seconds of every level
         wagerLocked = false
@@ -405,9 +435,10 @@ class ShotService : Service(), Choreographer.FrameCallback {
         gapL = center - gapW / 2f
         gapR = center + gapW / 2f
 
-        energy = 0f
+        energy = 30f      // a little spin to start, so the tail kick works right away
         flash = 0f
         updateSpinReady()
+        buildCurrents()
         buildRoom()
         sv?.let { it.heading = -90f; it.radiusPx = r; it.charged = false; it.invalidate() }
         pushHud()
@@ -439,6 +470,7 @@ class ShotService : Service(), Choreographer.FrameCallback {
             it.flash = 0f
             it.reels = reels
             it.reelResolving = reelResolving
+            it.zones = zones
             it.wagerLocked = wagerLocked
             it.wager = if (wagerLocked) wager else pendingWager()
             it.wagerPct = wagerPct
@@ -503,6 +535,133 @@ class ShotService : Service(), Choreographer.FrameCallback {
             handler.postDelayed({ hud?.let { if (it.banner?.startsWith("BETS") == true) { it.banner = null; it.invalidate() } } }, 1400)
         }
         pushHud()
+    }
+
+    // ---------- currents ----------
+
+    /**
+     * Lay out this level's water. Levels 1-3: an updraft and a side stream. 4+: a riptide
+     * pulling down toward the floor. 7+: a whirlpool you can slingshot out of.
+     * 10+: a second side stream. 11+: some currents pulse on and off.
+     */
+    private fun buildCurrents() {
+        zones.clear()
+        val top = ceilY
+        val bot = floorStartY
+        val hh = bot - top
+        val pulse = level >= 11
+        val upW = 76 * d
+        val upLeft = Random.nextBoolean()
+        val upX = if (upLeft) 20 * d + Random.nextFloat() * (sw * 0.35f - upW)
+                  else sw * 0.65f + Random.nextFloat() * (sw * 0.35f - upW - 20 * d)
+        zones.add(WaterZone(WaterZone.UP, upX, top + 0.22f * hh, upX + upW, bot, 0f, -1f, 5.5f * d,
+            pulse = pulse && Random.nextBoolean(), phaseMs = Random.nextLong(5000)))
+
+        // a band of water flowing left or right across most of the room
+        fun side(yFrac: Float, flowLeft: Boolean) {
+            val bandH = 58 * d
+            val y = top + yFrac * hh
+            val l = if (flowLeft) sw * 0.2f else 0f
+            val r = if (flowLeft) sw.toFloat() else sw * 0.8f
+            zones.add(WaterZone(WaterZone.SIDE, l, y, r, y + bandH, if (flowLeft) -1f else 1f, 0f, 4.5f * d,
+                pulse = pulse, phaseMs = Random.nextLong(5000)))
+        }
+        // the main side stream flows toward the updraft, so you can surf one into the other
+        side(0.42f + Random.nextFloat() * 0.18f, flowLeft = upLeft)
+        // later, a lower stream flows the other way, toward the riptide side
+        if (level >= 10) side(0.70f + Random.nextFloat() * 0.08f, flowLeft = !upLeft)
+
+        if (level >= 4) {
+            // riptide on the other side of the room, low down: the danger current
+            val ripW = 66 * d
+            val ripX = if (upLeft) sw * 0.55f + Random.nextFloat() * (sw * 0.4f - ripW)
+                       else 20 * d + Random.nextFloat() * (sw * 0.4f - ripW)
+            zones.add(WaterZone(WaterZone.RIP, ripX, top + 0.35f * hh, ripX + ripW, bot, 0f, 1f,
+                (3.0f + min(1.5f, 0.15f * (level - 4))) * d,
+                pulse = pulse, phaseMs = Random.nextLong(5000)))
+        }
+        if (level >= 7) {
+            val rad = 72 * d
+            val wcx = rad + 30 * d + Random.nextFloat() * (sw - 2 * rad - 60 * d)
+            val wcy = top + (0.30f + Random.nextFloat() * 0.25f) * hh
+            zones.add(WaterZone(WaterZone.WHIRL, wcx - rad, wcy - rad, wcx + rad, wcy + rad, 0f, 0f, 5.5f * d,
+                spin = if (Random.nextBoolean()) 1f else -1f))
+        }
+    }
+
+    /** Fade pulsing currents on and off: 2.5s on, 2.5s off. */
+    private fun updatePulses(now: Long, dt: Float) {
+        for (z in zones) {
+            if (!z.pulse) { z.power = 1f; continue }
+            val on = ((now - levelStartMs + z.phaseMs) / 2500L) % 2L == 0L
+            val target = if (on) 1f else 0f
+            z.power += (target - z.power) * min(1f, 0.08f * dt)
+        }
+    }
+
+    /** Water speed at (x, y), into wx/wy. Returns the whirlpool he is in, if any. */
+    private fun sampleWater(x: Float, y: Float): WaterZone? {
+        wx = 0f
+        wy = 0f
+        var whirl: WaterZone? = null
+        for (z in zones) {
+            if (z.power < 0.02f) continue
+            if (z.kind == WaterZone.WHIRL) {
+                val ddx = x - z.cx
+                val ddy = y - z.cy
+                val dist = hypot(ddx, ddy)
+                if (dist < z.rad && dist > 1f) {
+                    val ux = ddx / dist
+                    val uy = ddy / dist
+                    // spin around the middle, with a gentle pull inward so he keeps circling
+                    val s = z.speed * z.power * (0.6f + 0.4f * dist / z.rad)
+                    wx += -uy * z.spin * s - ux * s * 0.25f
+                    wy += ux * z.spin * s - uy * s * 0.25f
+                    whirl = z
+                }
+            } else if (x >= z.l && x <= z.r && y >= z.t && y <= z.b) {
+                wx += z.dx * z.speed * z.power
+                wy += z.dy * z.speed * z.power
+            }
+        }
+        return whirl
+    }
+
+    private fun noteDown(id: Int, x: Float, y: Float) {
+        if (id !in 0..9) return
+        downT[id] = SystemClock.uptimeMillis()
+        downX[id] = x
+        downY[id] = y
+    }
+
+    /** A quick swipe (under a quarter second, at least 35dp) is a tail kick that way. */
+    private fun noteUp(id: Int, x: Float, y: Float) {
+        if (id !in 0..9 || downT[id] == 0L) return
+        val held = SystemClock.uptimeMillis() - downT[id]
+        downT[id] = 0L
+        val ddx = x - downX[id]
+        val ddy = y - downY[id]
+        val dist = hypot(ddx, ddy)
+        if (held < 250L && dist > 35f * d) tailKick(ddx / dist, ddy / dist)
+    }
+
+    private fun tailKick(dirX: Float, dirY: Float) {
+        if (over || !launched) return
+        if (energy < kickCost) {
+            snd("wrong", 0.3f, 200L)
+            hud?.let { it.popup = "NEED SPIN TO KICK"; it.popupAt = SystemClock.uptimeMillis(); it.invalidate() }
+            return
+        }
+        energy -= kickCost
+        updateSpinReady()
+        val mag = hypot(vx, vy).coerceAtLeast(speedBase)
+        vx = dirX * mag
+        vy = dirY * mag
+        mx += dirX * 10f * d
+        my += dirY * 10f * d
+        sv?.kick()
+        sfx?.play("woo", 0.8f, 150L, 1.2f)
+        parts?.burst(cx - dirX * r, cy - dirY * r, -dirX, -dirY, 8f * d, false, 0)
     }
 
     // ---------- the room: a grid of cells holding bricks, black boxes and food ----------
@@ -1131,6 +1290,11 @@ class ShotService : Service(), Choreographer.FrameCallback {
         } else {
             cy = t - r
         }
+        val mn = mx * nx + my * ny
+        if (mn < 0f) {
+            mx = (mx - 2 * mn * nx) * 0.6f
+            my = (my - 2 * mn * ny) * 0.6f
+        }
         val vn = vx * nx + vy * ny
         if (vn < 0f) {
             hit(-vn, cx - nx * r, cy - ny * r, nx, ny, kind)
@@ -1166,6 +1330,20 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 updateSpinReady()
             }
 
+            updatePulses(now, dt)
+
+            // flow bonus: swimming with a current refills spin, swimming against it drains a little
+            if (wx != 0f || wy != 0f) {
+                val ws = hypot(wx, wy)
+                val vs = hypot(vx, vy)
+                if (ws > 0.5f * d && vs > 0.01f) {
+                    val dot = (vx * wx + vy * wy) / (ws * vs)
+                    if (dot > 0.5f) addEnergy(6f * dt / 60f)
+                    else if (dot < -0.5f && thrust == 0) energy = max(0f, energy - 3f * dt / 60f)
+                }
+                updateSpinReady()
+            }
+
             val hdt = dt / 3f
             val rise = riseSpeed()
             val ct = ceilThick()
@@ -1189,25 +1367,63 @@ class ShotService : Service(), Choreographer.FrameCallback {
                 }
                 gapL = gapC - gw / 2f
                 gapR = gapC + gw / 2f
-                cx += vx * hdt
-                cy += vy * hdt
+
+                // water: currents push him on top of his own swimming
+                val whirl = sampleWater(cx, cy)
+                var grip = 1f
+                if (thrust == -1 && (wx != 0f || wy != 0f)) grip = 0.15f   // braking = dig in and hold
+                if (whirl != null) {
+                    // the whirlpool drags his heading around with it
+                    if (!steering || twoActive) {
+                        val ddx = cx - whirl.cx
+                        val ddy = cy - whirl.cy
+                        steerToward(-ddy * whirl.spin, ddx * whirl.spin, hdt * 0.9f)
+                    }
+                    whirlMs += (hdt * 16.67f).toLong()
+                    inWhirl = true
+                } else if (inWhirl) {
+                    // flung out of a whirlpool after circling: SLINGSHOT
+                    inWhirl = false
+                    if (whirlMs > 600L) {
+                        mx += lastWx * 1.8f + vx * 0.5f
+                        my += lastWy * 1.8f + vy * 0.5f
+                        sfx?.play("launch", 1f, 300L)
+                        sv?.kick()
+                        hud?.let { it.popup = "SLINGSHOT!"; it.popupAt = SystemClock.uptimeMillis(); it.invalidate() }
+                    }
+                    whirlMs = 0L
+                } else if ((lastWx != 0f || lastWy != 0f) && wx == 0f && wy == 0f) {
+                    // shooting out the end of a current: keep some of that speed
+                    mx += lastWx * 0.7f
+                    my += lastWy * 0.7f
+                }
+                lastWx = wx
+                lastWy = wy
+                cx += (vx + wx * grip + mx) * hdt
+                cy += (vy + wy * grip + my) * hdt
+                val fade = Math.pow(0.985, (hdt * 3f).toDouble()).toFloat()
+                mx *= fade
+                my *= fade
 
                 // side walls
                 if (cx < r) {
                     hit(abs(vx), 0f, cy, 1f, 0f, kWall)
                     cx = r
                     vx = abs(vx)
+                    mx = abs(mx) * 0.6f
                 }
                 if (cx > sw - r) {
                     hit(abs(vx), sw.toFloat(), cy, -1f, 0f, kWall)
                     cx = sw - r
                     vx = -abs(vx)
+                    mx = -abs(mx) * 0.6f
                 }
 
                 // the floor is moving up, so bounce relative to it
                 if (cy > floorY - r) {
                     cy = floorY - r
                     combo = 0
+                    if (my > 0f) my = -my * 0.5f
                     val rel = vy + rise
                     if (rel > 0f) {
                         hit(rel, cx, floorY, 0f, -1f, kFloor)

@@ -5,6 +5,8 @@ A small Android game that floats over your screen. Lil Betito never stops moving
 ## How to play
 - The gap in the ceiling is always open. It shrinks over time, and after level 5 it drifts.
 - One finger turns him toward it. Two fingers: second finger above the first climbs, below brakes. Two-finger moves burn the Spin meter.
+- Quick swipe for a tail kick (costs a little Spin).
+- Currents push him: blue updrafts, green side streams, red riptides (level 4+), whirlpools you can slingshot out of (level 7+). Swimming with the flow refills Spin. Brake inside a current to dig in.
 - Crush bricks for points. Fast chains build a combo: x2 at 5, x3 at 10, x4 at 15. It dies after 1.5s without a brick.
 - Gold coin bricks fill the 3 slot reels. 3 of a kind = 5x (777 = 10x), pair = 2x, no match = half.
 - Fill the Spin meter (apples, bricks, coins, close calls past black boxes) and tap SPIN: bricks explode, the floor drops, free slot spin.

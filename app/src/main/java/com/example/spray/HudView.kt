@@ -50,6 +50,9 @@ class HudView(ctx: Context) : View(ctx) {
     var wagerPct = 10
     var wagerLocked = false
     var betSecs = 0
+    var zones: List<WaterZone> = emptyList()
+    private val water = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val arc = RectF()
     private val neon = intArrayOf(
         Color.parseColor("#FFEB3B"), Color.parseColor("#FF4081"), Color.parseColor("#00E5FF"),
         Color.parseColor("#76FF03"), Color.parseColor("#E040FB")
@@ -124,6 +127,83 @@ class HudView(ctx: Context) : View(ctx) {
         p.typeface = Typeface.DEFAULT_BOLD
     }
 
+    private fun zoneColor(kind: Int): IntArray = when (kind) {
+        WaterZone.UP -> intArrayOf(0, 229, 255)
+        WaterZone.SIDE -> intArrayOf(29, 233, 182)
+        WaterZone.RIP -> intArrayOf(255, 82, 82)
+        else -> intArrayOf(68, 138, 255)
+    }
+
+    /** Currents: a tinted patch with streaks sliding along the flow. Whirlpools: spinning arcs. */
+    private fun drawWater(c: Canvas, now: Long) {
+        for (z in zones) {
+            val pw = z.power
+            if (pw < 0.03f) continue
+            val col = zoneColor(z.kind)
+            water.style = Paint.Style.FILL
+            water.color = Color.argb((34 * pw).toInt(), col[0], col[1], col[2])
+            if (z.kind == WaterZone.WHIRL) {
+                c.drawCircle(z.cx, z.cy, z.rad, water)
+                water.style = Paint.Style.STROKE
+                water.strokeWidth = 3 * d
+                water.strokeCap = Paint.Cap.ROUND
+                val turn = (now % 100000L) / 1000f * 160f * z.spin
+                for (i in 0 until 5) {
+                    val rr = z.rad * (0.25f + 0.17f * i)
+                    arc.set(z.cx - rr, z.cy - rr, z.cx + rr, z.cy + rr)
+                    water.color = Color.argb((150 * pw).toInt(), col[0], col[1], col[2])
+                    c.drawArc(arc, turn * (1.4f - 0.15f * i) + i * 72f, 70f, false, water)
+                    c.drawArc(arc, turn * (1.4f - 0.15f * i) + i * 72f + 180f, 70f, false, water)
+                }
+                continue
+            }
+            c.drawRect(z.l, z.t, z.r, z.b, water)
+            // streaks move along the flow at the water's speed
+            c.save()
+            c.clipRect(z.l, z.t, z.r, z.b)
+            water.style = Paint.Style.STROKE
+            water.strokeWidth = 2.5f * d
+            water.strokeCap = Paint.Cap.ROUND
+            water.color = Color.argb((150 * pw).toInt(), col[0], col[1], col[2])
+            val along = 44 * d
+            val across = 22 * d
+            val dash = 16 * d
+            val shift = (now % 100000L) * (z.speed / 16.67f) % along
+            if (z.dy != 0f) {
+                // vertical flow
+                var x = z.l + across / 2
+                var lane = 0
+                while (x < z.r) {
+                    val stagger = if (lane % 2 == 0) 0f else along / 2
+                    var y = z.t - along + (shift + stagger) % along
+                    if (z.dy < 0f) y = z.t - along + (along - (shift + stagger) % along)
+                    while (y < z.b + along) {
+                        c.drawLine(x, y, x, y + dash, water)
+                        y += along
+                    }
+                    x += across
+                    lane++
+                }
+            } else {
+                // horizontal flow
+                var y = z.t + across / 2
+                var lane = 0
+                while (y < z.b) {
+                    val stagger = if (lane % 2 == 0) 0f else along / 2
+                    var x = z.l - along + (shift + stagger) % along
+                    if (z.dx < 0f) x = z.l - along + (along - (shift + stagger) % along)
+                    while (x < z.r + along) {
+                        c.drawLine(x, y, x + dash, y, water)
+                        x += along
+                    }
+                    y += across
+                    lane++
+                }
+            }
+            c.restore()
+        }
+    }
+
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -138,6 +218,8 @@ class HudView(ctx: Context) : View(ctx) {
             c.drawLine(0f, gy, w, gy, grid)
             gy -= 100 * d
         }
+
+        drawWater(c, now)
 
         // rising floor: red and dangerous
         p.color = Color.parseColor("#E64A19")

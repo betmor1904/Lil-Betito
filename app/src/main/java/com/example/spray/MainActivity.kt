@@ -60,6 +60,7 @@ class MainActivity : Activity() {
         box.section("PLAY")
         box.btn("Start game") { send("SHOT_SOLO") }
         box.btn("Restart from level 1") { send("SHOT_RESET") }
+        box.btn("Test: jump to level 7 (riptides + whirlpool)") { send("SHOT_TEST7") }
         box.btn("Stop game") { stopService(Intent(this, ShotService::class.java)) }
 
         box.section("BETO")
@@ -77,7 +78,12 @@ class MainActivity : Activity() {
                 "keeps rising. If it squishes him you lose a life. 3 lives, then it's game over.\n\n" +
                 "Steering: one finger and he turns toward it. Two fingers: the second finger above the " +
                 "first climbs faster (green line), below brakes (amber line), and to the side steers. " +
-                "Two-finger moves burn your Spin meter.\n\n" +
+                "Two-finger moves burn your Spin meter. Quick swipe any finger for a TAIL KICK: a " +
+                "burst of speed that way (costs a little Spin).\n\n" +
+                "Currents: the streaky water pushes him. Blue goes up (free ride), green goes sideways, " +
+                "red riptides drag him down toward the floor. Swimming with a current refills Spin, " +
+                "fighting it drains a little. Brake (two fingers, second one lower) inside a current to " +
+                "dig in and hold still. From level 7, circle inside a whirlpool and swim out to SLINGSHOT.\n\n" +
                 "Bricks: crush them for points. Hit them fast to build a combo: x2 points at 5, x3 at 10, " +
                 "x4 at 15. The combo dies if you go 1.5 seconds without a brick. Black boxes never break.\n\n" +
                 "Slots: gold coin bricks spin the 3 reels at the top right. 3 of a kind pays 5x the " +
