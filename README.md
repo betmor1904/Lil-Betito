@@ -6,6 +6,8 @@ A sideways Android game that floats over your screen: underwater golf. Lil Betit
 - Turn your phone sideways. When he's stopped (green ring), touch anywhere, pull back, let go. The ring around him is the power gauge; the dashed circle shows how far the shot glides in still water.
 - Currents are boost lanes. Ride several in one shot for combos: NICE!!, DEADLY COMBO!!, KING OF THE SEA!!
 - Hit a buoy to flip its linked current's direction. Combo + buoy in one shot = PERFECT!!
+- Gold locks open shortcut gates in walls, pink stars are bonus points. Kelp slides whip you around corners. The exit sucks you in.
+- A par card shows before each hole; the scorecard boxes at the top tick off every shot.
 - Rocks bounce you (bank shots), seaweed stops you dead, sharks bump your shot off course.
 - Golf scoring: par, birdie, eagle, albatross, hole in one, plus a speed bonus. Big combos and apples spin the slot reels.
 

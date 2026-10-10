@@ -64,6 +64,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 val id = e.getPointerId(i)
                 val x = e.getX(i)
                 val y = e.getY(i)
+                g.skipIntro(SystemClock.uptimeMillis())
                 if (aimPtr == -1) {
                     aimPtr = id
                     aimSX = x
@@ -133,7 +134,9 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawFish(c)
         drawBubbles(c)
         drawWater(c, now)
+        drawSuction(c, now)
         drawWeeds(c, now)
+        drawRails(c, now)
         drawWalls(c, now)
         drawPickups(c, now)
         drawTargets(c, now)
@@ -143,10 +146,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawParticles(c)
         if (shaking) c.restore()
         drawHud(c, w, now)
+        drawTracker(c, w, now)
         drawOcto(c, w, now)
         drawControls(c, now)
         drawPraise(c, w, h, now)
         drawMessages(c, w, h, now)
+        drawIntro(c, w, h, now)
         if (g.flash > 0f) {
             val fc = if (g.flashColor != 0) g.flashColor else Color.WHITE
             p.style = Paint.Style.FILL
@@ -321,6 +326,22 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             if (!w.alive) continue
             rect.set(w.l, w.t, w.r, w.b)
             p.style = Paint.Style.FILL
+            if (w.gate) {
+                // a locked gate: gold bars that pulse, opened by the gold switch
+                val pulse = 0.6f + 0.4f * sin(now / 250.0).toFloat()
+                p.color = Color.argb((60 * pulse).toInt(), 255, 193, 7)
+                c.drawRect(w.l - 6 * d, w.t, w.r + 6 * d, w.b, p)
+                p.color = Color.parseColor("#5D4037")
+                c.drawRoundRect(rect, 3 * d, 3 * d, p)
+                p.color = Color.parseColor("#FFC107")
+                var yy = w.t + 5 * d
+                while (yy < w.b - 3 * d) {
+                    c.drawRect(w.l + 1 * d, yy, w.r - 1 * d, yy + 3 * d, p)
+                    yy += 9 * d
+                }
+                lock(c, (w.l + w.r) / 2f, (w.t + w.b) / 2f, 7 * d)
+                continue
+            }
             p.color = if (w.pillar) Color.parseColor("#6D4C41") else Color.parseColor("#4A3B5C")
             c.drawRoundRect(rect, 5 * d, 5 * d, p)
             p.style = Paint.Style.STROKE
@@ -392,47 +413,289 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
     }
 
-    /** Buoys: hit one to flip its current. A faint dashed line links each buoy to its current. */
+    private fun targetColor(t: Target): IntArray = when (t.kind) {
+        Game.T_GATE -> intArrayOf(255, 193, 7)
+        Game.T_BONUS -> intArrayOf(255, 64, 129)
+        else -> zoneColor(t.zone?.kind ?: WaterZone.UP)
+    }
+
+    /**
+     * Things to shoot. Current buoys (striped rings) flip their current, gold lock switches open a
+     * gate, pink stars are bonus points. A faint dashed line shows what each one controls.
+     */
     private fun drawTargets(c: Canvas, now: Long) {
         for (t in g.targets) {
-            val z = t.zone
-            val col = zoneColor(z.kind)
+            if (t.done) continue
+            val col = targetColor(t)
             val hitAge = now - t.hitAt
-            // link line to the current it controls
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1.5f * d
-            p.pathEffect = dash
-            p.color = Color.argb(if (g.aiming) 110 else 55, col[0], col[1], col[2])
-            c.drawLine(t.x, t.y, z.cx, z.cy, p)
-            p.pathEffect = null
+            // link line to whatever it controls
+            val lx: Float
+            val ly: Float
+            val zz = t.zone
+            val gb = t.gate
+            if (zz != null) { lx = zz.cx; ly = zz.cy } else if (gb != null) { lx = (gb.l + gb.r) / 2f; ly = (gb.t + gb.b) / 2f } else { lx = t.x; ly = t.y }
+            if (lx != t.x || ly != t.y) {
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 1.5f * d
+                p.pathEffect = dash
+                p.color = Color.argb(if (g.aiming) 120 else 60, col[0], col[1], col[2])
+                c.drawLine(t.x, t.y, lx, ly, p)
+                p.pathEffect = null
+            }
             val bob = sin(now / 350.0 + t.x).toFloat() * 2 * d
             val y = t.y + bob
             val pop = if (t.hitAt != 0L && hitAge < 400L) 1f + 0.5f * (1f - hitAge / 400f) else 1f
             val rr = g.targetR * pop
-            // glow
             p.style = Paint.Style.FILL
             val pulse = 0.5f + 0.5f * sin(now / 300.0 + t.y).toFloat()
-            p.color = Color.argb((40 + 50 * pulse).toInt(), col[0], col[1], col[2])
-            c.drawCircle(t.x, y, rr * 1.7f, p)
-            // red and white buoy rings
-            p.color = Color.WHITE
-            c.drawCircle(t.x, y, rr, p)
-            p.color = Color.rgb(col[0], col[1], col[2])
-            c.drawCircle(t.x, y, rr * 0.72f, p)
-            p.color = Color.WHITE
-            c.drawCircle(t.x, y, rr * 0.42f, p)
-            p.color = Color.rgb(col[0], col[1], col[2])
-            c.drawCircle(t.x, y, rr * 0.18f, p)
-            // flip arrows over the top
+            p.color = Color.argb((40 + 60 * pulse).toInt(), col[0], col[1], col[2])
+            c.drawCircle(t.x, y, rr * 1.8f, p)
+            when (t.kind) {
+                Game.T_BONUS -> {
+                    c.save()
+                    c.rotate((now % 6000L) / 6000f * 360f, t.x, y)
+                    p.color = Color.WHITE
+                    star(c, t.x, y, rr * 1.15f)
+                    p.color = Color.rgb(col[0], col[1], col[2])
+                    star(c, t.x, y, rr * 0.85f)
+                    c.restore()
+                }
+                Game.T_GATE -> {
+                    p.color = Color.parseColor("#3E2723")
+                    c.drawCircle(t.x, y, rr, p)
+                    p.style = Paint.Style.STROKE
+                    p.strokeWidth = 3 * d
+                    p.color = Color.rgb(col[0], col[1], col[2])
+                    c.drawCircle(t.x, y, rr, p)
+                    p.style = Paint.Style.FILL
+                    lock(c, t.x, y, rr * 0.55f)
+                }
+                else -> {
+                    p.color = Color.WHITE
+                    c.drawCircle(t.x, y, rr, p)
+                    p.color = Color.rgb(col[0], col[1], col[2])
+                    c.drawCircle(t.x, y, rr * 0.72f, p)
+                    p.color = Color.WHITE
+                    c.drawCircle(t.x, y, rr * 0.42f, p)
+                    p.color = Color.rgb(col[0], col[1], col[2])
+                    c.drawCircle(t.x, y, rr * 0.18f, p)
+                    // flip arrows
+                    p.style = Paint.Style.STROKE
+                    p.strokeWidth = 2 * d
+                    p.color = Color.argb(220, 255, 255, 255)
+                    rect.set(t.x - rr * 1.35f, y - rr * 1.35f, t.x + rr * 1.35f, y + rr * 1.35f)
+                    val spin = (now % 4000L) / 4000f * 360f
+                    c.drawArc(rect, spin, 100f, false, p)
+                    c.drawArc(rect, spin + 180f, 100f, false, p)
+                    p.style = Paint.Style.FILL
+                }
+            }
+        }
+    }
+
+    /** A little padlock icon. */
+    private fun lock(c: Canvas, x: Float, y: Float, s: Float) {
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = s * 0.28f
+        p.color = Color.parseColor("#FFE082")
+        rect.set(x - s * 0.5f, y - s * 1.1f, x + s * 0.5f, y - s * 0.1f)
+        c.drawArc(rect, 180f, 180f, false, p)
+        p.style = Paint.Style.FILL
+        p.color = Color.parseColor("#FFC107")
+        rect.set(x - s * 0.75f, y - s * 0.4f, x + s * 0.75f, y + s * 0.7f)
+        c.drawRoundRect(rect, s * 0.2f, s * 0.2f, p)
+        p.color = Color.parseColor("#5D4037")
+        c.drawCircle(x, y + s * 0.1f, s * 0.15f, p)
+    }
+
+    /** Kelp slides: a green ribbon with swaying fronds and glowing mouths at both ends. */
+    private fun drawRails(c: Canvas, now: Long) {
+        for (rl in g.rails) {
+            path.reset()
+            path.moveTo(rl.xs[0], rl.ys[0])
+            for (i in 1 until rl.xs.size) path.lineTo(rl.xs[i], rl.ys[i])
             p.style = Paint.Style.STROKE
-            p.strokeWidth = 2 * d
-            p.color = Color.argb(220, 255, 255, 255)
-            rect.set(t.x - rr * 1.35f, y - rr * 1.35f, t.x + rr * 1.35f, y + rr * 1.35f)
-            val spin = (now % 4000L) / 4000f * 360f
-            c.drawArc(rect, spin, 100f, false, p)
-            c.drawArc(rect, spin + 180f, 100f, false, p)
+            p.strokeCap = Paint.Cap.ROUND
+            p.strokeJoin = Paint.Join.ROUND
+            p.strokeWidth = 26 * d
+            p.color = Color.argb(45, 102, 187, 106)
+            c.drawPath(path, p)
+            p.strokeWidth = 3 * d
+            p.color = Color.argb(170, 46, 125, 50)
+            c.drawPath(path, p)
+            // fronds along both edges
+            p.strokeWidth = 2.5f * d
+            for (i in 1 until rl.xs.size step 2) {
+                val dx = rl.xs[i] - rl.xs[i - 1]
+                val dy = rl.ys[i] - rl.ys[i - 1]
+                val l = hypot(dx, dy).coerceAtLeast(0.01f)
+                val nx = -dy / l
+                val ny = dx / l
+                for (side in intArrayOf(-1, 1)) {
+                    val sway = sin(now / 400.0 + i + side).toFloat() * 4 * d
+                    val bx = rl.xs[i] + nx * side * 12 * d
+                    val by = rl.ys[i] + ny * side * 12 * d
+                    p.color = if (side > 0) Color.argb(200, 102, 187, 106) else Color.argb(200, 46, 125, 50)
+                    c.drawLine(bx, by, bx + nx * side * 7 * d + dx / l * sway, by + ny * side * 7 * d + dy / l * sway, p)
+                }
+            }
+            // moving sparkles show it's a slide
+            p.style = Paint.Style.FILL
+            val k = (now % 1200L) / 1200f
+            for (m in 0 until 3) {
+                val f = ((k + m / 3f) % 1f)
+                val idx = (f * (rl.xs.size - 1)).toInt().coerceIn(0, rl.xs.size - 1)
+                p.color = Color.argb(200, 204, 255, 144)
+                c.drawCircle(rl.xs[idx], rl.ys[idx], 3 * d, p)
+            }
+            // mouths
+            val ready = now >= rl.coolUntil
+            for (e in intArrayOf(0, rl.xs.size - 1)) {
+                val pulse = 0.5f + 0.5f * sin(now / 220.0 + e).toFloat()
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3 * d
+                p.color = Color.argb(if (ready) (140 + 100 * pulse).toInt() else 70, 118, 255, 3)
+                c.drawCircle(rl.xs[e], rl.ys[e], g.r + 6 * d + pulse * 3 * d, p)
+            }
             p.style = Paint.Style.FILL
         }
+    }
+
+    /** The hole's pull: a swirl of arrows drawing you into the exit. */
+    private fun drawSuction(c: Canvas, now: Long) {
+        if (g.colX.isEmpty()) return
+        c.save()
+        c.clipRect(g.suckFromX, g.playT, g.exitX, g.playB)
+        val hx = g.holeX
+        val hy = g.holeY
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(28, 118, 255, 3)
+        c.drawCircle(hx, hy, g.suckR, p)
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeWidth = 2.5f * d
+        // rings shrinking into the hole
+        for (i in 0 until 4) {
+            val f = 1f - (((now % 1600L) / 1600f) + i / 4f) % 1f
+            val rr = g.suckR * f
+            p.color = Color.argb((150 * (1f - f)).toInt().coerceIn(0, 255), 178, 255, 89)
+            rect.set(hx - rr, hy - rr, hx + rr, hy + rr)
+            c.drawArc(rect, 100f + f * 90f, 160f, false, p)
+        }
+        c.restore()
+        p.style = Paint.Style.FILL
+    }
+
+    /** Scorecard: one box per shot. Green up to par, the par box has a flag, orange after. Each shot ticks a box. */
+    private fun drawTracker(c: Canvas, w: Float, now: Long) {
+        val n = g.maxShots
+        val bw = 13 * d
+        val gap = 3 * d
+        val total = n * bw + (n - 1) * gap
+        val x0 = w / 2f - total / 2f + 22 * d
+        val y0 = g.playT + 5 * d
+        rect.set(x0 - 52 * d, y0 - 3 * d, x0 + total + 6 * d, y0 + bw + 3 * d)
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(150, 2, 10, 30)
+        c.drawRoundRect(rect, 8 * d, 8 * d, p)
+        p.textAlign = Paint.Align.LEFT
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 10 * d
+        p.color = Color.WHITE
+        c.drawText("SHOTS", x0 - 46 * d, y0 + bw - 2 * d, p)
+        for (i in 0 until n) {
+            val bx = x0 + i * (bw + gap)
+            val shotNo = i + 1
+            val base = when {
+                shotNo < g.par -> intArrayOf(118, 255, 3)
+                shotNo == g.par -> intArrayOf(255, 235, 59)
+                else -> intArrayOf(255, 145, 0)
+            }
+            val used = shotNo <= g.shots
+            val justNow = used && shotNo == g.shots && now - g.lastShotAt < 450L
+            val sc = if (justNow) 1f + 0.6f * (1f - (now - g.lastShotAt) / 450f) else 1f
+            val cxB = bx + bw / 2f
+            val cyB = y0 + bw / 2f
+            rect.set(cxB - bw / 2f * sc, cyB - bw / 2f * sc, cxB + bw / 2f * sc, cyB + bw / 2f * sc)
+            if (used) {
+                p.style = Paint.Style.FILL
+                p.color = Color.rgb(base[0], base[1], base[2])
+                c.drawRoundRect(rect, 3 * d, 3 * d, p)
+                // the tick mark
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2 * d
+                p.strokeCap = Paint.Cap.ROUND
+                p.color = Color.argb(230, 10, 20, 40)
+                c.drawLine(rect.left + 3 * d, cyB, cxB - 1 * d, rect.bottom - 3 * d, p)
+                c.drawLine(cxB - 1 * d, rect.bottom - 3 * d, rect.right - 3 * d, rect.top + 3 * d, p)
+            } else {
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 1.5f * d
+                p.color = Color.argb(170, base[0], base[1], base[2])
+                c.drawRoundRect(rect, 3 * d, 3 * d, p)
+            }
+            if (shotNo == g.par) {
+                // little flag over the par box
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 1.5f * d
+                p.color = Color.WHITE
+                c.drawLine(cxB, y0 - 1 * d, cxB, y0 - 12 * d, p)
+                p.style = Paint.Style.FILL
+                p.color = Color.parseColor("#FF1744")
+                path.reset()
+                path.moveTo(cxB, y0 - 12 * d)
+                path.lineTo(cxB + 8 * d, y0 - 9 * d)
+                path.lineTo(cxB, y0 - 6 * d)
+                path.close()
+                c.drawPath(path, p)
+            }
+        }
+        p.style = Paint.Style.FILL
+    }
+
+    /** Before each hole: a big card with the hole number and its par. */
+    private fun drawIntro(c: Canvas, w: Float, h: Float, now: Long) {
+        val left = g.introUntil - now
+        if (left <= 0L || g.over) return
+        val age = 2600L - left
+        val a = when {
+            left < 300L -> left / 300f
+            else -> 1f
+        }
+        p.style = Paint.Style.FILL
+        p.color = Color.argb((150 * a).toInt(), 0, 0, 0)
+        c.drawRect(0f, 0f, w, h, p)
+        val sc = bounce(age, 350L)
+        val cy = h * 0.48f
+        c.save()
+        c.scale(sc, sc, w / 2, cy)
+        rect.set(w / 2 - 170 * d, cy - 85 * d, w / 2 + 170 * d, cy + 75 * d)
+        p.color = Color.argb((235 * a).toInt(), 13, 71, 161)
+        c.drawRoundRect(rect, 22 * d, 22 * d, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 4 * d
+        p.color = Color.argb((255 * a).toInt(), 255, 214, 0)
+        c.drawRoundRect(rect, 22 * d, 22 * d, p)
+        p.style = Paint.Style.FILL
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
+        p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
+        p.color = Color.argb((255 * a).toInt(), 255, 255, 255)
+        p.textSize = 22 * d
+        c.drawText("HOLE ${g.level}", w / 2, cy - 45 * d, p)
+        p.textSize = 54 * d
+        val col = neon[((now / 120) % neon.size).toInt()]
+        p.color = Color.argb((255 * a).toInt(), Color.red(col), Color.green(col), Color.blue(col))
+        c.drawText("PAR ${g.par}", w / 2, cy + 15 * d, p)
+        p.clearShadowLayer()
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 11 * d
+        p.color = Color.argb((220 * a).toInt(), 255, 255, 255)
+        c.drawText("BIRDIE = ${g.par - 1}   EAGLE = ${g.par - 2}   MAX ${g.maxShots}", w / 2, cy + 40 * d, p)
+        p.textSize = 10 * d
+        p.color = Color.argb((160 * a).toInt(), 255, 255, 255)
+        c.drawText("TAP TO START", w / 2, cy + 62 * d, p)
+        c.restore()
     }
 
     private val dash = DashPathEffect(floatArrayOf(6f, 6f), 0f)
@@ -928,7 +1191,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         if (b != null) {
             p.color = Color.WHITE
             p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
-            fitText(c, b, w / 2, g.playT + 22 * d, 15 * d, w * 0.6f)
+            fitText(c, b, w / 2, g.playT + 40 * d, 15 * d, w * 0.6f)
             p.clearShadowLayer()
         }
         val pu = g.popup

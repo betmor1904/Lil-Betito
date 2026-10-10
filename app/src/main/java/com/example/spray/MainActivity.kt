@@ -83,6 +83,11 @@ class MainActivity : Activity() {
                 "stops you dead.\n\n" +
                 "BUOYS: hit one with a shot and its linked current FLIPS direction. Turn a red riptide into a " +
                 "blue boost lane! A combo plus a buoy hit in one shot = PERFECT!!\n\n" +
+                "GOLD LOCKS: hit one to blow open a shortcut gate in a wall. PINK STARS: bonus points. Hit 2 " +
+                "or 3 targets in one shot for DOUBLE TAP!! or TRIPLE THREAT!!\n\n" +
+                "KELP SLIDES: shoot into either glowing end of a seaweed path and it whips you around the corner. " +
+                "Slides count toward combos. Near the exit the water sucks you into the hole.\n\n" +
+                "The boxes at the top are your scorecard: every shot ticks one off. The flag marks par.\n\n" +
                 "Sharks patrol back and forth. They won't eat you, but they bump your shot off course.\n\n" +
                 "Scoring: PAR, BIRDIE (1 under), EAGLE (2 under), ALBATROSS (3 under), HOLE IN ONE. Fast holes " +
                 "get a speed bonus. Big combos and apples spin the slot reels. Use double par and you replay the hole."
