@@ -205,7 +205,12 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         p.textSize = 12 * d
         p.color = Color.argb(200, 255, 255, 255)
         if (best > 0) c.drawText("BEST SCORE  $best", tx, ty + 50 * d, p)
-        Art.octo(c, p, path, tx - size * 1.9f, ty - size * 1.15f, 20 * d, now)
+        // Octo floats just left of the title
+        p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
+        p.textSize = size
+        val titleW = p.measureText("TURTLE")
+        p.typeface = Typeface.DEFAULT_BOLD
+        Art.octo(c, p, path, (tx - titleW / 2f - 28 * d).coerceAtLeast(26 * d), ty - size * 0.75f, 20 * d, now)
 
         // buttons, right half
         val bw = min(250 * d, w * 0.36f)
