@@ -63,6 +63,8 @@ class MainActivity : Activity() {
         }
     }
 
+    // Android 13+ uses the OnBackInvokedCallback registered in onCreate; this is only for older phones.
+    @android.annotation.SuppressLint("GestureBackNavigation")
     @Deprecated("Used on Android 12 and older")
     override fun onBackPressed() {
         if (menu?.onBack() != true) finish()
