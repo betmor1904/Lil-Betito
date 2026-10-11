@@ -60,7 +60,7 @@ class Fish(var x: Float, var y: Float, var vx: Float, val size: Float, val color
 class Bubble(var x: Float, var y: Float, val rad: Float, val speed: Float, val seed: Float)
 
 /**
- * All the game rules for Lil Betito, independent of how it is drawn.
+ * All the game rules for Turtle Shot, independent of how it is drawn.
  *
  * Underwater golf: Betito is the ball. Pull back and let go to shoot him toward the exit gap
  * in the right wall in as few shots as possible (par). Currents are boost lanes: ride several

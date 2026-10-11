@@ -1,4 +1,4 @@
-# Putting Lil Betito on Google Play
+# Putting Turtle Shot on Google Play
 
 The app is ready for Play: it's a normal full-screen game (no "display over other apps"), targets Android 16 (API 36),
 uses the ID `com.betmor.lilbetito`, has an icon, and saves progress. What's left is stuff only you can do.
@@ -42,7 +42,7 @@ gh run download $(gh run list -L 1 --json databaseId -q '.[0].databaseId') -n li
 ## 3. Google Play Console
 
 1. Sign up at play.google.com/console ($25 once, personal account, ID check).
-2. **Create app**: name *Lil Betito*, Game, Free.
+2. **Create app**: name *Turtle Shot: Underwater Golf*, Game, Free.
 3. **App content** (left menu):
    - Privacy policy: `https://github.com/betmor1904/Lil-Betito/blob/main/PRIVACY.md` (add your contact email to that file first)
    - Ads: **No** (for now; change it when ads are added)

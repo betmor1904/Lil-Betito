@@ -1,12 +1,12 @@
-# Lil Betito – Privacy Policy
+# Turtle Shot – Privacy Policy
 
 _Last updated: October 11, 2026_
 
-Lil Betito is a single-player game for Android. This policy explains what the game does with your information.
+Turtle Shot is a single-player game for Android. This policy explains what the game does with your information.
 
 ## What we collect
 
-**Nothing.** Lil Betito does not collect, store on a server, share, or sell any personal information.
+**Nothing.** Turtle Shot does not collect, store on a server, share, or sell any personal information.
 
 - No account or sign-in.
 - No internet connection is used by the game.

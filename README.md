@@ -1,6 +1,6 @@
-# Lil Betito: Underwater Golf
+# Turtle Shot: Underwater Golf
 
-A sideways Android game: Lil Betito is the ball. Slingshot him through a flooded maze to the glowing hole in as few shots as you can.
+A sideways Android game: Betito the turtle is the ball. Slingshot him through a flooded maze to the glowing hole in as few shots as you can.
 
 ## How to play
 - When he's stopped (green ring), touch anywhere, pull back, let go. The ring around him is the power gauge; the dashed circle shows how far the shot glides in still water.

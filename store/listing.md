@@ -1,13 +1,13 @@
 # Google Play store listing (copy and paste)
 
-**App name** (max 30): Lil Betito: Underwater Golf
+**App name** (max 30): Turtle Shot: Underwater Golf
 
 **Short description** (max 80):
 Shoot a turtle through flooded mazes. Ride currents, chain combos, beat par!
 
 **Full description** (max 4000):
 
-Lil Betito is the ball. The ocean is the course.
+Betito the turtle is the ball. The ocean is the course.
 
 Pull back, let go, and slingshot Betito the turtle through flooded mazes to the glowing hole, in as few shots as you can. It's golf, but underwater, with currents.
 

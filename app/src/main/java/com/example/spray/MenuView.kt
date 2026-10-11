@@ -188,15 +188,15 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         p.strokeJoin = Paint.Join.ROUND
         p.strokeWidth = 9 * d
         p.color = Color.parseColor("#4A148C")
-        c.drawText("LIL", tx, ty - size * 0.95f + bounce, p)
-        c.drawText("BETITO", tx, ty + bounce, p)
+        c.drawText("TURTLE", tx, ty - size * 0.95f + bounce, p)
+        c.drawText("SHOT!", tx, ty + bounce, p)
         p.style = Paint.Style.FILL
         p.textSize = size
         p.color = Color.parseColor("#FFEB3B")
         p.setShadowLayer(6f, 2f, 3f, Color.argb(160, 0, 0, 0))
-        c.drawText("LIL", tx, ty - size * 0.95f + bounce, p)
+        c.drawText("TURTLE", tx, ty - size * 0.95f + bounce, p)
         p.color = Color.parseColor("#76FF03")
-        c.drawText("BETITO", tx, ty + bounce, p)
+        c.drawText("SHOT!", tx, ty + bounce, p)
         p.clearShadowLayer()
         p.typeface = Typeface.DEFAULT_BOLD
         p.textSize = 15 * d
