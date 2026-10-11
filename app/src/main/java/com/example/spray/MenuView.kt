@@ -21,6 +21,8 @@ import kotlin.random.Random
  * The start screen: an underwater title card with Octo and Betito, big buttons,
  * Octo's Field Guide (how to play) and a settings panel. Everything is drawn here.
  */
+const val CREATOR = "A. Moreno"
+
 class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -218,6 +220,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             Art.button(c, p, r, label, color, d, ts, pressedId == id)
             by += bh + gap
         }
+        drawCredit(c, w, h)
         if (savedLevel > 1) {
             big("continue", "CONTINUE · HOLE $savedLevel", Color.parseColor("#2E7D32"), 17f)
             big("new", "NEW GAME", Color.parseColor("#1565C0"))
@@ -226,6 +229,30 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         }
         big("guide", "HOW TO PLAY", Color.parseColor("#6A1B9A"))
         big("settings", "SETTINGS", Color.parseColor("#37474F"))
+    }
+
+    /** The maker's signature, bottom center of the start screen. */
+    private fun drawCredit(c: Canvas, w: Float, h: Float) {
+        p.textAlign = Paint.Align.LEFT
+        p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.ITALIC)
+        p.textSize = 13 * d
+        val a = "Created with "
+        val heart = "\u2665"
+        val b = " by $CREATOR"
+        val total = p.measureText(a) + p.measureText(heart) + p.measureText(b)
+        var x = w / 2 - total / 2
+        val y = h - 9 * d
+        p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        p.color = Color.argb(230, 255, 255, 255)
+        c.drawText(a, x, y, p)
+        x += p.measureText(a)
+        p.color = Color.parseColor("#FF4081")
+        c.drawText(heart, x, y, p)
+        x += p.measureText(heart)
+        p.color = Color.parseColor("#FFD54F")
+        c.drawText(b, x, y, p)
+        p.clearShadowLayer()
+        p.typeface = Typeface.DEFAULT_BOLD
     }
 
     private fun drawPanel(c: Canvas, w: Float, h: Float, pw: Float, ph: Float, title: String, now: Long) {
@@ -300,7 +327,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         addBtn("privacy", panel.left + 14 * d, fy - 22 * d, panel.left + 30 * d + tw, fy + 10 * d)
         p.textAlign = Paint.Align.RIGHT
         p.color = Color.argb(140, 255, 255, 255)
-        c.drawText("Photo shows on the rock pillars  ·  v${BuildConfig.VERSION_NAME}", panel.right - 22 * d, fy, p)
+        c.drawText("Created with \u2665 by $CREATOR  ·  v${BuildConfig.VERSION_NAME}", panel.right - 22 * d, fy, p)
         p.textAlign = Paint.Align.LEFT
     }
 

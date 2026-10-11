@@ -34,5 +34,7 @@ They won't bite, but they'll bump your perfect shot right off course.
 • Saves your progress
 • No account, no internet needed, no data collected
 
+Created with ♥ by A. Moreno.
+
 **Category:** Game → Casual (or Sports)
 **Tags to pick:** Casual, Golf, Puzzle, Single player
