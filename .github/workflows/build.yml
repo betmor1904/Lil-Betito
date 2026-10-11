@@ -27,6 +27,18 @@ jobs:
           name: screen-skater-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
+      # quick health check: what the APK says about itself, plus Android lint problems
+      - name: Check the APK
+        run: |
+          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | sort -V | tail -1)
+          $AAPT dump badging app/build/outputs/apk/debug/app-debug.apk | grep -E "^package|sdkVersion|uses-permission|launchable" | head -9 | while read -r l; do echo "::notice title=apk::$l"; done
+      - name: Lint
+        run: |
+          gradle lintDebug --no-daemon || true
+          tail -1 app/build/reports/lint-results.txt | while read -r l; do echo "::notice title=lint summary::$l"; done
+          grep -E ": Error:" app/build/reports/lint-results.txt | head -10 | while read -r l; do echo "::error title=lint::$l"; done
+          grep -E ": Warning:" app/build/reports/lint-results.txt | grep -vE "GradleDependency|OldTargetApi|NewerVersionAvailable|UnusedResources|DiscouragedApi|SetTextI18n|ClickableViewAccessibility|ObsoleteSdkInt|DrawAllocation" | head -10 | while read -r l; do echo "::warning title=lint::$l"; done
+
       # Play Store build: only runs once the upload key is saved in the repo's secrets (see RELEASE.md)
       - name: Build signed release bundle (.aab) for Google Play
         if: env.KEYSTORE_B64 != ''
