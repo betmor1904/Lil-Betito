@@ -5,6 +5,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -13,9 +18,24 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.7
+          gradle-version: 8.13
+
+      # test build for your phone (same as before)
       - run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: screen-skater-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      # Play Store build: only runs once the upload key is saved in the repo's secrets (see RELEASE.md)
+      - name: Build signed release bundle (.aab) for Google Play
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > app/upload.jks
+          gradle bundleRelease --no-daemon
+          rm -f app/upload.jks
+      - uses: actions/upload-artifact@v4
+        if: env.KEYSTORE_B64 != ''
+        with:
+          name: lil-betito-play-store-aab
+          path: app/build/outputs/bundle/release/app-release.aab

@@ -169,8 +169,13 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var previewN = 0
 
     // ---------- game state ----------
+    /** The game's own clock in ms. It stops while paused or while Octo is explaining something. */
+    var clock = 1_000_000L
+        private set
+    var paused = false
     var level = 1
     var score = 0
+    private var holeStartScore = 0
     var best = prefs.getInt("best_score", 0)
     var over = false
     private var resumeAt = 0L
@@ -240,34 +245,169 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         if (fish.isEmpty() || changed) makeScenery()
         if (wantNewGame) {
             wantNewGame = false
-            newGame()
-            if (pendingLevel != 1) {
-                level = pendingLevel
-                pendingLevel = 1
-                startLevel()
-            }
+            level = pendingLevel
+            score = pendingScore
+            holeStartScore = score
+            startLevel()
         } else if (changed && started) {
+            // the screen changed size: rebuild this hole from scratch
+            score = holeStartScore
             startLevel()
         }
     }
 
-    fun requestNewGame(startLevelNum: Int = 1) {
+    private var pendingScore = 0
+
+    /** Starts at a hole with a score (hole 1 and 0 for a new game, the saved ones to continue). */
+    fun requestNewGame(startLevelNum: Int = 1, startScore: Int = 0) {
         if (W <= 0f) {
             wantNewGame = true
             pendingLevel = startLevelNum
+            pendingScore = startScore
             return
         }
-        newGame()
-        if (startLevelNum != 1) {
-            level = startLevelNum
-            startLevel()
+        level = startLevelNum
+        score = startScore
+        holeStartScore = score
+        startLevel()
+    }
+
+    /** Pause menu: replay this hole from the start, with the score you had when it began. */
+    fun restartHole() {
+        if (!started) return
+        score = holeStartScore
+        paused = false
+        startLevel()
+    }
+
+    /** Called every frame by the activity. Real time only moves the game while it isn't paused. */
+    fun tick(realMs: Long, dt: Float) {
+        if (W <= 0f || !started || paused || tip != null) return
+        clock += realMs.coerceIn(0L, 50L)
+        update(clock, dt)
+    }
+
+    fun setSound(on: Boolean) {
+        sfx?.enabled = on
+        prefs.edit().putBoolean("sound", on).apply()
+    }
+
+    val soundOn get() = sfx?.enabled ?: false
+
+    fun sfxClick() {
+        sfx?.play("click", 0.7f, 0L)
+    }
+
+    // ============================================================
+    // Octo's tips: the first time something shows up, he stops the game and explains it
+    // ============================================================
+
+    class Tip(val key: String, val x: Float, val y: Float, val rad: Float)
+
+    var tip: Tip? = null
+        private set
+    var tipShownReal = 0L
+    private val tipQueue = ArrayList<String>()
+    private val seenTips = HashSet<String>(prefs.getStringSet("tips_seen", emptySet()) ?: emptySet())
+    var tipsOn = prefs.getBoolean("tips", true)
+    private var startTipsQueued = false
+    private var tipLookedThisRest = false
+
+    /** Where an item of this kind is in the current hole (null if there isn't one). */
+    private fun locate(key: String): Tip? {
+        fun zoneTip(kind: Int): Tip? {
+            val z = zones.firstOrNull { it.kind == kind && it.power > 0.3f } ?: return null
+            val rad = if (kind == WaterZone.WHIRL) z.rad + 8 * d
+                else (max(z.r - z.l, min(z.b - z.t, 140 * d)) / 2f + 10 * d).coerceAtMost(110 * d)
+            val y = if (kind == WaterZone.SIDE) cy.coerceIn(z.t + rad * 0.5f, z.b - rad * 0.5f) else z.cy
+            return Tip(key, z.cx, y, rad)
+        }
+        return when (key) {
+            "shoot" -> Tip(key, cx, cy, 44 * d)
+            "goal" -> Tip(key, holeX - 10 * d, holeY, 56 * d)
+            "blue" -> zoneTip(WaterZone.UP)
+            "green" -> zoneTip(WaterZone.SIDE)
+            "red" -> zoneTip(WaterZone.RIP)
+            "whirl" -> zoneTip(WaterZone.WHIRL)
+            "buoy" -> targets.firstOrNull { it.kind == T_FLIP && !it.done }?.let { Tip(key, it.x, it.y, 36 * d) }
+            "lock" -> targets.firstOrNull { it.kind == T_GATE && !it.done }?.let { Tip(key, it.x, it.y, 36 * d) }
+            "star" -> targets.firstOrNull { it.kind == T_BONUS && !it.done }?.let { Tip(key, it.x, it.y, 34 * d) }
+            "apple" -> pickups.firstOrNull { it.type == P_APPLE }?.let { Tip(key, it.x, it.y, 30 * d) }
+            "speed" -> pickups.firstOrNull { it.type == P_SPEED }?.let { Tip(key, it.x, it.y, 30 * d) }
+            "slide" -> rails.firstOrNull()?.let { val m = it.xs.size / 2; Tip(key, it.xs[m], it.ys[m], 70 * d) }
+            "weed" -> weeds.firstOrNull()?.let { Tip(key, (it.l + it.r) / 2f, (it.t + it.b) / 2f, 44 * d) }
+            "shark" -> sharks.firstOrNull()?.let { Tip(key, it.x, it.y, 40 * d) }
+            "combo" -> Tip(key, cx, cy, 44 * d)
+            else -> null
         }
     }
 
-    private fun newGame() {
-        level = 1
-        score = 0
-        startLevel()
+    // the order Octo introduces things in when a hole starts
+    private val tipOrder = listOf("blue", "green", "red", "buoy", "lock", "slide", "shark", "whirl", "star", "apple", "speed", "weed")
+
+    private fun queueStartTips() {
+        startTipsQueued = true
+        if (!tipsOn) return
+        for (k in listOf("shoot", "goal")) if (k !in seenTips) tipQueue.add(k)
+        var extra = 0
+        for (k in tipOrder) {
+            if (extra >= 2) break
+            if (k in seenTips || k in tipQueue) continue
+            if (locate(k) != null) { tipQueue.add(k); extra++ }
+        }
+    }
+
+    /** Once he comes to rest, Octo explains the closest thing nearby he hasn't explained yet. */
+    private fun lookForNearbyTip() {
+        if (!tipsOn || tipLookedThisRest) return
+        tipLookedThisRest = true
+        var bestKey: String? = null
+        var bestD = 240 * d
+        for (k in tipOrder) {
+            if (k in seenTips) continue
+            val t = locate(k) ?: continue
+            val dd = hypot(t.x - cx, t.y - cy) - t.rad * 0.5f
+            if (dd < bestD) { bestD = dd; bestKey = k }
+        }
+        bestKey?.let { tipQueue.add(it) }
+    }
+
+    private fun queueTip(key: String) {
+        if (tipsOn && key !in seenTips && key !in tipQueue) tipQueue.add(key)
+    }
+
+    private fun showNextTip() {
+        while (tipQueue.isNotEmpty()) {
+            val k = tipQueue.removeAt(0)
+            if (k in seenTips) continue
+            val t = locate(k) ?: continue
+            tip = t
+            tipShownReal = android.os.SystemClock.uptimeMillis()
+            sfx?.play("ding", 0.7f, 0L, 1.3f)
+            return
+        }
+    }
+
+    /** Tap to close Octo's tip (ignored for a moment so a stray tap doesn't skip it). */
+    fun dismissTip(): Boolean {
+        val t = tip ?: return false
+        if (android.os.SystemClock.uptimeMillis() - tipShownReal < 450L) return false
+        seenTips.add(t.key)
+        prefs.edit().putStringSet("tips_seen", HashSet(seenTips)).apply()
+        tip = null
+        sfx?.play("pop", 0.6f, 0L)
+        return true
+    }
+
+    fun skipAllTips() {
+        tip?.let { seenTips.add(it.key) }
+        tip = null
+        tipQueue.clear()
+    }
+
+    private fun saveProgress() {
+        val maxL = max(prefs.getInt("max_level", 1), level)
+        prefs.edit().putInt("save_level", level).putInt("save_score", score).putInt("max_level", maxL).apply()
     }
 
     private fun makeScenery() {
@@ -288,8 +428,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     fun startLevel() {
         started = true
         over = false
+        paused = false
         resumeAt = 0L
-        val now = android.os.SystemClock.uptimeMillis()
+        holeStartScore = score
+        tip = null
+        tipQueue.clear()
+        startTipsQueued = false
+        tipLookedThisRest = true
+        val now = clock
         introUntil = now + 2600L
         levelStartMs = introUntil
         levelEndMs = 0L
@@ -1053,6 +1199,16 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val wasMoving = !ready
         ready = hypot(vx, vy) < readySpeed
         if (wasMoving && ready) endShot(now)
+
+        // Octo's tips: a few when the hole starts, then one for anything new he's resting near
+        if (now >= introUntil && !aiming && ready && riding == null) {
+            if (!startTipsQueued) queueStartTips()
+            if (tipQueue.isEmpty() && shots > 0) lookForNearbyTip()
+            if (tipQueue.isNotEmpty()) {
+                showNextTip()
+                if (tip != null) return
+            }
+        }
         if (launchQueued) {
             launchQueued = false
             if (now < introUntil) skipIntro(now)
@@ -1211,6 +1367,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shotCombo = 0
         targetsThisShot = 0
         sharkThisShot = false
+        tipLookedThisRest = false
         kickAt = now
         sfx?.play("launch", 0.4f + 0.5f * p, 0L, 1.6f - 0.5f * p)
         for (k in 0 until 8) spawnParticle(cx - aimDX * r, cy - aimDY * r,
@@ -1236,6 +1393,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             score += 50 * b
             celebrate("STUCK THE LANDING!")
         }
+        if (shotCombo >= 1) queueTip("combo")
         shotCombo = 0
     }
 
@@ -1337,7 +1495,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 else -> {
                     sfx?.play("ding", 0.6f, 0L, min(2f, 0.9f + 0.1f * nextCol))
                     popup = "WALL $nextCol/${colX.size}"
-                    popupAt = android.os.SystemClock.uptimeMillis()
+                    popupAt = clock
                 }
             }
         }
@@ -1346,7 +1504,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     fun celebrate(text: String, big: Boolean = false) {
         cheerStreak++
         praise = text
-        praiseAt = android.os.SystemClock.uptimeMillis()
+        praiseAt = clock
         praiseBig = big
         sfx?.play("ding", 0.9f, 0L, min(2f, 0.9f + 0.1f * cheerStreak))
         if (big) {
@@ -1364,7 +1522,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     fun say(text: String, force: Boolean = false) {
-        val now = android.os.SystemClock.uptimeMillis()
+        val now = clock
         if (!force && now < octoNextAt) return
         octoText = text
         octoAt = now
@@ -1447,7 +1605,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         reelResolving = false
         val n = min(3, pendingFills)
         pendingFills -= n
-        val now = android.os.SystemClock.uptimeMillis()
+        val now = clock
         repeat(n) { fillReel(now) }
     }
 
@@ -1544,6 +1702,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             else -> "Made it! Use the currents and buoys to save shots."
         }, true)
         level++
+        saveProgress()
         resumeAt = now + 3600L
     }
 

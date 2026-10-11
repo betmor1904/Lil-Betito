@@ -57,14 +57,89 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     // touch
     // ============================================================
 
+    /** Set by the activity: go back to the main menu. */
+    var onQuit: (() -> Unit)? = null
+
+    private val pauseR = RectF()
+    private val btnR = Array(5) { RectF() }
+    private val skipR = RectF()
+    private var guideOpen = false
+    private val guide = GuideBook(d)
+    private var pressed = -1
+
+    private fun cancelAim() {
+        aimPtr = -1
+        g.aiming = false
+        g.launchQueued = false
+    }
+
+    fun pause() {
+        if (!g.started) return
+        cancelAim()
+        g.paused = true
+    }
+
+    /** Back button / gesture: closes whatever is open, otherwise pauses. */
+    fun onBack() {
+        when {
+            guideOpen -> guideOpen = false
+            g.paused -> g.paused = false
+            g.tip != null -> g.dismissTip()
+            else -> pause()
+        }
+    }
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        val x0 = e.getX(e.actionIndex)
+        val y0 = e.getY(e.actionIndex)
+        // the field guide, opened from the pause menu
+        if (guideOpen) {
+            if (e.actionMasked == MotionEvent.ACTION_UP && guide.tap(x0, y0)) guideOpen = false
+            return true
+        }
+        // pause menu buttons
+        if (g.paused) {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> pressed = btnR.indexOfFirst { it.contains(x0, y0) }
+                MotionEvent.ACTION_UP -> {
+                    val hit = btnR.indexOfFirst { it.contains(x0, y0) }
+                    if (hit >= 0 && hit == pressed) {
+                        g.sfxClick()
+                        when (hit) {
+                            0 -> g.paused = false
+                            1 -> { guide.page = 0; guideOpen = true }
+                            2 -> g.restartHole()
+                            3 -> g.setSound(!g.soundOn)
+                            4 -> onQuit?.invoke()
+                        }
+                    }
+                    pressed = -1
+                }
+                MotionEvent.ACTION_CANCEL -> pressed = -1
+            }
+            return true
+        }
+        // Octo is explaining something: tap to carry on
+        if (g.tip != null) {
+            cancelAim()
+            if (e.actionMasked == MotionEvent.ACTION_UP) {
+                if (skipR.contains(x0, y0)) g.skipAllTips() else g.dismissTip()
+            }
+            return true
+        }
+        // the pause button
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && pauseR.contains(x0, y0)) {
+            g.sfxClick()
+            pause()
+            return true
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = e.actionIndex
                 val id = e.getPointerId(i)
                 val x = e.getX(i)
                 val y = e.getY(i)
-                g.skipIntro(SystemClock.uptimeMillis())
+                g.skipIntro(g.clock)
                 if (aimPtr == -1) {
                     aimPtr = id
                     aimSX = x
@@ -116,7 +191,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     // ============================================================
 
     override fun onDraw(c: Canvas) {
-        val now = SystemClock.uptimeMillis()
+        val now = g.clock
         val w = width.toFloat()
         val h = height.toFloat()
         c.drawRect(0f, 0f, w, h, bg)
@@ -164,6 +239,181 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.textSize = 16 * d
             c.drawText("Turn your phone sideways for more room!", w / 2, h * 0.55f, p)
         }
+        val real = SystemClock.uptimeMillis()
+        drawPauseButton(c, w)
+        g.tip?.let { drawTip(c, w, h, it, real) }
+        if (g.paused) drawPauseMenu(c, w, h, real)
+        if (guideOpen) guide.draw(c, p, path, w, h, real)
+    }
+
+    // ============================================================
+    // pause button + pause menu
+    // ============================================================
+
+    private fun drawPauseButton(c: Canvas, w: Float) {
+        val r = 18 * d
+        val cx = w - 12 * d - r
+        val cy = g.topInset + 4 * d + r
+        pauseR.set(cx - r - 8 * d, cy - r - 8 * d, cx + r + 8 * d, cy + r + 8 * d)
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(210, 20, 20, 30)
+        c.drawCircle(cx, cy, r, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2 * d
+        p.color = Color.WHITE
+        c.drawCircle(cx, cy, r - d, p)
+        p.style = Paint.Style.FILL
+        c.drawRoundRect(cx - 6 * d, cy - 7 * d, cx - 2 * d, cy + 7 * d, d, d, p)
+        c.drawRoundRect(cx + 2 * d, cy - 7 * d, cx + 6 * d, cy + 7 * d, d, d, p)
+    }
+
+    private fun drawPauseMenu(c: Canvas, w: Float, h: Float, real: Long) {
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(185, 0, 8, 24)
+        c.drawRect(0f, 0f, w, h, p)
+        val top = h * 0.12f
+        Art.octo(c, p, path, w / 2 - 92 * d, top + 18 * d, 17 * d, real)
+        p.textAlign = Paint.Align.LEFT
+        p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
+        p.textSize = 30 * d
+        p.color = Color.WHITE
+        p.setShadowLayer(4f, 2f, 2f, Color.BLACK)
+        c.drawText("PAUSED", w / 2 - 62 * d, top + 26 * d, p)
+        p.clearShadowLayer()
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 12 * d
+        p.color = Color.argb(200, 255, 255, 255)
+        c.drawText("HOLE ${g.level}  ·  SHOT ${g.shots} / PAR ${g.par}  ·  SCORE ${g.score}", w / 2 - 62 * d, top + 44 * d, p)
+
+        val bw = min(210 * d, (w - 60 * d) / 2f)
+        val bh = 46 * d
+        val gap = 12 * d
+        val y0 = top + 70 * d
+        val labels = arrayOf("RESUME", "ITEM GUIDE", "RESTART HOLE", if (g.soundOn) "SOUND: ON" else "SOUND: OFF", "QUIT TO MENU")
+        val colors = intArrayOf(
+            Color.parseColor("#2E7D32"), Color.parseColor("#1565C0"), Color.parseColor("#EF6C00"),
+            Color.parseColor("#6A1B9A"), Color.parseColor("#C62828")
+        )
+        for (i in 0 until 5) {
+            val col = i % 2
+            val row = i / 2
+            val bx = if (i == 4) w / 2 - bw / 2 else w / 2 - bw - gap / 2 + col * (bw + gap)
+            val by = y0 + row * (bh + gap)
+            btnR[i].set(bx, by, bx + bw, by + bh)
+            Art.button(c, p, btnR[i], labels[i], colors[i], d, 15f, pressed == i)
+        }
+    }
+
+    // ============================================================
+    // Octo's tips
+    // ============================================================
+
+    private val spot = Path()
+
+    /** Dims everything except the thing Octo is talking about, and shows his speech bubble. */
+    private fun drawTip(c: Canvas, w: Float, h: Float, t: Game.Tip, real: Long) {
+        val e = Guide.find(t.key) ?: return
+        val age = real - g.tipShownReal
+        val grow = (age / 300f).coerceIn(0f, 1f)
+        val rad = t.rad * (1.6f - 0.6f * grow)
+        spot.reset()
+        spot.fillType = Path.FillType.EVEN_ODD
+        spot.addRect(0f, 0f, w, h, Path.Direction.CW)
+        spot.addCircle(t.x, t.y, rad, Path.Direction.CW)
+        p.style = Paint.Style.FILL
+        p.color = Color.argb((175 * grow).toInt(), 0, 6, 20)
+        c.drawPath(spot, p)
+        val pulse = 0.5f + 0.5f * sin(real / 200.0).toFloat()
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 3 * d
+        p.color = Color.argb((160 + 90 * pulse).toInt(), Color.red(e.color), Color.green(e.color), Color.blue(e.color))
+        c.drawCircle(t.x, t.y, rad + pulse * 4 * d, p)
+        p.style = Paint.Style.FILL
+
+        // the bubble goes on the side away from the spotlight
+        val bw = min(320 * d, w * 0.44f)
+        val onRight = t.x < w / 2
+        val bx = if (onRight) w - bw - 24 * d else 24 * d
+        p.typeface = Typeface.DEFAULT
+        p.textSize = 14 * d
+        val textX = bx + 16 * d
+        val lines = Art.wrap(p, e.text, bw - 32 * d)
+        val bh = 64 * d + lines.size * 19 * d + 34 * d
+        val by = ((h - bh) / 2f - 20 * d).coerceIn(g.topInset + 8 * d, h - bh - 70 * d)
+        val sc = 0.7f + 0.3f * (age / 220f).coerceIn(0f, 1f)
+        c.save()
+        c.scale(sc, sc, bx + bw / 2, by + bh / 2)
+
+        // pointer from the bubble to the spotlight
+        val px = if (onRight) bx else bx + bw
+        val py = (by + bh / 2).coerceIn(by + 20 * d, by + bh - 20 * d)
+        val ang = kotlin.math.atan2(t.y - py, t.x - px)
+        val ex = t.x - cos(ang) * (rad + 6 * d)
+        val ey = t.y - sin(ang) * (rad + 6 * d)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 3 * d
+        p.pathEffect = dash
+        p.color = Color.argb(220, 255, 255, 255)
+        c.drawLine(px, py, ex, ey, p)
+        p.pathEffect = null
+        p.style = Paint.Style.FILL
+        p.color = Color.WHITE
+        c.drawCircle(ex, ey, 5 * d, p)
+
+        rect.set(bx, by, bx + bw, by + bh)
+        p.color = Color.argb(245, 255, 255, 255)
+        c.drawRoundRect(rect, 18 * d, 18 * d, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 4 * d
+        p.color = e.color
+        c.drawRoundRect(rect, 18 * d, 18 * d, p)
+        p.style = Paint.Style.FILL
+
+        // icon + title
+        val ix = bx + 34 * d
+        val iy = by + 34 * d
+        p.color = Color.parseColor("#0D2B4F")
+        c.drawCircle(ix, iy, 22 * d, p)
+        Art.icon(c, p, path, e.key, ix, iy, 16 * d, real, d)
+        p.textAlign = Paint.Align.LEFT
+        p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
+        p.color = Color.parseColor("#4A148C")
+        p.textSize = 18 * d
+        val title = e.title
+        if (p.measureText(title) > bw - 80 * d) p.textSize = 18 * d * (bw - 80 * d) / p.measureText(title)
+        c.drawText(title, ix + 32 * d, iy - 2 * d, p)
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 10 * d
+        p.color = Color.argb(160, 74, 20, 140)
+        c.drawText("OCTO SAYS:", ix + 32 * d, iy + 14 * d, p)
+
+        // the explanation
+        p.typeface = Typeface.DEFAULT
+        p.textSize = 14 * d
+        p.color = Color.parseColor("#1A1035")
+        var ty = by + 64 * d + 12 * d
+        for (ln in lines) {
+            c.drawText(ln, textX, ty, p)
+            ty += 19 * d
+        }
+
+        // tap to continue / skip
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 12 * d
+        val blink = if (age > 450L) (0.55f + 0.45f * sin(real / 250.0).toFloat()) else 0.25f
+        p.color = Color.argb((255 * blink).toInt(), 46, 125, 50)
+        p.textAlign = Paint.Align.RIGHT
+        c.drawText("TAP TO CONTINUE ▸", bx + bw - 16 * d, by + bh - 14 * d, p)
+        p.textAlign = Paint.Align.LEFT
+        p.color = Color.argb(150, 90, 90, 110)
+        p.textSize = 11 * d
+        c.drawText("SKIP TIPS", textX, by + bh - 14 * d, p)
+        c.restore()
+        skipR.set(bx, by + bh - 34 * d, bx + 110 * d, by + bh + 4 * d)
+
+        // Octo himself, by the bubble
+        val ox = if (onRight) bx + bw - 30 * d else bx + 30 * d
+        Art.octo(c, p, path, ox, by + bh + 26 * d, 22 * d, real, age < 1600L)
     }
 
     private fun drawLightRays(c: Canvas, w: Float, h: Float, now: Long) {
@@ -963,28 +1213,9 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     /** Octo the octopus narrates from the top bar with a speech bubble. */
     private fun drawOcto(c: Canvas, w: Float, now: Long) {
         val ox = w * 0.47f
-        val oy = g.topInset + 18 * d
-        val bobY = sin(now / 400.0).toFloat() * 2 * d
-        p.style = Paint.Style.STROKE
-        p.strokeCap = Paint.Cap.ROUND
-        p.strokeWidth = 3 * d
-        p.color = Color.parseColor("#AB47BC")
-        for (k in 0 until 4) {
-            val bx = ox - 9 * d + k * 6 * d
-            val wig = sin(now / 200.0 + k).toFloat() * 4 * d
-            path.reset()
-            path.moveTo(bx, oy + 6 * d + bobY)
-            path.quadTo(bx + wig, oy + 14 * d + bobY, bx - wig, oy + 20 * d + bobY)
-            c.drawPath(path, p)
-        }
-        p.style = Paint.Style.FILL
-        c.drawCircle(ox, oy + bobY, 11 * d, p)
-        p.color = Color.WHITE
-        c.drawCircle(ox - 4 * d, oy - 2 * d + bobY, 3.2f * d, p)
-        c.drawCircle(ox + 4 * d, oy - 2 * d + bobY, 3.2f * d, p)
-        p.color = Color.BLACK
-        c.drawCircle(ox - 3.5f * d, oy - 2 * d + bobY, 1.6f * d, p)
-        c.drawCircle(ox + 4.5f * d, oy - 2 * d + bobY, 1.6f * d, p)
+        val oy = g.topInset + 16 * d
+        val talking = g.octoText != null && now - g.octoAt < 1400L
+        Art.octo(c, p, path, ox, oy, 9.5f * d, now, talking)
 
         val txt = g.octoText ?: return
         val age = now - g.octoAt

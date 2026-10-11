@@ -3,16 +3,24 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Release signing: the build workflow writes your upload key to app/upload.jks from GitHub secrets.
+// Without it, only the debug APK is built (for testing on your phone).
+val uploadKey = file("upload.jks")
+
 android {
     namespace = "com.example.spray"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.spray"
+        // The Play Store ID. It can never change once the app is uploaded.
+        applicationId = "com.betmor.lilbetito"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 21
-        versionName = "21.0"
+        targetSdk = 36
+        versionCode = 22
+        versionName = "1.0.0"
+    }
+    buildFeatures {
+        buildConfig = true
     }
     signingConfigs {
         getByName("debug") {
@@ -20,6 +28,20 @@ android {
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
+        }
+        create("release") {
+            if (uploadKey.exists()) {
+                storeFile = uploadKey
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (uploadKey.exists()) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

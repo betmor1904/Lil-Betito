@@ -1,6 +1,5 @@
 package com.example.spray
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
@@ -8,93 +7,94 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.view.Gravity
-import android.widget.Button
-import android.widget.CheckBox
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Toast
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 
+/** The start menu. Play opens GameActivity. */
 class MainActivity : Activity() {
     private val pickCode = 7
+    private var menu: MenuView? = null
+    private var sfx: Sfx? = null
+    private var backCb: Any? = null
 
-    private fun send(action: String?) {
-        if (!Settings.canDrawOverlays(this)) {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            return
-        }
-        startForegroundService(Intent(this, ShotService::class.java).setAction(action))
-    }
-
-    private fun LinearLayout.btn(title: String, onClick: () -> Unit) {
-        addView(Button(this@MainActivity).apply { text = title; setOnClickListener { onClick() } })
-    }
-
-    private fun LinearLayout.section(title: String) {
-        addView(TextView(this@MainActivity).apply { text = title; textSize = 16f; setPadding(0, 40, 0, 8) })
+    companion object {
+        const val PRIVACY_URL = "https://github.com/betmor1904/Lil-Betito/blob/main/PRIVACY.md"
     }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        if (Build.VERSION.SDK_INT >= 33)
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        val sp = getSharedPreferences("betito", MODE_PRIVATE)
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(48, 48, 48, 48)
+        val prefs = getSharedPreferences("betito", MODE_PRIVATE)
+        val s = Sfx(this)
+        s.enabled = prefs.getBoolean("sound", true)
+        sfx = s
+        val m = MenuView(this, prefs)
+        m.clickSound = { sfx?.play("click", 0.7f, 0L) }
+        m.onSoundChanged = { sfx?.enabled = prefs.getBoolean("sound", true) }
+        m.onPlay = { cont ->
+            sfx?.play("letsgo", 0.8f, 0L)
+            startActivity(Intent(this, GameActivity::class.java).putExtra("continue", cont))
         }
-        box.addView(TextView(this).apply { text = "Lil Betito"; textSize = 30f })
-
-        box.addView(CheckBox(this).apply {
-            text = "Sound effects"
-            isChecked = sp.getBoolean("sound", true)
-            setOnCheckedChangeListener { _, on -> sp.edit().putBoolean("sound", on).apply() }
-        })
-
-        box.section("PLAY")
-        box.btn("Start game") { send("SHOT_SOLO") }
-        box.btn("Restart from level 1") { send("SHOT_RESET") }
-        box.btn("Test: jump to level 7 (riptides + whirlpool)") { send("SHOT_TEST7") }
-        box.btn("Stop game") { stopService(Intent(this, ShotService::class.java)) }
-
-        box.section("BETO")
-        box.btn("Choose Beto's photo") {
+        m.onPickPhoto = {
             startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*"), pickCode)
         }
-        box.btn("Remove Beto's photo") {
+        m.onRemovePhoto = {
             File(filesDir, "beto.png").delete()
-            Toast.makeText(this, "Photo removed. It updates on the next level.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Photo removed.", Toast.LENGTH_SHORT).show()
         }
+        m.onPrivacy = {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL)))
+            } catch (e: Exception) {
+                Toast.makeText(this, PRIVACY_URL, Toast.LENGTH_LONG).show()
+            }
+        }
+        menu = m
+        setContentView(m)
+        GameActivity.hideSystemBars(window)
 
-        box.addView(TextView(this).apply {
-            text = "\nHow to play (turn your phone sideways): UNDERWATER GOLF. Lil Betito is the ball. " +
-                "Get him through the glowing exit in the right wall in as few shots as you can.\n\n" +
-                "Shooting: when he's stopped (green ring), put a finger down anywhere, pull back and let go. " +
-                "He pivots to face your aim. The ring around him is your POWER GAUGE, and the dashed circle " +
-                "shows how far that power glides in still water. The dotted line shows the start of the path.\n\n" +
-                "Currents are boost lanes: ride with one and you speed up. Ride 2 in one shot = NICE!!, " +
-                "3 = DEADLY COMBO!!, 4+ = KING OF THE SEA!!. Rocks bounce you, so bank shots work. Seaweed " +
-                "stops you dead.\n\n" +
-                "BUOYS: hit one with a shot and its linked current FLIPS direction. Turn a red riptide into a " +
-                "blue boost lane! A combo plus a buoy hit in one shot = PERFECT!!\n\n" +
-                "GOLD LOCKS: hit one to blow open a shortcut gate in a wall. PINK STARS: bonus points. Hit 2 " +
-                "or 3 targets in one shot for DOUBLE TAP!! or TRIPLE THREAT!!\n\n" +
-                "KELP SLIDES: shoot into either glowing end of a seaweed path and it whips you around the corner. " +
-                "Slides count toward combos. Near the exit the water sucks you into the hole.\n\n" +
-                "The boxes at the top are your scorecard: every shot ticks one off. The flag marks par.\n\n" +
-                "Sharks patrol back and forth. They won't eat you, but they bump your shot off course.\n\n" +
-                "Scoring: PAR, BIRDIE (1 under), EAGLE (2 under), ALBATROSS (3 under), HOLE IN ONE. Fast holes " +
-                "get a speed bonus. Big combos and apples spin the slot reels. Use double par and you replay the hole."
-        })
-        setContentView(ScrollView(this).apply { addView(box) })
+        if (Build.VERSION.SDK_INT >= 33) {
+            val cb = OnBackInvokedCallback { if (menu?.onBack() != true) finish() }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb)
+            backCb = cb
+        }
     }
 
+    @Deprecated("Used on Android 12 and older")
+    override fun onBackPressed() {
+        if (menu?.onBack() != true) finish()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        GameActivity.hideSystemBars(window)
+        menu?.refresh()
+        sfx?.resume()
+    }
+
+    override fun onPause() {
+        sfx?.pause()
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) GameActivity.hideSystemBars(window)
+    }
+
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            (backCb as? OnBackInvokedCallback)?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
+        }
+        sfx?.release()
+        sfx = null
+        super.onDestroy()
+    }
+
+    @Deprecated("Fine for a single photo pick")
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
         val uri = data?.data
@@ -114,7 +114,7 @@ class MainActivity : Activity() {
             val sq = Bitmap.createBitmap(src, (src.width - s) / 2, (src.height - s) / 2, s, s)
             val out = Bitmap.createScaledBitmap(sq, 160, 160, true)
             File(filesDir, "beto.png").outputStream().use { out.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            Toast.makeText(this, "Beto is in! He shows up on the next level.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Beto is in! He shows up on the rock pillars.", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Couldn't load that photo", Toast.LENGTH_LONG).show()
         }

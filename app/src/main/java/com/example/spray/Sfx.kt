@@ -60,6 +60,14 @@ class Sfx(ctx: Context) {
         pool.play(id, volume, volume, 1, 0, rate.coerceIn(0.5f, 2f))
     }
 
+    fun pause() {
+        pool.autoPause()
+    }
+
+    fun resume() {
+        pool.autoResume()
+    }
+
     fun release() {
         pool.release()
     }
