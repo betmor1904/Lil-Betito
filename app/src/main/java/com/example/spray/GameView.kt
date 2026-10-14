@@ -16,6 +16,7 @@ import kotlin.math.sin
  * and turns touches into input. Slingshot: touch anywhere, pull back, let go.
  */
 class GameView(ctx: Context, private val g: Game) : View(ctx) {
+    init { Sprites.load(ctx) }
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val water = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -1034,27 +1035,32 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         val kt = now - g.kickAt
         val sq = if (g.kickAt == 0L || kt > 180L) 0f else 1f - kt / 180f
         c.scale(1f + 0.35f * sq, 1f - 0.25f * sq)
+        // the hand-made turtle picture; it shrinks a little when he tucks in
+        val usedSprite = Sprites.drawTurtle(c, u, 0.88f + 0.12f * out)
         val flap = sin(now / 90.0).toFloat() * 18f * out
         p.color = Color.argb(alpha, 124, 179, 66)
-        for (side in intArrayOf(-1, 1)) {
+        if (!usedSprite) for (side in intArrayOf(-1, 1)) {
             val s = side.toFloat()
             leg(c, lerp(0.15f * u, 0.34f * u, out), s * lerp(0.2f * u, 0.66f * u, out), s * (40f + flap), u)
             leg(c, lerp(-0.15f * u, -0.34f * u, out), s * lerp(0.2f * u, 0.60f * u, out), s * (-40f - flap), u)
         }
+        if (!usedSprite) {
         path.reset()
         path.moveTo(-0.5f * u, -0.08f * u)
         path.lineTo(lerp(-0.5f * u, -0.82f * u, out), 0f)
         path.lineTo(-0.5f * u, 0.08f * u)
         path.close()
         c.drawPath(path, p)
+        }
         val hx = lerp(0.35f * u, 0.80f * u, out)
         p.color = Color.argb(alpha, 156, 204, 101)
-        c.drawCircle(hx, 0f, 0.2f * u, p)
-        if (out > 0.5f) {
+        if (!usedSprite) c.drawCircle(hx, 0f, 0.2f * u, p)
+        if (!usedSprite && out > 0.5f) {
             p.color = Color.argb(alpha, 0, 0, 0)
             c.drawCircle(hx + 0.07f * u, -0.08f * u, 0.035f * u, p)
             c.drawCircle(hx + 0.07f * u, 0.08f * u, 0.035f * u, p)
         }
+        if (!usedSprite) {
         p.color = Color.argb(alpha, 46, 125, 50)
         c.drawOval(-0.62f * u, -0.52f * u, 0.62f * u, 0.52f * u, p)
         p.color = Color.argb(alpha, 102, 187, 106)
@@ -1065,6 +1071,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.drawOval(-0.22f * u, -0.17f * u, 0.22f * u, 0.17f * u, p)
         c.drawLine(0.22f * u, 0f, 0.5f * u, 0f, p)
         c.drawLine(-0.22f * u, 0f, -0.5f * u, 0f, p)
+        }
         p.style = Paint.Style.FILL
         c.restore()
         // live combo counter over his head

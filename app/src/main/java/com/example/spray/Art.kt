@@ -202,6 +202,7 @@ object Art {
         c.save()
         c.translate(x, y)
         c.rotate(headingDeg)
+        if (Sprites.drawTurtle(c, u)) { c.restore(); return }
         val flap = sin(now / 140.0).toFloat() * 18f
         p.style = Paint.Style.FILL
         p.color = Color.rgb(124, 179, 66)

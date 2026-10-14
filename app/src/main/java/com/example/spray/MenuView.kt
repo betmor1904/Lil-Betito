@@ -55,6 +55,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
     private var lastFrame = 0L
 
     init {
+        Sprites.load(ctx)
         refresh()
     }
 
