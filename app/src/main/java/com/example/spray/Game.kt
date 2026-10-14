@@ -32,7 +32,8 @@ class Target(val x: Float, val y: Float, val kind: Int, val zone: WaterZone? = n
 }
 
 /** A bounce shell the player has shot out: it settles and Betito can bank off it. */
-class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float) {
+class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float, val bomb: Boolean = false) {
+    var explodeAt = 0L   // bombs only: when it goes off
     var settled = false
     var hitAt = 0L
     val seed = Random.nextFloat() * 6f
@@ -79,6 +80,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     companion object {
         const val P_APPLE = 0
         const val P_SPEED = 4
+        const val P_BOMB = 5
 
         const val T_FLIP = 0
         const val T_GATE = 1
@@ -148,6 +150,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // ---------- bounce shells: free, they don't cost a shot ----------
     val shells = ArrayList<ShellObj>()
     var shellsLeft = 3
+    var bombsLeft = 1
+    var bombMode = false            // tapped BOMB: the next pull throws a bomb
+    val blastR get() = 52f * d
     var shellMode = false           // tapped the SHELL button: the next pull fires a shell
     val shellR get() = 11f * d
     var shellLandX = 0f             // where an aimed shell would come to rest (for the preview)
@@ -363,6 +368,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             "shark" -> sharks.firstOrNull()?.let { Tip(key, it.x, it.y, 40 * d) }
             "combo" -> Tip(key, cx, cy, 44 * d)
             "shell" -> Tip(key, W - 42 * d, H - 42 * d, 40 * d)
+            "bomb" -> Tip(key, W - 42 * d, H - 106 * d, 40 * d)
             "turn" -> Tip(key, cx, cy, 44 * d)
             "score" -> Tip(key, 150 * d, topInset + 22 * d, 70 * d)
             else -> null
@@ -375,7 +381,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun queueStartTips() {
         startTipsQueued = true
         if (!tipsOn) return
-        for (k in listOf("shoot", "goal", "shell", "turn", "score")) if (k !in seenTips) tipQueue.add(k)
+        for (k in listOf("shoot", "goal", "shell", "bomb", "turn", "score")) if (k !in seenTips) tipQueue.add(k)
         var extra = 0
         for (k in tipOrder) {
             if (extra >= 2) break
@@ -492,7 +498,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         speedUntil = 0L
         shells.clear()
         shellsLeft = 3
+        bombsLeft = 1
         shellMode = false
+        bombMode = false
         shellHitThisShot = false
         turnUsed = false
 
@@ -514,7 +522,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         say(when (level) {
             1 -> "Pull back and let go! Tap SHELL to bank around corners. Par or better to advance!"
-            2 -> "Hit the gold lock to blow open a shortcut in the wall!"
+            2 -> "Wall in the way? Tap BOMB, pull and throw it to blast a hole!"
+            4 -> "Hit the gold lock to blow open a shortcut in the wall!"
             3 -> "TAP a current's flip icon to reverse it. You get a few flips per hole!"
             else -> "Par $par. Chain currents and kelp for a DEADLY COMBO!"
         }, true)
@@ -736,6 +745,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         // things to pick up
         repeat(if (level >= 5) 3 else 2) { spawnPickup(P_APPLE) }
         spawnPickup(P_SPEED)
+        if (level >= 2) spawnPickup(P_BOMB)
+        if (level >= 6) spawnPickup(P_BOMB)
     }
 
     /** Where a current's flip icon sits (the view draws it here, taps near it flip while Betito is flying). */
@@ -1301,7 +1312,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         if (launchQueued) {
             launchQueued = false
             if (now < introUntil) skipIntro(now)
-            else if (shellMode && ready) fireShell(now)
+            else if ((shellMode || bombMode) && ready) fireThrown(now, bombMode)
             else if (ready) launch(now) else {
                 sfx?.play("tick", 0.3f, 150L)
                 popup = "WAIT TILL HE STOPS..."
@@ -1392,8 +1403,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (cx > exitX + wallThick * 0.5f && cy > exitGapT && cy < exitGapB) { levelClear(now); return }
         }
         heading = Math.toDegrees(atan2(faceY.toDouble(), faceX.toDouble())).toFloat()
-        updateShells(dt)
-        if (shellMode && aiming && ready) computeShellPreview(now)
+        updateShells(dt, now)
+        if ((shellMode || bombMode) && aiming && ready) computeShellPreview(now)
         else if (aiming) computePreview(now) else previewN = 0
 
         collectPickups(now)
@@ -1449,7 +1460,22 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             return
         }
         shellMode = !shellMode
+        bombMode = false
         sfx?.play(if (shellMode) "pop" else "tick", 0.6f, 60L)
+    }
+
+    /** The BOMB button: arm (or disarm) a bomb. Your next pull-and-release throws it. */
+    fun toggleBombMode(now: Long) {
+        if (over || now < introUntil) return
+        if (bombsLeft <= 0) {
+            sfx?.play("tick", 0.3f, 150L)
+            popup = "NO BOMBS - FIND ONE!"
+            popupAt = now
+            return
+        }
+        bombMode = !bombMode
+        shellMode = false
+        sfx?.play(if (bombMode) "pop" else "tick", 0.6f, 60L)
     }
 
     private fun shellHitsWall(x: Float, y: Float): Boolean {
@@ -1496,26 +1522,34 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shellLandY = shellTmp[1]
     }
 
-    private fun fireShell(now: Long) {
+    private fun fireThrown(now: Long, bomb: Boolean) {
         val p = aimPower.coerceIn(0.12f, 1f)
         shellPath(now, p, shellTmp)
         if (shellTmp[0].isNaN()) {
             sfx?.play("tick", 0.3f, 150L)
-            popup = "NO ROOM FOR A SHELL HERE"
+            popup = "NO ROOM HERE"
             popupAt = now
             return
         }
         val sh = ShellObj(cx + aimDX * (r + shellR + 3 * d), cy + aimDY * (r + shellR + 3 * d),
-            aimDX * launchSpeed(now) * p, aimDY * launchSpeed(now) * p)
+            aimDX * launchSpeed(now) * p, aimDY * launchSpeed(now) * p, bomb)
         shells.add(sh)
-        shellsLeft--
-        shellMode = false
-        sfx?.play("launch", 0.35f + 0.4f * p, 0L, 2.0f)
         kickAt = now
-        say(if (shellsLeft > 0) "Shell out! Bank Betito off it. It's free!" else "That's your last shell!", true)
+        if (bomb) {
+            bombsLeft--
+            bombMode = false
+            sh.explodeAt = now + 3500L
+            sfx?.play("launch", 0.5f + 0.4f * p, 0L, 1.2f)
+            say(if (bombsLeft > 0) "Bomb away! Stand back, it blows soon!" else "Bomb away! Stand clear!", true)
+        } else {
+            shellsLeft--
+            shellMode = false
+            sfx?.play("launch", 0.35f + 0.4f * p, 0L, 2.0f)
+            say(if (shellsLeft > 0) "Shell out! Bank Betito off it. It's free!" else "That's your last shell!", true)
+        }
     }
 
-    private fun updateShells(dt: Float) {
+    private fun updateShells(dt: Float, now: Long) {
         for (sh in shells) {
             if (sh.settled) continue
             for (i in 0 until 3) {
@@ -1529,6 +1563,62 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 sh.vy *= k
             }
             if (hypot(sh.vx, sh.vy) < 0.15f * d) { sh.vx = 0f; sh.vy = 0f; sh.settled = true }
+        }
+        // bombs: once one stops, a short fuse; then it goes off
+        var blown: ArrayList<ShellObj>? = null
+        for (sh in shells) {
+            if (!sh.bomb) continue
+            if (sh.settled && sh.explodeAt > now + 1200L) sh.explodeAt = now + 1200L
+            if (now >= sh.explodeAt) { if (blown == null) blown = ArrayList(); blown.add(sh) }
+        }
+        blown?.forEach { explodeBomb(it, now) }
+    }
+
+    /** Blows a hole in the walls around a bomb: each wall piece in the blast keeps only the parts above and below it. */
+    private fun explodeBomb(sh: ShellObj, now: Long) {
+        shells.remove(sh)
+        val br = blastR
+        var carved = 0
+        for (w in ArrayList(blocks)) {
+            if (!w.alive) continue
+            val qx = sh.x.coerceIn(w.l, w.r)
+            val qy = sh.y.coerceIn(w.t, w.b)
+            if (hypot(sh.x - qx, sh.y - qy) > br) continue
+            w.alive = false
+            w.openAt = now
+            carved++
+            if (w.gate) continue
+            val y0 = sh.y - br
+            val y1 = sh.y + br
+            if (y0 > w.t) addWall(w.l, w.t, w.r, min(w.b, y0), w.pillar)
+            if (y1 < w.b) addWall(w.l, max(w.t, y1), w.r, w.b, w.pillar)
+        }
+        sfx?.play("bust", 1f, 0L)
+        sfx?.play("rumble", 0.8f, 0L)
+        shake(12f, now)
+        flash = 0.45f
+        flashColor = 0xFFFFE0B2.toInt()
+        for (k in 0 until 46) {
+            val a = Random.nextFloat() * 6.283f
+            val v = (1 + Random.nextFloat() * 6) * d
+            spawnParticle(sh.x, sh.y, cos(a) * v, sin(a) * v,
+                if (k % 3 == 0) 0xFF8E7CC3.toInt() else if (k % 3 == 1) 0xFFFF9800.toInt() else 0xFFFFEB3B.toInt(), (2 + Random.nextFloat() * 4) * d, 40f)
+        }
+        // the blast shoves Betito if he's close
+        val dx = cx - sh.x
+        val dy = cy - sh.y
+        val dd = hypot(dx, dy)
+        if (dd < br * 1.6f && dd > 1f) {
+            val k = (1f - dd / (br * 1.6f)) * 6f * d
+            vx += dx / dd * k
+            vy += dy / dd * k
+        }
+        if (carved > 0) {
+            score += 50 * carved * band()
+            celebrate("BOOM!", true)
+            say("Wall blasted! Path cleared!", true)
+        } else {
+            celebrate("FIZZLE...")
         }
     }
 
@@ -1712,13 +1802,18 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 celebrate(yum.random())
                 fillReel(now)
                 applesEaten++
+            } else if (p.type == P_BOMB) {
+                bombsLeft++
+                sfx?.play("pop", 1f, 40L)
+                celebrate("BOMB!")
+                say("Got a bomb! Tap BOMB, aim, and blow a wall!", true)
             } else {
                 speedUntil = now + 8000L
                 sfx?.play("woo", 1f, 0L)
                 celebrate("POWER UP!")
                 say("Speed kelp! Your shots go further for 8 seconds!", true)
             }
-            burst(p.x, p.y, if (p.type == P_APPLE) 0xFFE53935.toInt() else 0xFFFFEB3B.toInt(), 12)
+            burst(p.x, p.y, if (p.type == P_APPLE) 0xFFE53935.toInt() else if (p.type == P_BOMB) 0xFF90A4AE.toInt() else 0xFFFFEB3B.toInt(), 12)
             it.remove()
         }
         repeat(applesEaten) { spawnPickup(P_APPLE) }
@@ -1767,8 +1862,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val t = text.lowercase()
         return when {
             listOf("uh oh", "wait", "over par", "last shot", "last shell", "replay", "backward", "no room", "no flips", "bump", "shark").any { it in t } -> Sprites.FACE_SURPRISE
-            listOf("hole in one", "king of the sea", "incredible", "birdie", "eagle", "jackpot", "perfect", "deadly", "smooth", "right on par", "made it").any { it in t } -> Sprites.FACE_HAPPY
-            listOf("flipped", "turn", "shell", "pull back", "tap", "gold lock", "buoy", "try ").any { it in t } -> Sprites.FACE_WINK
+            listOf("hole in one", "king of the sea", "incredible", "birdie", "eagle", "jackpot", "perfect", "deadly", "smooth", "right on par", "made it", "wall blasted", "cleared").any { it in t } -> Sprites.FACE_HAPPY
+            listOf("flipped", "turn", "shell", "pull back", "tap", "gold lock", "buoy", "try ", "bomb").any { it in t } -> Sprites.FACE_WINK
             else -> Sprites.FACE_SMILE
         }
     }

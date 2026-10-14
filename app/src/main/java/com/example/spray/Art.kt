@@ -412,6 +412,20 @@ object Art {
                 for (i in -1..1) c.drawLine(x + i * rr * 0.2f, y + rr * 0.85f, x + i * rr * 0.6f, y - rr * 0.8f, p)
                 p.style = Paint.Style.FILL
             }
+            "bomb" -> {
+                val rr = s * 0.6f
+                p.color = Color.rgb(35, 35, 45)
+                c.drawCircle(x, y + rr * 0.15f, rr, p)
+                p.color = Color.argb(110, 255, 255, 255)
+                c.drawCircle(x - rr * 0.35f, y - rr * 0.2f, rr * 0.25f, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2.5f * d
+                p.color = Color.rgb(200, 170, 110)
+                c.drawLine(x + rr * 0.3f, y - rr * 0.75f, x + rr * 0.8f, y - rr * 1.3f, p)
+                p.style = Paint.Style.FILL
+                p.color = Color.rgb(255, 193, 7)
+                c.drawCircle(x + rr * 0.85f, y - rr * 1.35f, 3 * d, p)
+            }
             "turn" -> {
                 val rr = s * 0.65f
                 p.style = Paint.Style.STROKE

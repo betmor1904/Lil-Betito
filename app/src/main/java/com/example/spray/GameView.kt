@@ -65,6 +65,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private val btnR = Array(5) { RectF() }
     private val skipR = RectF()
     private val shellBtnR = RectF()
+    private val bombBtnR = RectF()
     private var guideOpen = false
     private val guide = GuideBook(d)
     private var pressed = -1
@@ -128,6 +129,11 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             if (e.actionMasked == MotionEvent.ACTION_UP) {
                 if (skipR.contains(x0, y0)) g.skipAllTips() else g.dismissTip()
             }
+            return true
+        }
+        // the BOMB button
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over && bombBtnR.contains(x0, y0)) {
+            g.toggleBombMode(g.clock)
             return true
         }
         // the SHELL button
@@ -664,6 +670,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                     p.color = Color.parseColor("#43A047")
                     c.drawOval(x, y - 12 * d, x + 7 * d, y - 6 * d, p)
                 }
+                Game.P_BOMB -> drawBombBody(c, x, y, 9 * d, now, 0L, 255)
                 else -> {
                     p.color = Color.parseColor("#FFEB3B")
                     c.drawCircle(x, y, 10 * d, p)
@@ -1380,9 +1387,21 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             val pop = if (now - sh.hitAt < 160) 1.25f - (now - sh.hitAt) / 160f * 0.25f else 1f
             p.color = Color.argb(60, 0, 0, 0)
             c.drawCircle(sh.x + 2 * d, sh.y + 3 * d, g.shellR * pop, p)
-            drawShellBody(c, sh.x, sh.y, g.shellR * pop, 255)
+            if (sh.bomb) drawBombBody(c, sh.x, sh.y, g.shellR * 1.1f, now, sh.explodeAt, 255)
+            else drawShellBody(c, sh.x, sh.y, g.shellR * pop, 255)
         }
         // aiming a shell: show the landing spot
+        if (g.bombMode && g.aiming && g.ready) {
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.pathEffect = dash
+            p.color = Color.argb(170, 255, 112, 67)
+            c.drawLine(g.cx, g.cy, g.shellLandX, g.shellLandY, p)
+            c.drawCircle(g.shellLandX, g.shellLandY, g.blastR, p)
+            p.pathEffect = null
+            p.style = Paint.Style.FILL
+            drawBombBody(c, g.shellLandX, g.shellLandY, g.shellR * 1.1f, now, 0L, 130)
+        }
         if (g.shellMode && g.aiming && g.ready) {
             p.style = Paint.Style.STROKE
             p.strokeWidth = 2 * d
@@ -1422,7 +1441,52 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
     }
 
+    private fun drawBombBody(c: Canvas, x: Float, y: Float, rad: Float, now: Long, explodeAt: Long, a: Int) {
+        val left = if (explodeAt > 0) explodeAt - now else 9999L
+        val hot = left in 0..700 && (now / 90) % 2 == 0L
+        p.style = Paint.Style.FILL
+        p.color = if (hot) Color.argb(a, 220, 50, 40) else Color.argb(a, 30, 30, 38)
+        c.drawCircle(x, y, rad, p)
+        p.color = Color.argb(a * 2 / 5, 255, 255, 255)
+        c.drawCircle(x - rad * 0.35f, y - rad * 0.35f, rad * 0.28f, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2 * d
+        p.strokeCap = Paint.Cap.ROUND
+        p.color = Color.argb(a, 200, 170, 110)
+        c.drawLine(x + rad * 0.3f, y - rad * 0.8f, x + rad * 0.8f, y - rad * 1.4f, p)
+        p.style = Paint.Style.FILL
+        p.color = if ((now / 70) % 2 == 0L) Color.argb(a, 255, 235, 59) else Color.argb(a, 255, 112, 67)
+        c.drawCircle(x + rad * 0.85f, y - rad * 1.45f, 3 * d, p)
+    }
+
+    private fun drawBombButton(c: Canvas, now: Long) {
+        if (g.over) { bombBtnR.setEmpty(); return }
+        val rad = 26 * d
+        val bx = width - 16 * d - rad
+        val by = height - 16 * d - rad - 64 * d
+        bombBtnR.set(bx - rad - 6 * d, by - rad - 6 * d, bx + rad + 6 * d, by + rad + 6 * d)
+        val armed = g.bombMode
+        p.style = Paint.Style.FILL
+        p.color = if (armed) Color.argb(235, 255, 112, 67) else Color.argb(190, 20, 30, 50)
+        c.drawCircle(bx, by, rad, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2.5f * d
+        p.color = if (armed) Color.WHITE else Color.argb(200, 255, 112, 67)
+        c.drawCircle(bx, by, rad - d, p)
+        drawBombBody(c, bx, by - 1 * d, 10 * d, now, 0L, if (g.bombsLeft > 0) 255 else 90)
+        p.style = Paint.Style.FILL
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.color = Color.WHITE
+        p.textSize = 11 * d
+        p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        c.drawText("x${g.bombsLeft}", bx, by + rad - 6 * d, p)
+        if (armed) c.drawText("PULL TO THROW BOMB", bx - 70 * d, by - rad - 6 * d, p)
+        p.clearShadowLayer()
+    }
+
     private fun drawShellButton(c: Canvas, now: Long) {
+        drawBombButton(c, now)
         if (g.over) { shellBtnR.setEmpty(); return }
         val rad = 26 * d
         val bx = width - 16 * d - rad
