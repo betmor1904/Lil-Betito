@@ -235,6 +235,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         for (s in g.sharks) drawShark(c, s, now)
         drawShells(c, now)
         drawAimPreview(c, now)
+        drawTracer(c)
         drawTurtle(c, now)
         drawParticles(c)
         if (shaking) c.restore()
@@ -1122,6 +1123,28 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.rotate(angle, x, y)
         c.drawOval(x - 0.22f * u, y - 0.12f * u, x + 0.22f * u, y + 0.12f * u, p)
         c.restore()
+    }
+
+    /** An orange tracer line that follows the turtle while it flies. */
+    private fun drawTracer(c: Canvas) {
+        val n = g.trN
+        if (n < 2) return
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        var prev = g.trailPoint(0)
+        for (i in 1 until n) {
+            val cur = g.trailPoint(i)
+            val k = i / n.toFloat()
+            val dx = g.trX[cur] - g.trX[prev]
+            val dy = g.trY[cur] - g.trY[prev]
+            if (dx * dx + dy * dy < (80 * d) * (80 * d)) {
+                p.strokeWidth = (2f + 4f * k) * d
+                p.color = Color.argb((60 + 195 * k).toInt(), 255, 138, 20)
+                c.drawLine(g.trX[prev], g.trY[prev], g.trX[cur], g.trY[cur], p)
+            }
+            prev = cur
+        }
+        p.style = Paint.Style.FILL
     }
 
     private fun drawParticles(c: Canvas) {

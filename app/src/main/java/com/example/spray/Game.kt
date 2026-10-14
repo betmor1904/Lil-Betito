@@ -154,7 +154,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var bombMode = false            // tapped BOMB: the next pull throws a bomb
     val blastR get() = 52f * d
     var shellMode = false           // tapped the SHELL button: the next pull fires a shell
-    val shellR get() = 11f * d
+    val shellR get() = 15f * d
     var shellLandX = 0f             // where an aimed shell would come to rest (for the preview)
     var shellLandY = 0f
     private var shellHitThisShot = false
@@ -170,8 +170,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private val rideDrag = 0.006f       // riding a current barely slows you
     private val weedDrag = 0.16f
     private val bounceK = 0.65f         // how much speed a bounce keeps (into the wall)
+    private val shellBounce = 1.2f        // shells are springy: they kick Betito faster
+    private val shellSlide = 1.0f
     private val slideK = 0.85f          // how much speed is kept sliding along the wall
-    private val maxSpeed get() = 15f * d
+    private val maxSpeed get() = 17.5f * d
     var ready = true
     var shots = 0
     var par = 5
@@ -722,7 +724,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
 
         // kelp slides around corners
-        val railWant = if (level >= 5) 2 else 1
+        val railWant = 0 // kelp slides removed; shells and bombs get you around corners
         for (i in (0 until n).shuffled()) {
             if (rails.size >= railWant) break
             if (i == ripCol) continue
@@ -1275,7 +1277,23 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // the frame
     // ============================================================
 
+    val trX = FloatArray(90)
+    val trY = FloatArray(90)
+    var trN = 0
+    private var trHead = 0
+    fun trailPoint(i: Int): Int = (trHead - trN + i + trX.size * 2) % trX.size
+    private fun tracerStep() {
+        if (!over && !ready) {
+            trX[trHead] = cx; trY[trHead] = cy
+            trHead = (trHead + 1) % trX.size
+            if (trN < trX.size) trN++
+        } else if (ready) {
+            trN = 0
+        }
+    }
+
     fun update(now: Long, dt: Float) {
+        tracerStep()
         if (W <= 0f || !started) return
         updateScenery(now, dt)
         updateParticles(dt)
@@ -1637,8 +1655,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         if (vn < 0f) {
             val vtx = vx - vn * nx
             val vty = vy - vn * ny
-            vx = -vn * bounceK * nx + vtx * slideK
-            vy = -vn * bounceK * ny + vty * slideK
+            vx = -vn * shellBounce * nx + vtx * shellSlide
+            vy = -vn * shellBounce * ny + vty * shellSlide
             if (-vn > 1.0f * d) {
                 bumpAt = now
                 sh.hitAt = now
@@ -1657,7 +1675,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun inWeed(x: Float, y: Float): Boolean =
         weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
 
-    private fun launchSpeed(now: Long): Float = (if (now < speedUntil) 12f else 9f) * d
+    private fun launchSpeed(now: Long): Float = (if (now < speedUntil) 14f else 10.5f) * d
 
     /** How far a shot of this power glides in still water (for the distance ring). */
     fun stillDistance(now: Long): Float {
@@ -1772,8 +1790,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     if (vn < 0f) {
                         val vtx = svx - vn * nx
                         val vty = svy - vn * ny
-                        svx = -vn * bounceK * nx + vtx * slideK
-                        svy = -vn * bounceK * ny + vty * slideK
+                        svx = -vn * shellBounce * nx + vtx * shellSlide
+                        svy = -vn * shellBounce * ny + vty * shellSlide
                     }
                 }
             }
