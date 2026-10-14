@@ -154,6 +154,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var shellLandY = 0f
     private var shellHitThisShot = false
 
+    // ---------- quick turn: one mid-flight direction change per shot ----------
+    var turnUsed = false
+    val canTurn get() = !over && !paused && !ready && riding == null && !turnUsed && hypot(vx, vy) > 1.6f * d
+    var turnAt = 0L
+
     // ---------- shot rules ----------
     val readySpeed get() = 0.9f * d     // he can only shoot again once he has (nearly) stopped
     private val waterDrag = 0.025f
@@ -357,6 +362,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             "weed" -> weeds.firstOrNull()?.let { Tip(key, (it.l + it.r) / 2f, (it.t + it.b) / 2f, 44 * d) }
             "shark" -> sharks.firstOrNull()?.let { Tip(key, it.x, it.y, 40 * d) }
             "combo" -> Tip(key, cx, cy, 44 * d)
+            "shell" -> Tip(key, W - 42 * d, H - 42 * d, 40 * d)
+            "turn" -> Tip(key, cx, cy, 44 * d)
+            "score" -> Tip(key, 150 * d, topInset + 22 * d, 70 * d)
             else -> null
         }
     }
@@ -367,7 +375,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun queueStartTips() {
         startTipsQueued = true
         if (!tipsOn) return
-        for (k in listOf("shoot", "goal")) if (k !in seenTips) tipQueue.add(k)
+        for (k in listOf("shoot", "goal", "shell", "turn", "score")) if (k !in seenTips) tipQueue.add(k)
         var extra = 0
         for (k in tipOrder) {
             if (extra >= 2) break
@@ -486,6 +494,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shellsLeft = 3
         shellMode = false
         shellHitThisShot = false
+        turnUsed = false
 
         buildMaze()
         par = colX.size + 2
@@ -729,13 +738,40 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         spawnPickup(P_SPEED)
     }
 
+    /** Where a current's flip icon sits (the view draws it here, taps near it flip while Betito is flying). */
+    fun flipIconY(z: WaterZone): Float =
+        if (z.kind == WaterZone.WHIRL) z.cy else z.cy.coerceIn(playT + 24 * d, playB - 24 * d)
+
+    /** Quick turn: while Betito is still swimming, one quick tap sends him toward the tap (same speed). */
+    fun tapTurn(x: Float, y: Float, now: Long): Boolean {
+        if (!canTurn) return false
+        val dx = x - cx
+        val dy = y - cy
+        val dist = hypot(dx, dy)
+        if (dist < r * 1.5f) return false
+        val sp = hypot(vx, vy)
+        vx = dx / dist * sp * 0.95f
+        vy = dy / dist * sp * 0.95f
+        faceX = dx / dist
+        faceY = dy / dist
+        turnUsed = true
+        turnAt = now
+        sfx?.play("pop", 0.9f, 0L, 1.5f)
+        for (k in 0 until 8) spawnParticle(cx, cy, (Random.nextFloat() - 0.5f) * 4 * d, (Random.nextFloat() - 0.5f) * 4 * d,
+            0xFF80DEEA.toInt(), 3 * d, 22f)
+        celebrate("QUICK TURN!")
+        return true
+    }
+
     /** A tap on the water: if it lands on a flippable current, reverse it (costs one flip, not a shot). */
     fun tapFlip(x: Float, y: Float, now: Long): Boolean {
         if (over || paused || !started || now < introUntil) return false
         var best: WaterZone? = null
         var bestArea = Float.MAX_VALUE
         for (z in flippable) {
-            val inside = if (z.kind == WaterZone.WHIRL) hypot(x - z.cx, y - z.cy) < z.rad + 10 * d
+            // while Betito is flying, only the flip icon counts (any other tap is a quick turn)
+            val inside = if (!ready) hypot(x - z.cx, y - flipIconY(z)) < 30 * d
+                else if (z.kind == WaterZone.WHIRL) hypot(x - z.cx, y - z.cy) < z.rad + 10 * d
                 else x > z.l - 10 * d && x < z.r + 10 * d && y > z.t - 10 * d && y < z.b + 10 * d
             if (!inside) continue
             val area = (z.r - z.l) * (z.b - z.t)
@@ -1554,6 +1590,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         targetsThisShot = 0
         sharkThisShot = false
         shellHitThisShot = false
+        turnUsed = false
         tipLookedThisRest = false
         kickAt = now
         sfx?.play("launch", 0.4f + 0.5f * p, 0L, 1.6f - 0.5f * p)

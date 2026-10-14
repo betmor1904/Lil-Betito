@@ -390,6 +390,30 @@ object Art {
                 c.drawArc(r, spin + 180f, 100f, false, p)
                 p.style = Paint.Style.FILL
             }
+            "shell" -> {
+                val rr = s * 0.7f
+                p.color = Color.rgb(255, 183, 77)
+                c.drawCircle(x, y, rr, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2.2f * d
+                p.color = Color.rgb(130, 70, 20)
+                c.drawCircle(x, y, rr, p)
+                for (i in -1..1) c.drawLine(x + i * rr * 0.2f, y + rr * 0.85f, x + i * rr * 0.6f, y - rr * 0.8f, p)
+                p.style = Paint.Style.FILL
+            }
+            "turn" -> {
+                val rr = s * 0.65f
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3.5f * d
+                p.strokeCap = Paint.Cap.ROUND
+                p.color = Color.argb(120, 255, 255, 255)
+                c.drawLine(x - rr, y + rr * 0.6f, x, y + rr * 0.6f, p)
+                p.color = Color.rgb(128, 222, 234)
+                c.drawLine(x, y + rr * 0.6f, x + rr, y - rr * 0.5f, p)
+                c.drawLine(x + rr, y - rr * 0.5f, x + rr - rr * 0.5f, y - rr * 0.45f, p)
+                c.drawLine(x + rr, y - rr * 0.5f, x + rr - rr * 0.12f, y - rr * 0.05f, p)
+                p.style = Paint.Style.FILL
+            }
             "lock" -> {
                 val rr = s * 0.6f
                 p.color = Color.parseColor("#3E2723")

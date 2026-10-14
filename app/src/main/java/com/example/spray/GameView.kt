@@ -171,7 +171,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 if (id == aimPtr || cancel) {
                     // let go = launch (dragging back inside the small circle cancels)
                     if (!cancel && g.aiming) g.launchQueued = true
-                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) g.tapFlip(aimSX, aimSY, g.clock)
+                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) { if (!g.tapFlip(aimSX, aimSY, g.clock)) g.tapTurn(aimSX, aimSY, g.clock) }
                     aimPtr = -1
                     g.aiming = false
                 }
@@ -1278,6 +1278,22 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             c.drawCircle(g.cx, g.cy, g.r * 1.7f + pulse * 3 * d, p)
             p.style = Paint.Style.FILL
         }
+        if (g.canTurn) {
+            // a quick tap now turns him: one per shot
+            val pulse = 0.5f + 0.5f * sin(now / 120.0).toFloat()
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = Color.argb((120 + 120 * pulse).toInt(), 128, 222, 234)
+            c.drawCircle(g.cx, g.cy, g.r * 2.1f + pulse * 3 * d, p)
+            p.style = Paint.Style.FILL
+            p.textAlign = Paint.Align.CENTER
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = 11 * d
+            p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            p.color = Color.argb(230, 128, 222, 234)
+            c.drawText("TAP TO TURN!", g.cx, g.cy - g.r * 2.6f, p)
+            p.clearShadowLayer()
+        }
         if (!g.aiming) return
         // shot gauge: a ring around Betito that fills with power
         val gr = g.r * 2.4f
@@ -1358,7 +1374,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         for (z in g.flippable) {
             val col = zoneColor(z.kind)
             val x = z.cx
-            val y = if (z.kind == WaterZone.WHIRL) z.cy else z.cy.coerceIn(g.playT + 24 * d, g.playB - 24 * d)
+            val y = g.flipIconY(z)
             val rr = (13 + 2 * pulse) * d
             val age = now - g.flipAt
             p.style = Paint.Style.FILL
