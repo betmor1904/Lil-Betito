@@ -31,6 +31,13 @@ class Target(val x: Float, val y: Float, val kind: Int, val zone: WaterZone? = n
     var done = false
 }
 
+/** A bounce shell the player has shot out: it settles and Betito can bank off it. */
+class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float) {
+    var settled = false
+    var hitAt = 0L
+    val seed = Random.nextFloat() * 6f
+}
+
 /** A kelp slide: shoot into either end and it carries you around a corner. */
 class Rail(val xs: FloatArray, val ys: FloatArray, val id: Int) {
     val cum = FloatArray(xs.size)
@@ -134,6 +141,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var aimDY = 0f
     var aimPower = 0f     // 0..1, how far you pulled back
     var launchQueued = false
+
+    // ---------- bounce shells: free, they don't cost a shot ----------
+    val shells = ArrayList<ShellObj>()
+    var shellsLeft = 3
+    var shellMode = false           // tapped the SHELL button: the next pull fires a shell
+    val shellR get() = 11f * d
+    var shellLandX = 0f             // where an aimed shell would come to rest (for the preview)
+    var shellLandY = 0f
+    private var shellHitThisShot = false
 
     // ---------- shot rules ----------
     val readySpeed get() = 0.9f * d     // he can only shoot again once he has (nearly) stopped
@@ -463,10 +479,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         visited.clear()
         resetReels()
         speedUntil = 0L
+        shells.clear()
+        shellsLeft = 3
+        shellMode = false
+        shellHitThisShot = false
 
         buildMaze()
         par = colX.size + 2
-        maxShots = par * 2
+        maxShots = par   // go over par and the hole must be replayed
         banner = null
         sfx?.play("letsgo", 0.8f, 0L)
 
@@ -1212,6 +1232,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         if (launchQueued) {
             launchQueued = false
             if (now < introUntil) skipIntro(now)
+            else if (shellMode && ready) fireShell(now)
             else if (ready) launch(now) else {
                 sfx?.play("tick", 0.3f, 150L)
                 popup = "WAIT TILL HE STOPS..."
@@ -1285,6 +1306,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (cx < r) { cx = r; vx = abs(vx) * 0.6f }
             for (w in blocks) if (w.alive) collideTurtle(w.l, w.t, w.r, w.b, now)
             collideSharks(now)
+            for (sh in shells) collideShell(sh, now)
             checkTargets(now)
 
             val sp = hypot(vx, vy)
@@ -1301,7 +1323,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (cx > exitX + wallThick * 0.5f && cy > exitGapT && cy < exitGapB) { levelClear(now); return }
         }
         heading = Math.toDegrees(atan2(faceY.toDouble(), faceX.toDouble())).toFloat()
-        if (aiming) computePreview(now) else previewN = 0
+        updateShells(dt)
+        if (shellMode && aiming && ready) computeShellPreview(now)
+        else if (aiming) computePreview(now) else previewN = 0
 
         collectPickups(now)
         checkColumns()
@@ -1342,6 +1366,135 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
     }
 
+    // ============================================================
+    // bounce shells
+    // ============================================================
+
+    /** The SHELL button: arm (or disarm) a shell. Your next pull-and-release fires it instead of Betito. */
+    fun toggleShellMode(now: Long) {
+        if (over || now < introUntil) return
+        if (shellsLeft <= 0) {
+            sfx?.play("tick", 0.3f, 150L)
+            popup = "NO SHELLS LEFT"
+            popupAt = now
+            return
+        }
+        shellMode = !shellMode
+        sfx?.play(if (shellMode) "pop" else "tick", 0.6f, 60L)
+    }
+
+    private fun shellHitsWall(x: Float, y: Float): Boolean {
+        val sr = shellR
+        if (x < sr || y < playT + sr || y > playB - sr) return true
+        for (w in blocks) {
+            if (!w.alive) continue
+            val qx = x.coerceIn(w.l, w.r)
+            val qy = y.coerceIn(w.t, w.b)
+            if ((x - qx) * (x - qx) + (y - qy) * (y - qy) < sr * sr) return true
+        }
+        return false
+    }
+
+    /** Where a shell fired along the aim would stop: it glides with water drag and stops dead at a wall. */
+    private fun shellPath(now: Long, power: Float, out: FloatArray) {
+        var x = cx + aimDX * (r + shellR + 3 * d)
+        var y = cy + aimDY * (r + shellR + 3 * d)
+        if (shellHitsWall(x, y)) { out[0] = Float.NaN; return }
+        var svx = aimDX * launchSpeed(now) * power
+        var svy = aimDY * launchSpeed(now) * power
+        for (i in 0 until 600) {
+            val nx = x + svx / 3f
+            val ny = y + svy / 3f
+            if (shellHitsWall(nx, ny)) break
+            x = nx
+            y = ny
+            val k = 1f - waterDrag / 3f
+            svx *= k
+            svy *= k
+            if (hypot(svx, svy) < 0.15f * d) break
+        }
+        out[0] = x
+        out[1] = y
+    }
+
+    private val shellTmp = FloatArray(2)
+
+    private fun computeShellPreview(now: Long) {
+        previewN = 0
+        shellPath(now, aimPower.coerceIn(0.12f, 1f), shellTmp)
+        if (shellTmp[0].isNaN()) { shellLandX = cx; shellLandY = cy; return }
+        shellLandX = shellTmp[0]
+        shellLandY = shellTmp[1]
+    }
+
+    private fun fireShell(now: Long) {
+        val p = aimPower.coerceIn(0.12f, 1f)
+        shellPath(now, p, shellTmp)
+        if (shellTmp[0].isNaN()) {
+            sfx?.play("tick", 0.3f, 150L)
+            popup = "NO ROOM FOR A SHELL HERE"
+            popupAt = now
+            return
+        }
+        val sh = ShellObj(cx + aimDX * (r + shellR + 3 * d), cy + aimDY * (r + shellR + 3 * d),
+            aimDX * launchSpeed(now) * p, aimDY * launchSpeed(now) * p)
+        shells.add(sh)
+        shellsLeft--
+        shellMode = false
+        sfx?.play("launch", 0.35f + 0.4f * p, 0L, 2.0f)
+        kickAt = now
+        say(if (shellsLeft > 0) "Shell out! Bank Betito off it. It's free!" else "That's your last shell!", true)
+    }
+
+    private fun updateShells(dt: Float) {
+        for (sh in shells) {
+            if (sh.settled) continue
+            for (i in 0 until 3) {
+                val nx = sh.x + sh.vx * dt / 3f
+                val ny = sh.y + sh.vy * dt / 3f
+                if (shellHitsWall(nx, ny)) { sh.vx = 0f; sh.vy = 0f; sh.settled = true; break }
+                sh.x = nx
+                sh.y = ny
+                val k = 1f - min(1f, waterDrag * dt / 3f)
+                sh.vx *= k
+                sh.vy *= k
+            }
+            if (hypot(sh.vx, sh.vy) < 0.15f * d) { sh.vx = 0f; sh.vy = 0f; sh.settled = true }
+        }
+    }
+
+    /** Betito bounces off a shell like off a round rock. It costs no shot and keeps combos going. */
+    private fun collideShell(sh: ShellObj, now: Long) {
+        val dx = cx - sh.x
+        val dy = cy - sh.y
+        val dist = hypot(dx, dy)
+        val minD = r + shellR
+        if (dist >= minD || dist < 0.0001f) return
+        val nx = dx / dist
+        val ny = dy / dist
+        cx += nx * (minD - dist)
+        cy += ny * (minD - dist)
+        val vn = vx * nx + vy * ny
+        if (vn < 0f) {
+            val vtx = vx - vn * nx
+            val vty = vy - vn * ny
+            vx = -vn * bounceK * nx + vtx * slideK
+            vy = -vn * bounceK * ny + vty * slideK
+            if (-vn > 1.0f * d) {
+                bumpAt = now
+                sh.hitAt = now
+                bouncesThisShot++
+                sfx?.play("clink", 0.4f + min(0.5f, -vn / (12 * d)), 60L, 1.8f)
+                if (!shellHitThisShot && shots > 0) {
+                    shellHitThisShot = true
+                    celebrate("SHELL BANK!")
+                }
+                for (k in 0 until 5) spawnParticle(sh.x + nx * shellR, sh.y + ny * shellR, nx * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d,
+                    ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xFFFFCC80.toInt(), 2.5f * d, 20f)
+            }
+        }
+    }
+
     private fun inWeed(x: Float, y: Float): Boolean =
         weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
 
@@ -1367,6 +1520,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shotCombo = 0
         targetsThisShot = 0
         sharkThisShot = false
+        shellHitThisShot = false
         tipLookedThisRest = false
         kickAt = now
         sfx?.play("launch", 0.4f + 0.5f * p, 0L, 1.6f - 0.5f * p)
@@ -1374,9 +1528,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             -aimDX * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d, -aimDY * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d,
             0x99FFFFFF.toInt(), 3 * d, 25f)
         when (shots) {
-            par -> say("This shot is for PAR!", true)
-            par + 1 -> say("Over par now... make it count!", true)
-            maxShots -> say("Last shot! Make it count!", true)
+            par -> say("LAST SHOT! Get in the hole or replay the hole!", true)
         }
     }
 
@@ -1438,6 +1590,24 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     val ny = dy / dist
                     sx += nx * (r - dist)
                     sy += ny * (r - dist)
+                    val vn = svx * nx + svy * ny
+                    if (vn < 0f) {
+                        val vtx = svx - vn * nx
+                        val vty = svy - vn * ny
+                        svx = -vn * bounceK * nx + vtx * slideK
+                        svy = -vn * bounceK * ny + vty * slideK
+                    }
+                }
+                for (sh in shells) {
+                    val dx = sx - sh.x
+                    val dy = sy - sh.y
+                    val dist = hypot(dx, dy)
+                    val minD = r + shellR
+                    if (dist >= minD || dist < 0.0001f) continue
+                    val nx = dx / dist
+                    val ny = dy / dist
+                    sx += nx * (minD - dist)
+                    sy += ny * (minD - dist)
                     val vn = svx * nx + svy * ny
                     if (vn < 0f) {
                         val vtx = svx - vn * nx
@@ -1645,6 +1815,19 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         over = true
         levelEndMs = now
         endShot(now)
+        if (shots > par) {
+            // over par: no credit, the hole has to be replayed
+            score = holeStartScore
+            sfx?.play("lose", 1f, 0L)
+            stars = 0
+            message = "OVER PAR"
+            banner = "$shots SHOTS · PAR $par  ·  REPLAY HOLE $level"
+            bannerUntil = now + 2800L
+            riding = null
+            say("You need par or better to move on. Try again!", true)
+            resumeAt = now + 3000L
+            return
+        }
         val b = band()
         val secs = (now - levelStartMs) / 1000f
         val under = par - shots
@@ -1712,7 +1895,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         saveBest()
         sfx?.play("lose", 1f, 0L)
         message = "OUT OF SHOTS"
-        banner = "TRY HOLE $level AGAIN  ·  PAR $par"
+        banner = "NEED PAR OR BETTER  ·  REPLAY HOLE $level"
         bannerUntil = now + 2500L
         say("Ride the currents to go further! Flip the red ones with buoys.", true)
         resumeAt = now + 2700L

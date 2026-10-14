@@ -63,6 +63,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private val pauseR = RectF()
     private val btnR = Array(5) { RectF() }
     private val skipR = RectF()
+    private val shellBtnR = RectF()
     private var guideOpen = false
     private val guide = GuideBook(d)
     private var pressed = -1
@@ -125,6 +126,11 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             if (e.actionMasked == MotionEvent.ACTION_UP) {
                 if (skipR.contains(x0, y0)) g.skipAllTips() else g.dismissTip()
             }
+            return true
+        }
+        // the SHELL button
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over && shellBtnR.contains(x0, y0)) {
+            g.toggleShellMode(g.clock)
             return true
         }
         // the pause button
@@ -216,6 +222,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawPickups(c, now)
         drawTargets(c, now)
         for (s in g.sharks) drawShark(c, s, now)
+        drawShells(c, now)
         drawAimPreview(c, now)
         drawTurtle(c, now)
         drawParticles(c)
@@ -224,6 +231,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawTracker(c, w, now)
         drawOcto(c, w, now)
         drawControls(c, now)
+        drawShellButton(c, now)
         drawPraise(c, w, h, now)
         drawMessages(c, w, h, now)
         drawIntro(c, w, h, now)
@@ -1301,6 +1309,70 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.color = Color.argb(a, Color.red(col), Color.green(col), Color.blue(col))
             c.drawCircle(g.previewX[i], g.previewY[i], (3.2f - 1.4f * i / g.pvMax) * d, p)
         }
+    }
+
+    private fun drawShellBody(c: Canvas, x: Float, y: Float, rad: Float, a: Int) {
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(a, 255, 183, 77)
+        c.drawCircle(x, y, rad, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 1.6f * d
+        p.color = Color.argb(a, 130, 70, 20)
+        c.drawCircle(x, y, rad, p)
+        for (i in -1..1) {
+            val ox = i * rad * 0.45f
+            c.drawLine(x + ox * 0.4f, y + rad * 0.85f, x + ox * 1.3f, y - rad * 0.8f, p)
+        }
+        p.style = Paint.Style.FILL
+    }
+
+    private fun drawShells(c: Canvas, now: Long) {
+        for (sh in g.shells) {
+            val pop = if (now - sh.hitAt < 160) 1.25f - (now - sh.hitAt) / 160f * 0.25f else 1f
+            p.color = Color.argb(60, 0, 0, 0)
+            c.drawCircle(sh.x + 2 * d, sh.y + 3 * d, g.shellR * pop, p)
+            drawShellBody(c, sh.x, sh.y, g.shellR * pop, 255)
+        }
+        // aiming a shell: show the landing spot
+        if (g.shellMode && g.aiming && g.ready) {
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.pathEffect = dash
+            p.color = Color.argb(170, 255, 183, 77)
+            c.drawLine(g.cx, g.cy, g.shellLandX, g.shellLandY, p)
+            p.pathEffect = null
+            p.style = Paint.Style.FILL
+            drawShellBody(c, g.shellLandX, g.shellLandY, g.shellR, 130)
+        }
+    }
+
+    private fun drawShellButton(c: Canvas, now: Long) {
+        if (g.over) { shellBtnR.setEmpty(); return }
+        val rad = 26 * d
+        val bx = width - 16 * d - rad
+        val by = height - 16 * d - rad
+        shellBtnR.set(bx - rad - 10 * d, by - rad - 10 * d, bx + rad + 10 * d, by + rad + 10 * d)
+        val armed = g.shellMode
+        p.style = Paint.Style.FILL
+        p.color = if (armed) Color.argb(235, 255, 160, 40) else Color.argb(190, 20, 30, 50)
+        c.drawCircle(bx, by, rad, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2.5f * d
+        p.color = if (armed) Color.WHITE else Color.argb(200, 255, 183, 77)
+        c.drawCircle(bx, by, rad - d, p)
+        drawShellBody(c, bx, by - 3 * d, 11 * d, if (g.shellsLeft > 0) 255 else 90)
+        p.style = Paint.Style.FILL
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.color = Color.WHITE
+        p.textSize = 11 * d
+        p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        c.drawText("x${g.shellsLeft}", bx, by + rad - 6 * d, p)
+        if (armed) {
+            p.textSize = 11 * d
+            c.drawText("PULL TO FIRE SHELL", bx - 70 * d, by - rad - 6 * d, p)
+        }
+        p.clearShadowLayer()
     }
 
     private fun drawControls(c: Canvas, now: Long) {
