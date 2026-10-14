@@ -102,6 +102,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // ---------- the room ----------
     val blocks = ArrayList<Block>()
     val zones = ArrayList<WaterZone>()
+    val flippable = ArrayList<WaterZone>()   // currents you can tap to reverse
+    var flipsLeft = 0
+    var flipAt = 0L
     val weeds = ArrayList<Weed>()
     val pickups = ArrayList<Pickup>()
     val targets = ArrayList<Target>()
@@ -345,7 +348,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             "green" -> zoneTip(WaterZone.SIDE)
             "red" -> zoneTip(WaterZone.RIP)
             "whirl" -> zoneTip(WaterZone.WHIRL)
-            "buoy" -> targets.firstOrNull { it.kind == T_FLIP && !it.done }?.let { Tip(key, it.x, it.y, 36 * d) }
+            "buoy" -> flippable.firstOrNull()?.let { Tip(key, it.cx, it.cy, 40 * d) }
             "lock" -> targets.firstOrNull { it.kind == T_GATE && !it.done }?.let { Tip(key, it.x, it.y, 36 * d) }
             "star" -> targets.firstOrNull { it.kind == T_BONUS && !it.done }?.let { Tip(key, it.x, it.y, 34 * d) }
             "apple" -> pickups.firstOrNull { it.type == P_APPLE }?.let { Tip(key, it.x, it.y, 30 * d) }
@@ -501,9 +504,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         placeSharks()
 
         say(when (level) {
-            1 -> "Pull back and let go! Shoot into kelp slides and ride currents!"
+            1 -> "Pull back and let go! Tap SHELL to bank around corners. Par or better to advance!"
             2 -> "Hit the gold lock to blow open a shortcut in the wall!"
-            3 -> "Buoys flip currents. Stars are bonus points. Aim well!"
+            3 -> "TAP a current's flip icon to reverse it. You get a few flips per hole!"
             else -> "Par $par. Chain currents and kelp for a DEADLY COMBO!"
         }, true)
     }
@@ -544,6 +547,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun buildMaze() {
         blocks.clear()
         zones.clear()
+        flippable.clear()
         weeds.clear()
         pickups.clear()
         targets.clear()
@@ -707,12 +711,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             tryRail(i)
         }
 
-        // buoys that flip currents
-        lane1?.let { placeFlip(it) }
-        rip?.let { placeFlip(it) }
-        if (level >= 5) placeFlip(fwd)        // careful: hitting this one sends the boost lane backward
-        whirl?.let { if (level >= 8) placeFlip(it) }
-        lane2?.let { placeFlip(it) }
+        // currents you can tap to flip. A few spare flips beyond the number of currents so every
+        // hole can be set up right, but you still have to choose when and which.
+        lane1?.let { flippable.add(it) }
+        rip?.let { flippable.add(it) }
+        if (level >= 5) flippable.add(fwd)    // careful: flipping this one sends the boost lane backward
+        whirl?.let { if (level >= 8) flippable.add(it) }
+        lane2?.let { flippable.add(it) }
+        flipsLeft = flippable.size + 1
         // gold switches for the gates, in the lane just before each gate
         for ((gb, i) in gates) placeTarget(T_GATE, null, gb, laneL(i - 1) + 16 * d, colX[i] - 16 * d)
         // bonus stars for sharpshooters
@@ -723,10 +729,37 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         spawnPickup(P_SPEED)
     }
 
-    private fun placeFlip(z: WaterZone) {
-        // near its current first, then anywhere open
-        if (!placeTarget(T_FLIP, z, null, z.cx - 150 * d, z.cx + 150 * d, z.cy - 120 * d, z.cy + 120 * d, 50))
-            placeTarget(T_FLIP, z, null, 110 * d, exitX - 40 * d)
+    /** A tap on the water: if it lands on a flippable current, reverse it (costs one flip, not a shot). */
+    fun tapFlip(x: Float, y: Float, now: Long): Boolean {
+        if (over || paused || !started || now < introUntil) return false
+        var best: WaterZone? = null
+        var bestArea = Float.MAX_VALUE
+        for (z in flippable) {
+            val inside = if (z.kind == WaterZone.WHIRL) hypot(x - z.cx, y - z.cy) < z.rad + 10 * d
+                else x > z.l - 10 * d && x < z.r + 10 * d && y > z.t - 10 * d && y < z.b + 10 * d
+            if (!inside) continue
+            val area = (z.r - z.l) * (z.b - z.t)
+            if (area < bestArea) { best = z; bestArea = area }
+        }
+        val z = best ?: return false
+        if (flipsLeft <= 0) {
+            sfx?.play("tick", 0.3f, 150L)
+            popup = "NO FLIPS LEFT"
+            popupAt = now
+            return true
+        }
+        flipsLeft--
+        z.flip()
+        flipAt = now
+        sfx?.play("ding", 0.9f, 0L, 1.3f)
+        burst(z.cx, z.cy, 0xFFFFFFFF.toInt(), 14)
+        say(when (z.kind) {
+            WaterZone.UP -> "Flipped! It pushes you FORWARD now!"
+            WaterZone.RIP -> "Flipped! That current flows BACKWARD now!"
+            WaterZone.WHIRL -> "The whirlpool spins the other way!"
+            else -> "Flipped! It flows the other way now!"
+        }, true)
+        return true
     }
 
     /** Puts a target in open water between x0..x1 (and y0..y1), away from walls, currents, kelp and other targets. */
@@ -1882,7 +1915,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             under >= 2 -> "Incredible! The currents obey you!"
             under == 1 -> "Birdie! Smooth swimming!"
             under == 0 -> "Right on par. Try chaining currents for a birdie!"
-            else -> "Made it! Use the currents and buoys to save shots."
+            else -> "Made it! Use the currents, shells and flips to save shots."
         }, true)
         level++
         saveProgress()
@@ -1897,7 +1930,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         message = "OUT OF SHOTS"
         banner = "NEED PAR OR BETTER  ·  REPLAY HOLE $level"
         bannerUntil = now + 2500L
-        say("Ride the currents to go further! Flip the red ones with buoys.", true)
+        say("Ride the currents to go further! Tap a current to flip it, or fire a shell to bank around a corner.", true)
         resumeAt = now + 2700L
     }
 

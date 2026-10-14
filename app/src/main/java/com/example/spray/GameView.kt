@@ -67,6 +67,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private var guideOpen = false
     private val guide = GuideBook(d)
     private var pressed = -1
+    private var tapDownAt = 0L
 
     private fun cancelAim() {
         aimPtr = -1
@@ -147,6 +148,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 val y = e.getY(i)
                 g.skipIntro(g.clock)
                 if (aimPtr == -1) {
+                    tapDownAt = g.clock
                     aimPtr = id
                     aimSX = x
                     aimSY = y
@@ -169,6 +171,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 if (id == aimPtr || cancel) {
                     // let go = launch (dragging back inside the small circle cancels)
                     if (!cancel && g.aiming) g.launchQueued = true
+                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) g.tapFlip(aimSX, aimSY, g.clock)
                     aimPtr = -1
                     g.aiming = false
                 }
@@ -221,6 +224,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawWalls(c, now)
         drawPickups(c, now)
         drawTargets(c, now)
+        drawFlipIcons(c, now)
         for (s in g.sharks) drawShark(c, s, now)
         drawShells(c, now)
         drawAimPreview(c, now)
@@ -1346,6 +1350,33 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
     }
 
+    /** A flip icon on every tappable current; it pulses while you still have flips. */
+    private fun drawFlipIcons(c: Canvas, now: Long) {
+        if (g.over) return
+        val live = g.flipsLeft > 0
+        val pulse = if (live) 0.5f + 0.5f * sin(now / 260.0).toFloat() else 0f
+        for (z in g.flippable) {
+            val col = zoneColor(z.kind)
+            val x = z.cx
+            val y = if (z.kind == WaterZone.WHIRL) z.cy else z.cy.coerceIn(g.playT + 24 * d, g.playB - 24 * d)
+            val rr = (13 + 2 * pulse) * d
+            val age = now - g.flipAt
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(if (live) 200 else 90, 10, 20, 40)
+            c.drawCircle(x, y, rr, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.color = if (live) Color.rgb(col[0], col[1], col[2]) else Color.argb(120, 200, 200, 200)
+            c.drawCircle(x, y, rr, p)
+            val spin = if (age in 0..500) age / 500f * 360f else 0f
+            p.color = Color.argb(if (live) 240 else 110, 255, 255, 255)
+            rect.set(x - rr * 0.6f, y - rr * 0.6f, x + rr * 0.6f, y + rr * 0.6f)
+            c.drawArc(rect, 20f + spin, 130f, false, p)
+            c.drawArc(rect, 200f + spin, 130f, false, p)
+            p.style = Paint.Style.FILL
+        }
+    }
+
     private fun drawShellButton(c: Canvas, now: Long) {
         if (g.over) { shellBtnR.setEmpty(); return }
         val rad = 26 * d
@@ -1371,6 +1402,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         if (armed) {
             p.textSize = 11 * d
             c.drawText("PULL TO FIRE SHELL", bx - 70 * d, by - rad - 6 * d, p)
+        }
+        if (g.flippable.isNotEmpty()) {
+            p.textAlign = Paint.Align.RIGHT
+            p.textSize = 12 * d
+            p.color = if (g.flipsLeft > 0) Color.rgb(128, 222, 234) else Color.argb(150, 255, 255, 255)
+            c.drawText("TAP CURRENT TO FLIP: ${g.flipsLeft}", bx - rad - 14 * d, by + 4 * d, p)
         }
         p.clearShadowLayer()
     }
