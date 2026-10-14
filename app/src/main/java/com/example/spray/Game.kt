@@ -11,7 +11,7 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 
 /** A wall rectangle. Pillars are small rocks in the lanes. */
-class Block(val l: Float, val t: Float, val r: Float, val b: Float, val pillar: Boolean = false, val gate: Boolean = false) {
+class Block(val l: Float, val t: Float, val r: Float, val b: Float, val pillar: Boolean = false, val gate: Boolean = false, val plug: Boolean = false) {
     var alive = true
     var openAt = 0L
 }
@@ -151,6 +151,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     val shells = ArrayList<ShellObj>()
     var shellsLeft = 3
     var bombsLeft = 1
+    private var plugCount = 0
     var bombMode = false            // tapped BOMB: the next pull throws a bomb
     val blastR get() = 52f * d
     var shellMode = false           // tapped the SHELL button: the next pull fires a shell
@@ -507,6 +508,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         turnUsed = false
 
         buildMaze()
+        bombsLeft = plugCount + 1   // one per plug plus a spare
         par = colX.size + 2
         maxShots = par   // go over par and the hole must be replayed
         banner = null
@@ -524,7 +526,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         say(when (level) {
             1 -> "Pull back and let go! Tap SHELL to bank around corners. Par or better to advance!"
-            2 -> "Wall in the way? Tap BOMB, pull and throw it to blast a hole!"
+            2 -> "Coral blocks the gap! Tap BOMB, pull and throw it to blast through!"
             4 -> "Hit the gold lock to blow open a shortcut in the wall!"
             3 -> "TAP a current's flip icon to reverse it. You get a few flips per hole!"
             else -> "Par $par. Chain currents and kelp for a DEADLY COMBO!"
@@ -554,9 +556,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         return c
     }
 
-    private fun addWall(l: Float, t: Float, rr: Float, b: Float, pillar: Boolean = false, gate: Boolean = false): Block? {
+    private fun addWall(l: Float, t: Float, rr: Float, b: Float, pillar: Boolean = false, gate: Boolean = false, plug: Boolean = false): Block? {
         if (rr - l < 4 * d || b - t < 4 * d) return null
-        val bl = Block(l, t, rr, b, pillar, gate)
+        val bl = Block(l, t, rr, b, pillar, gate, plug)
         blocks.add(bl)
         return bl
     }
@@ -591,7 +593,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val x1 = exitX - 80 * d
         colX = FloatArray(n) { x0 + (x1 - x0) * it / max(1, n - 1) }
         colGap = FloatArray(n)
-        val gapH = max(3.6f * r, 80 * d - (level - 1) * 2 * d)
+        val baseGap = max(3.6f * r, 80 * d - (level - 1) * 2 * d)
+        val gapH = baseGap * 1.45f   // wide-open gaps: much easier to get through
         val fwdCol = Random.nextInt(n)
         ripCol = if (level >= 3 && n > 1) (fwdCol + 1 + Random.nextInt(n - 1)) % n else -1
         narrowH = 0f
@@ -619,6 +622,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 addWall(x, g + gapH / 2f, x + wallThick, playB)
             }
         }
+        // coral plugs: a gap that is blocked solid. Only a BOMB clears it (shells help you aim it).
+        plugCount = 0
+        val plugWant = if (level < 2) 0 else min(1 + (level - 2) / 4, 2)
+        for (i in (0 until n).shuffled()) {
+            if (plugCount >= plugWant) break
+            if (i == ripCol || i == fwdCol) continue
+            addWall(colX[i], colGap[i] - gapH / 2f, colX[i] + wallThick, colGap[i] + gapH / 2f, plug = true)
+            plugCount++
+        }
         nextCol = 0
         suckFromX = colX[n - 1] + wallThick
         val pulse = level >= 11
@@ -629,7 +641,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         for (i in (1 until n).shuffled()) {
             if (gates.size >= gateWant) break
             if (i == ripCol) continue
-            makeGate(i, gapH)?.let { gates.add(Pair(it, i)) }
+            makeGate(i, baseGap)?.let { gates.add(Pair(it, i)) }
         }
 
         // forward stream: a boost lane carrying you right through one gap
@@ -839,7 +851,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val gh = gapH * 0.9f
         val minPiece = 10 * d
         val x = colX[i]
-        val cands = blocks.filter { !it.pillar && !it.gate && abs(it.l - x) < 1f && it.b - it.t >= gh + 2 * minPiece }
+        val cands = blocks.filter { !it.pillar && !it.gate && !it.plug && abs(it.l - x) < 1f && it.b - it.t >= gh + 2 * minPiece && !it.plug }
         if (cands.isEmpty()) return null
         val w = cands[Random.nextInt(cands.size)]
         for (k in 0 until 20) {
@@ -1605,7 +1617,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             w.alive = false
             w.openAt = now
             carved++
-            if (w.gate) continue
+            if (w.gate || w.plug) continue
             val y0 = sh.y - br
             val y1 = sh.y + br
             if (y0 > w.t) addWall(w.l, w.t, w.r, min(w.b, y0), w.pillar)

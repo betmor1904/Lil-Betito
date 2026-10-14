@@ -618,6 +618,28 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 lock(c, (w.l + w.r) / 2f, (w.t + w.b) / 2f, 7 * d)
                 continue
             }
+            if (w.plug) {
+                // coral plug: pink-orange coral with bumpy polyps and cracks; bombs clear it
+                val pu = 0.5f + 0.5f * sin(now / 420.0).toFloat()
+                p.color = Color.argb((50 + 40 * pu).toInt(), 255, 112, 67)
+                c.drawRoundRect(w.l - 7 * d, w.t - 4 * d, w.r + 7 * d, w.b + 4 * d, 10 * d, 10 * d, p)
+                p.color = Color.parseColor("#E8567A")
+                c.drawRoundRect(rect, 7 * d, 7 * d, p)
+                var yy = w.t + 7 * d
+                var k = 0
+                while (yy < w.b - 4 * d) {
+                    p.color = if (k % 2 == 0) Color.parseColor("#FF8A65") else Color.parseColor("#FFB74D")
+                    c.drawCircle((w.l + w.r) / 2f + (if (k % 2 == 0) -3 else 3) * d, yy, 5.5f * d, p)
+                    yy += 11 * d
+                    k++
+                }
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2 * d
+                p.color = Color.parseColor("#FFF3E0")
+                c.drawRoundRect(rect, 7 * d, 7 * d, p)
+                p.style = Paint.Style.FILL
+                continue
+            }
             p.color = if (w.pillar) Color.parseColor("#6D4C41") else Color.parseColor("#4A3B5C")
             c.drawRoundRect(rect, 5 * d, 5 * d, p)
             p.style = Paint.Style.STROKE

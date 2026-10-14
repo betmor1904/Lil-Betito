@@ -17,7 +17,7 @@ object Guide {
         Entry("goal", "THE HOLE", "Get Betito into the glowing hole in the right wall. Near it, the water sucks you in.", Color.parseColor("#76FF03")),
         Entry("score", "PAR & SCORING", "Par is the shots a hole should take. Finish OVER par and you must REPLAY it! 1 under = BIRDIE, 2 under = EAGLE.", Color.parseColor("#FF5252")),
         Entry("shell", "SHELLS", "Tap SHELL (bottom right), pull and let go to fire one. Betito bounces off it around corners. 3 per hole and no shot used!", Color.parseColor("#FFB74D")),
-        Entry("bomb", "BOMBS", "Tap BOMB (above SHELL), pull and let go to throw one. It blows a hole in the walls after a moment. You start with 1 per hole and can find more!", Color.parseColor("#FF7043")),
+        Entry("bomb", "BOMBS", "Tap BOMB (above SHELL), pull and let go to throw one. It blows a hole in walls and CORAL PLUGS after a moment. Coral plugs block a gap completely: bombs are the only way through!", Color.parseColor("#FF7043")),
         Entry("turn", "QUICK TURN", "While Betito is still swimming, tap fast where you want him to go. One turn per shot, before he stops!", Color.parseColor("#80DEEA")),
         Entry("combo", "COMBOS", "Ride 2 or more currents or slides in ONE shot: NICE!!, DEADLY COMBO!!, KING OF THE SEA!!", Color.parseColor("#E040FB")),
         Entry("blue", "BLUE CURRENT", "A boost lane. Shoot into it and it carries you forward, fast.", Color.rgb(0, 229, 255)),
