@@ -426,7 +426,13 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
 
         // Octo himself, by the bubble
         val ox = if (onRight) bx + bw - 30 * d else bx + 30 * d
-        Art.octo(c, p, path, ox, by + bh + 26 * d, 22 * d, real, age < 1600L)
+        val tipFace = when (t.key) {
+            "shark", "red", "score" -> Sprites.FACE_SURPRISE
+            "turn", "shell", "buoy", "slide" -> Sprites.FACE_WINK
+            "combo", "star", "apple", "speed", "lock", "goal" -> Sprites.FACE_HAPPY
+            else -> Sprites.FACE_SMILE
+        }
+        Art.octo(c, p, path, ox, by + bh + 26 * d, 22 * d, real, age < 1600L, tipFace)
     }
 
     private fun drawLightRays(c: Canvas, w: Float, h: Float, now: Long) {
@@ -970,6 +976,21 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.save()
         c.translate(s.x, s.y)
         c.rotate(s.heading)
+        // facing left he'd be upside down, so flip him over instead
+        if (cos(Math.toRadians(s.heading.toDouble())) < -0.01) c.scale(1f, -1f)
+        if (Sprites.drawShark(c, u * 1.1f)) {
+            c.restore()
+            if (now - s.bumpAt < 500L) {
+                p.textAlign = Paint.Align.CENTER
+                p.typeface = Typeface.DEFAULT_BOLD
+                p.textSize = 14 * d
+                p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                p.color = Color.parseColor("#FFD54F")
+                c.drawText("BONK", s.x, s.y - 26 * d, p)
+                p.clearShadowLayer()
+            }
+            return
+        }
         val wag = sin(now / 110.0).toFloat() * 0.25f * u
         p.style = Paint.Style.FILL
         p.color = Color.parseColor("#607D8B")
@@ -1234,7 +1255,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         val ox = w * 0.47f
         val oy = g.topInset + 16 * d
         val talking = g.octoText != null && now - g.octoAt < 1400L
-        Art.octo(c, p, path, ox, oy, 9.5f * d, now, talking)
+        val speaking = g.octoText != null && now - g.octoAt < 2600L
+        Art.octo(c, p, path, ox, oy, 9.5f * d, now, talking, if (speaking) g.octoFace else -1)
 
         val txt = g.octoText ?: return
         val age = now - g.octoAt

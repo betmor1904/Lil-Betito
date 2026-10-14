@@ -1761,12 +1761,25 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shakeAmp = amp * d
     }
 
+    /** Octo's face for what he's saying: surprised for trouble, happy for big wins, a wink for tips. */
+    var octoFace = 0
+    private fun pickFace(text: String): Int {
+        val t = text.lowercase()
+        return when {
+            listOf("uh oh", "wait", "over par", "last shot", "last shell", "replay", "backward", "no room", "no flips", "bump", "shark").any { it in t } -> Sprites.FACE_SURPRISE
+            listOf("hole in one", "king of the sea", "incredible", "birdie", "eagle", "jackpot", "perfect", "deadly", "smooth", "right on par", "made it").any { it in t } -> Sprites.FACE_HAPPY
+            listOf("flipped", "turn", "shell", "pull back", "tap", "gold lock", "buoy", "try ").any { it in t } -> Sprites.FACE_WINK
+            else -> Sprites.FACE_SMILE
+        }
+    }
+
     fun say(text: String, force: Boolean = false) {
         val now = clock
         if (!force && now < octoNextAt) return
         octoText = text
         octoAt = now
         octoNextAt = now + 2500L
+        octoFace = pickFace(text)
     }
 
     // ============================================================

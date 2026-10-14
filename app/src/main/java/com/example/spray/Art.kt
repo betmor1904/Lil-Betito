@@ -123,8 +123,17 @@ object Art {
      * Octo the octopus, Betito's caddie. s = head radius. When talking his mouth opens and closes.
      * He wears a little green golf visor.
      */
-    fun octo(c: Canvas, p: Paint, path: Path, x: Float, y0: Float, s: Float, now: Long, talking: Boolean = false) {
+    fun octo(c: Canvas, p: Paint, path: Path, x: Float, y0: Float, s: Float, now: Long, talking: Boolean = false, face: Int = -1) {
         val y = y0 + sin(now / 400.0).toFloat() * s * 0.08f
+        // the hand-made faces: smile, happy, wink, surprised
+        val chosen = when {
+            face == Sprites.FACE_SMILE && talking -> if ((now / 150) % 2 == 0L) Sprites.FACE_HAPPY else Sprites.FACE_SMILE
+            face >= 0 -> face
+            talking -> if ((now / 150) % 2 == 0L) Sprites.FACE_HAPPY else Sprites.FACE_SMILE
+            (now % 3400L) < 220L -> Sprites.FACE_WINK       // a wink instead of a blink
+            else -> Sprites.FACE_SMILE
+        }
+        if (Sprites.drawOcto(c, x, y, s, chosen)) return
         val body = Color.parseColor("#AB47BC")
         // tentacles
         p.style = Paint.Style.STROKE
@@ -247,6 +256,7 @@ object Art {
         c.save()
         c.translate(x, y)
         c.rotate(headingDeg)
+        if (Sprites.drawShark(c, u)) { c.restore(); return }
         val wag = sin(now / 110.0).toFloat() * 0.25f * u
         p.style = Paint.Style.FILL
         p.color = Color.parseColor("#607D8B")
