@@ -162,6 +162,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     // ---------- quick turn: one mid-flight direction change per shot ----------
     var turnUsed = false
+    var turnGrab = false          // finger is on the turtle: time is frozen while you pick a direction
+    var turnGrabAt = 0L
+    var turnDX = 1f
+    var turnDY = 0f
     val canTurn get() = !over && !paused && !ready && riding == null && !turnUsed && hypot(vx, vy) > 1.6f * d
     var turnAt = 0L
 
@@ -767,6 +771,38 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     fun flipIconY(z: WaterZone): Float =
         if (z.kind == WaterZone.WHIRL) z.cy else z.cy.coerceIn(playT + 24 * d, playB - 24 * d)
 
+    /** Touch the turtle in flight: time freezes and he flips toward your finger until you let go. */
+    fun beginTurnGrab(x: Float, y: Float, now: Long): Boolean {
+        if (!canTurn || turnGrab) return false
+        if (hypot(x - cx, y - cy) > r * 2.8f) return false
+        turnGrab = true
+        turnGrabAt = now
+        val sp = hypot(vx, vy)
+        turnDX = vx / sp
+        turnDY = vy / sp
+        sfx?.play("pop", 0.5f, 0L, 1.2f)
+        return true
+    }
+
+    fun setTurnDir(x: Float, y: Float) {
+        if (!turnGrab) return
+        val dx = x - cx
+        val dy = y - cy
+        val dist = hypot(dx, dy)
+        if (dist < r * 0.9f) return
+        turnDX = dx / dist
+        turnDY = dy / dist
+        faceX = turnDX
+        faceY = turnDY
+    }
+
+    /** Let go: he shoots off the way he's facing. */
+    fun endTurnGrab(now: Long) {
+        if (!turnGrab) return
+        turnGrab = false
+        tapTurn(cx + turnDX * 100f * d, cy + turnDY * 100f * d, now)
+    }
+
     /** Quick turn: while Betito is still swimming, one quick tap sends him toward the tap (same speed). */
     fun tapTurn(x: Float, y: Float, now: Long): Boolean {
         if (!canTurn) return false
@@ -1322,6 +1358,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             return
         }
         if (now - levelStartMs > 1500) message = null
+
+        // frozen while you pick a turn direction (gives up after 3 seconds, turn not used)
+        if (turnGrab) {
+            if (!canTurn || now - turnGrabAt > 3000L) turnGrab = false else return
+        }
 
         updatePulses(now, dt)
 

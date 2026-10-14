@@ -64,6 +64,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private val pauseR = RectF()
     private val btnR = Array(5) { RectF() }
     private val skipR = RectF()
+    private var turnPtr = -1
     private val shellBtnR = RectF()
     private val bombBtnR = RectF()
     private var guideOpen = false
@@ -154,7 +155,9 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 val x = e.getX(i)
                 val y = e.getY(i)
                 g.skipIntro(g.clock)
-                if (aimPtr == -1) {
+                if (turnPtr == -1 && g.beginTurnGrab(x, y, g.clock)) {
+                    turnPtr = id
+                } else if (aimPtr == -1) {
                     tapDownAt = g.clock
                     aimPtr = id
                     aimSX = x
@@ -165,6 +168,11 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (turnPtr != -1) {
+                    val ti = e.findPointerIndex(turnPtr)
+                    if (ti >= 0) g.setTurnDir(e.getX(ti), e.getY(ti))
+                    return true
+                }
                 val i = e.findPointerIndex(aimPtr)
                 if (i >= 0) {
                     aimTX = e.getX(i)
@@ -175,10 +183,15 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
                 val cancel = e.actionMasked == MotionEvent.ACTION_CANCEL
                 val id = if (cancel) -2 else e.getPointerId(e.actionIndex)
+                if (turnPtr != -1 && (cancel || id == turnPtr)) {
+                    if (cancel) g.turnGrab = false else g.endTurnGrab(g.clock)
+                    turnPtr = -1
+                    return true
+                }
                 if (id == aimPtr || cancel) {
                     // let go = launch (dragging back inside the small circle cancels)
                     if (!cancel && g.aiming) g.launchQueued = true
-                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) { if (!g.tapFlip(aimSX, aimSY, g.clock)) g.tapTurn(aimSX, aimSY, g.clock) }
+                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) g.tapFlip(aimSX, aimSY, g.clock)
                     aimPtr = -1
                     g.aiming = false
                 }
@@ -1359,7 +1372,21 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             c.drawCircle(g.cx, g.cy, g.r * 1.7f + pulse * 3 * d, p)
             p.style = Paint.Style.FILL
         }
-        if (g.canTurn) {
+        if (g.turnGrab) {
+            // direction arrow while time is frozen
+            val ax = g.cx + g.turnDX * g.r * 6f
+            val ay = g.cy + g.turnDY * g.r * 6f
+            p.style = Paint.Style.STROKE
+            p.strokeCap = Paint.Cap.ROUND
+            p.strokeWidth = 4 * d
+            p.color = Color.argb(230, 128, 222, 234)
+            c.drawLine(g.cx + g.turnDX * g.r * 1.6f, g.cy + g.turnDY * g.r * 1.6f, ax, ay, p)
+            val px2 = -g.turnDY
+            val py2 = g.turnDX
+            c.drawLine(ax, ay, ax - g.turnDX * 10 * d + px2 * 7 * d, ay - g.turnDY * 10 * d + py2 * 7 * d, p)
+            c.drawLine(ax, ay, ax - g.turnDX * 10 * d - px2 * 7 * d, ay - g.turnDY * 10 * d - py2 * 7 * d, p)
+            p.style = Paint.Style.FILL
+        } else if (g.canTurn) {
             // a quick tap now turns him: one per shot
             val pulse = 0.5f + 0.5f * sin(now / 120.0).toFloat()
             p.style = Paint.Style.STROKE
@@ -1372,7 +1399,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.textSize = 11 * d
             p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
             p.color = Color.argb(230, 128, 222, 234)
-            c.drawText("TAP TO TURN!", g.cx, g.cy - g.r * 2.6f, p)
+            c.drawText("TAP TURTLE, FLIP IT, LET GO!", g.cx, g.cy - g.r * 2.6f, p)
             p.clearShadowLayer()
         }
         if (!g.aiming) return
