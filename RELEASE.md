@@ -47,7 +47,7 @@ gh run download $(gh run list -L 1 --json databaseId -q '.[0].databaseId') -n li
    - Privacy policy: `https://github.com/betmor1904/Lil-Betito/blob/main/PRIVACY.md` (add your contact email to that file first)
    - Ads: **No** (for now; change it when ads are added)
    - App access: all functionality available without login
-   - Content rating: fill the questionnaire honestly. The slot reels count as **simulated gambling** (no real money), so say yes there; expect a Teen / 12+ type rating.
+   - Content rating: fill the questionnaire honestly. The game has no gambling, no real money, and no violence beyond cartoon sharks bumping you, so answer no to those; expect a low age rating.
    - Target audience: **13 and over** (keeps you out of the stricter kids' rules)
    - Data safety: **No data collected or shared**
 4. **Store listing**: text is in `store/listing.md`; icon (512×512) and feature graphic (1024×500) are in `store/`.

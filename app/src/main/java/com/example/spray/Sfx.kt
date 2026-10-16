@@ -32,13 +32,11 @@ class Sfx(ctx: Context) {
         ids["lose"] = pool.load(ctx, R.raw.lose, 1)
         ids["carrot"] = pool.load(ctx, R.raw.carrot, 1)
         ids["bust"] = pool.load(ctx, R.raw.bust, 1)
-        ids["jackpot"] = pool.load(ctx, R.raw.jackpot, 1)
         ids["bonk"] = pool.load(ctx, R.raw.bonk, 1)
         ids["wee"] = pool.load(ctx, R.raw.wee, 1)
         ids["wee2"] = pool.load(ctx, R.raw.wee2, 1)
         ids["letsgo"] = pool.load(ctx, R.raw.letsgo, 1)
         ids["ding"] = pool.load(ctx, R.raw.ding, 1)
-        ids["coin"] = pool.load(ctx, R.raw.coin, 1)
         ids["woo"] = pool.load(ctx, R.raw.woo, 1)
         ids["tick"] = pool.load(ctx, R.raw.tick, 1)
         ids["clink"] = pool.load(ctx, R.raw.clink, 1)
@@ -46,9 +44,6 @@ class Sfx(ctx: Context) {
         ids["siren"] = pool.load(ctx, R.raw.siren, 1)
         ids["fanfare"] = pool.load(ctx, R.raw.fanfare, 1)
         ids["squish"] = pool.load(ctx, R.raw.squish, 1)
-        ids["coins"] = pool.load(ctx, R.raw.coins, 1)
-        ids["slot"] = pool.load(ctx, R.raw.slot, 1)
-        ids["kaching"] = pool.load(ctx, R.raw.kaching, 1)
     }
 
     fun play(name: String, volume: Float = 1f, minGapMs: Long = 0L, rate: Float = 1f) {

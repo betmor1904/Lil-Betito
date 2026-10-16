@@ -16,7 +16,7 @@ class Block(val l: Float, val t: Float, val r: Float, val b: Float, val pillar: 
     var openAt = 0L
 }
 
-/** Something to pick up: an apple (spins a slot reel) or speed kelp (stronger shots). */
+/** Something to pick up: an apple (bonus points), a bomb, or speed kelp (stronger shots). */
 class Pickup(val x: Float, val y: Float, val type: Int, val seed: Float = Random.nextFloat() * 6f)
 
 /** A seaweed patch: a sticky landing spot that soaks up speed. */
@@ -222,14 +222,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // explorer bonus
     var currentsVisited = 0
     private val visited = HashSet<Int>()
-
-    // slot reels: 0 cherry, 1 bell, 2 bar, 3 seven, 4 coin
-    val reels = intArrayOf(-1, -1, -1)
-    private var reelCount = 0
-    var reelResolving = false
-    private var reelClearAt = 0L
-    private var pendingFills = 0
-    private val symbolWeights = intArrayOf(30, 20, 15, 7, 28)
 
     // ---------- presentation state (read by the view) ----------
     var message: String? = null
@@ -501,7 +493,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         previewN = 0
         currentsVisited = 0
         visited.clear()
-        resetReels()
         speedUntil = 0L
         shells.clear()
         shellsLeft = 3
@@ -1156,23 +1147,21 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             2 -> {
                 score += 100 * b
                 celebrate("NICE!!")
-                sfx?.play("coins", 0.8f, 0L)
+                sfx?.play("pop", 0.8f, 0L)
             }
             3 -> {
                 score += 300 * b
                 celebrate("DEADLY COMBO!!", true)
-                sfx?.play("slot", 1f, 0L)
-                fillReel(now)
+                sfx?.play("woo", 1f, 0L)
                 shake(6f, now)
             }
             else -> {
                 score += 600 * b * (shotCombo - 3)
                 celebrate("KING OF THE SEA!!", true)
                 sfx?.play("siren", 1f, 0L)
-                sfx?.play("jackpot", 1f, 0L)
+                sfx?.play("fanfare", 1f, 0L)
                 flash = 0.5f
                 flashColor = 0xFFFFF59D.toInt()
-                fillReel(now)
                 shake(10f, now)
             }
         }
@@ -1192,7 +1181,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             }
             val b = band()
             sfx?.play("ding", 1f, 0L, 1.6f)
-            sfx?.play("kaching", 0.9f, 0L)
             burst(t.x, t.y, 0xFFFFFFFF.toInt(), 16)
             confetti(t.x, t.y)
             when (t.kind) {
@@ -1233,7 +1221,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 else -> {
                     t.done = true
                     score += 250 * b
-                    fillReel(now)
                     celebrate("SHARPSHOOTER!")
                 }
             }
@@ -1347,7 +1334,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         updateParticles(dt)
         updateSharks(now, dt)
         if (flash > 0f) flash = max(0f, flash - 0.04f * dt)
-        if (reelResolving && now >= reelClearAt) finishReels()
         if (banner != null && bannerUntil in 1..now) banner = null
 
         if (over) {
@@ -1770,8 +1756,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         if (shotCombo >= 2 && targetsThisShot > 0 && !sharkThisShot) {
             score += 500 * b
             celebrate("PERFECT!!", true)
-            sfx?.play("jackpot", 1f, 0L)
-            fillReel(now)
+            sfx?.play("fanfare", 1f, 0L)
         } else if (inWeed(cx, cy) && shotCombo == 0) {
             score += 50 * b
             celebrate("STUCK THE LANDING!")
@@ -1871,7 +1856,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 score += 25
                 sfx?.play("pop", 1f, 40L)
                 celebrate(yum.random())
-                fillReel(now)
                 applesEaten++
             } else if (p.type == P_BOMB) {
                 bombsLeft++
@@ -1914,7 +1898,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         praiseBig = big
         sfx?.play("ding", 0.9f, 0L, min(2f, 0.9f + 0.1f * cheerStreak))
         if (big) {
-            sfx?.play("coins", 1f, 200L)
+            sfx?.play("woo", 0.7f, 200L)
             confetti(cx, cy)
             confetti(W * (0.2f + 0.6f * Random.nextFloat()), H * 0.35f)
             shake(4f, praiseAt)
@@ -1933,7 +1917,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val t = text.lowercase()
         return when {
             listOf("uh oh", "wait", "over par", "last shot", "last shell", "replay", "backward", "no room", "no flips", "bump", "shark").any { it in t } -> Sprites.FACE_SURPRISE
-            listOf("hole in one", "king of the sea", "incredible", "birdie", "eagle", "jackpot", "perfect", "deadly", "smooth", "right on par", "made it", "wall blasted", "cleared").any { it in t } -> Sprites.FACE_HAPPY
+            listOf("hole in one", "king of the sea", "incredible", "birdie", "eagle", "perfect", "deadly", "smooth", "right on par", "made it", "wall blasted", "cleared").any { it in t } -> Sprites.FACE_HAPPY
             listOf("flipped", "turn", "shell", "pull back", "tap", "gold lock", "buoy", "try ", "bomb").any { it in t } -> Sprites.FACE_WINK
             else -> Sprites.FACE_SMILE
         }
@@ -1948,86 +1932,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         octoFace = pickFace(text)
     }
 
-    // ============================================================
-    // slots
-    // ============================================================
-
-    private fun resetReels() {
-        reels[0] = -1; reels[1] = -1; reels[2] = -1
-        reelCount = 0
-        reelResolving = false
-        pendingFills = 0
-    }
-
-    private fun rollSymbol(): Int {
-        var n = Random.nextInt(symbolWeights.sum())
-        for (i in symbolWeights.indices) {
-            if (n < symbolWeights[i]) return i
-            n -= symbolWeights[i]
-        }
-        return 0
-    }
-
-    private fun fillReel(now: Long) {
-        if (reelResolving || reelCount >= 3) {
-            pendingFills++
-            return
-        }
-        reels[reelCount] = rollSymbol()
-        reelCount++
-        when (reelCount) {
-            1 -> sfx?.play("pop", 1f, 0L)
-            2 -> sfx?.play("coins", 1f, 0L)
-            else -> sfx?.play("slot", 1f, 0L)
-        }
-        if (reelCount == 3) {
-            reelResolving = true
-            reelClearAt = now + 1300L
-            val a = reels[0]
-            val b = reels[1]
-            val c = reels[2]
-            val base = 200 * band()
-            val pay: Int
-            val text: String
-            if (a == b && b == c) {
-                if (a == 3) {
-                    pay = base * 10
-                    text = "777 JACKPOT! +$pay"
-                    sfx?.play("jackpot", 1f, 0L)
-                    celebrate("777!!!", true)
-                } else {
-                    pay = base * 5
-                    text = "3 OF A KIND! +$pay"
-                    celebrate("JACKPOT!", true)
-                }
-                sfx?.play("siren", 1f, 0L)
-                flash = 0.6f
-                flashColor = 0xFFFFF59D.toInt()
-            } else if (a == b || b == c || a == c) {
-                pay = base * 2
-                text = "PAIR! +$pay"
-                celebrate("NICE PAIR!")
-            } else {
-                pay = base / 2
-                text = "NO MATCH +$pay"
-                sfx?.play("wrong", 0.4f, 0L)
-            }
-            score += pay
-            banner = text
-            bannerUntil = now + 1600L
-        }
-    }
-
-    private fun finishReels() {
-        reels[0] = -1; reels[1] = -1; reels[2] = -1
-        reelCount = 0
-        reelResolving = false
-        val n = min(3, pendingFills)
-        pendingFills -= n
-        val now = clock
-        repeat(n) { fillReel(now) }
-    }
-
     fun band(): Int = when {
         level <= 5 -> 1
         level <= 10 -> 2
@@ -2038,6 +1942,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // ============================================================
     // end of a hole
     // ============================================================
+
+    /** Remember the best star rating for each hole, and add them up for the start screen. */
+    private fun saveStars(hole: Int, earned: Int) {
+        if (earned > prefs.getInt("stars_$hole", 0)) prefs.edit().putInt("stars_$hole", earned).apply()
+    }
 
     private fun saveBest() {
         if (score > best) {
@@ -2103,8 +2012,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             else -> 1
         }
         starsAt = now
+        saveStars(level, stars)
         if (under >= 1) {
-            sfx?.play("jackpot", 1f, 0L)
             sfx?.play("siren", 0.8f, 0L)
             flash = 0.5f
             flashColor = 0xFFFFF59D.toInt()

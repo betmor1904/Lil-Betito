@@ -47,6 +47,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
 
     private var savedLevel = 1
     private var best = 0
+    private var totalStars = 0
     private val bubX = FloatArray(22)
     private val bubY = FloatArray(22)
     private val bubR = FloatArray(22)
@@ -63,6 +64,10 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
     fun refresh() {
         savedLevel = prefs.getInt("save_level", 1)
         best = prefs.getInt("best_score", 0)
+        val upTo = prefs.getInt("max_level", 1).coerceAtLeast(savedLevel)
+        var sum = 0
+        for (i in 1..upTo) sum += prefs.getInt("stars_$i", 0)
+        totalStars = sum
     }
 
     /** Back: close a sub-screen. Returns false on the main screen (the app should close). */
@@ -206,6 +211,11 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         p.textSize = 12 * d
         p.color = Color.argb(200, 255, 255, 255)
         if (best > 0) c.drawText("BEST SCORE  $best", tx, ty + 50 * d, p)
+        if (totalStars > 0) {
+            p.color = Color.parseColor("#FFD54F")
+            c.drawText("STARS EARNED  $totalStars", tx, ty + 68 * d, p)
+            p.color = Color.argb(200, 255, 255, 255)
+        }
         // Octo floats just left of the title
         p.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
         p.textSize = size
@@ -400,7 +410,9 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             "reset" -> screen = Screen.CONFIRM
             "cancel" -> screen = Screen.SETTINGS
             "doreset" -> {
-                prefs.edit().putInt("save_level", 1).putInt("save_score", 0).putInt("max_level", 1).apply()
+                val ed = prefs.edit()
+                for (i in 1..prefs.getInt("max_level", 1).coerceAtLeast(savedLevel)) ed.remove("stars_$i")
+                ed.putInt("save_level", 1).putInt("save_score", 0).putInt("max_level", 1).apply()
                 refresh()
                 screen = Screen.MAIN
             }

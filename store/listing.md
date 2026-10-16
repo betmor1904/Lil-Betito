@@ -20,8 +20,8 @@ Hit a buoy and its current flips direction: turn a riptide into a rocket. Hit a 
 ⛳ BEAT PAR
 Every hole has a par. Go under it for a BIRDIE, EAGLE, or the legendary HOLE IN ONE. Bank shots off the rocks, whip around corners on kelp slides, and let the hole suck you in.
 
-🎰 SPIN THE REELS
-Apples and big combos fill the slot reels. Three of a kind pays out big. 777 = JACKPOT.
+⭐ EARN STARS
+Par earns 2 stars, a birdie or better earns 3. Grab apples for bonus points and chase your best score on every hole.
 
 🐙 MEET OCTO
 Octo the octopus is Betito's caddie. Every time something new shows up, he stops and explains it, so you're never lost.
