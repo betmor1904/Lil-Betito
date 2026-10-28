@@ -166,18 +166,18 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var turnGrabAt = 0L
     var turnDX = 1f
     var turnDY = 0f
-    val canTurn get() = !over && !paused && !ready && riding == null && !turnUsed && hypot(vx, vy) > 1.6f * d
+    val canTurn get() = false
     var turnAt = 0L
 
     // ---------- shot rules ----------
     val readySpeed get() = 0.9f * d     // he can only shoot again once he has (nearly) stopped
-    private val waterDrag = 0.025f
+    private val waterDrag = 0.02f
     private val rideDrag = 0.006f       // riding a current barely slows you
     private val weedDrag = 0.16f
-    private val bounceK = 0.65f         // how much speed a bounce keeps (into the wall)
-    private val shellBounce = 1.2f        // shells are springy: they kick Betito faster
+    private val bounceK = 0.92f         // bank shots: a rock keeps 92% of the speed it is hit with
+    private val shellBounce = 1.35f       // shells are springy: they kick Betito out FASTER than he went in
     private val shellSlide = 1.0f
-    private val slideK = 0.85f          // how much speed is kept sliding along the wall
+    private val slideK = 0.95f          // how much speed is kept sliding along the wall
     private val maxSpeed get() = 17.5f * d
     var ready = true
     var shots = 0
@@ -199,7 +199,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private var railSpeed = 0f
 
     // aim preview: the first part of the path, simulated with real physics
-    val pvMax = 30
+    val pvMax = 150
+    var previewBounceI = -1
     val previewX = FloatArray(pvMax)
     val previewY = FloatArray(pvMax)
     var previewN = 0
@@ -377,18 +378,19 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             "shell" -> Tip(key, W - 42 * d, H - 42 * d, 40 * d)
             "bomb" -> Tip(key, W - 42 * d, H - 106 * d, 40 * d)
             "turn" -> Tip(key, cx, cy, 44 * d)
+            "bank" -> Tip(key, cx, cy, 44 * d)
             "score" -> Tip(key, 150 * d, topInset + 22 * d, 70 * d)
             else -> null
         }
     }
 
     // the order Octo introduces things in when a hole starts
-    private val tipOrder = listOf("blue", "green", "red", "buoy", "lock", "slide", "shark", "whirl", "star", "apple", "speed", "weed")
+    private val tipOrder = emptyList<String>()
 
     private fun queueStartTips() {
         startTipsQueued = true
         if (!tipsOn) return
-        for (k in listOf("shoot", "goal", "shell", "bomb", "turn", "score")) if (k !in seenTips) tipQueue.add(k)
+        for (k in listOf("shoot", "bank", "goal", "shell", "score")) if (k !in seenTips) tipQueue.add(k)
         var extra = 0
         for (k in tipOrder) {
             if (extra >= 2) break
@@ -504,37 +506,54 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         resetReels()
         speedUntil = 0L
         shells.clear()
-        shellsLeft = 3
-        bombsLeft = 1
+        bombsLeft = 0
         shellMode = false
         bombMode = false
         shellHitThisShot = false
         turnUsed = false
 
         buildMaze()
-        bombsLeft = plugCount + 1   // one per plug plus a spare
-        par = colX.size + 2
+        par = levelPar
         maxShots = par   // go over par and the hole must be replayed
         banner = null
         sfx?.play("letsgo", 0.8f, 0L)
 
         cx = 48 * d
-        cy = (playT + playB) / 2f
+        cy = freeStartY(startCy)
         vx = 0f
         vy = 0f
         faceX = 1f
         faceY = 0f
         heading = 0f
 
-        placeSharks()
-
         say(when (level) {
-            1 -> "Pull back and let go! Tap SHELL to bank around corners. Par or better to advance!"
-            2 -> "Coral blocks the gap! Tap BOMB, pull and throw it to blast through!"
-            4 -> "Hit the gold lock to blow open a shortcut in the wall!"
-            3 -> "TAP a current's flip icon to reverse it. You get a few flips per hole!"
-            else -> "Par $par. Chain currents and kelp for a DEADLY COMBO!"
+            1 -> "Pull back and let go! Bounce off the rocks to get around corners. Par or better to advance!"
+            2 -> "Tap SHELL, then pull to place a shell. Bank Betito off it! Tap a shell to take it back."
+            else -> "Par $par. Place your shells first, then bank your way through!"
         }, true)
+    }
+
+    private fun freeStartY(y0: Float): Float {
+        fun clear(y: Float): Boolean {
+            val x = 48 * d
+            for (w in blocks) {
+                val qx = x.coerceIn(w.l, w.r)
+                val qy = y.coerceIn(w.t, w.b)
+                if (hypot(x - qx, y - qy) < r + 6 * d) return false
+            }
+            return true
+        }
+        val lo = playT + r + 4 * d
+        val hi = playB - r - 4 * d
+        val y = y0.coerceIn(lo, hi)
+        if (clear(y)) return y
+        var off = 6 * d
+        while (off < hi - lo) {
+            if (y - off >= lo && clear(y - off)) return y - off
+            if (y + off <= hi && clear(y + off)) return y + off
+            off += 6 * d
+        }
+        return y
     }
 
     /** Tap during the par card to start right away. */
@@ -570,6 +589,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     fun laneL(i: Int) = if (i < 0) 0f else colX[i] + wallThick
     fun laneR(i: Int) = if (i + 1 < colX.size) colX[i + 1] else exitX
 
+    /** Current course data (design units) and whether it is mirrored top-to-bottom. */
+    var levelPar = 4
+        private set
+
     private fun buildMaze() {
         blocks.clear()
         zones.clear()
@@ -578,194 +601,62 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         pickups.clear()
         targets.clear()
         rails.clear()
+        sharks.clear()
         val playH = playB - playT
-        val mid = (playT + playB) / 2f
+        val (lv, flip) = Levels.get(level)
+        val sx = exitX / (Levels.EXIT_X * d)          // design units -> screen, left to right
+        val sy = playH / (Levels.PLAY_H * d)          // design units -> screen, top to bottom
+        fun yy(v: Float) = playT + (if (flip) Levels.PLAY_H - v else v) * d * sy
 
         // borders: top, bottom, and the right wall with the exit gap
         addWall(0f, playT - 14 * d, W, playT)
         addWall(0f, playB, W, playB + 14 * d)
-        val exitH = max(3.2f * r, 84 * d - (level - 1) * 3 * d)
-        val ec = playT + exitH / 2f + 10 * d + Random.nextFloat() * max(1f, playH - exitH - 20 * d)
-        exitGapT = ec - exitH / 2f
-        exitGapB = ec + exitH / 2f
+        val e0 = yy(lv.exitT)
+        val e1 = yy(lv.exitB)
+        exitGapT = min(e0, e1)
+        exitGapB = max(e0, e1)
         addWall(exitX, playT, W + 40 * d, exitGapT)
         addWall(exitX, exitGapB, W + 40 * d, playB)
 
-        // columns of walls, each with a gap, zigzagging up and down
-        val n = min(3 + (level - 1) / 3, 6)
-        val x0 = 96 * d + 30 * d
-        val x1 = exitX - 80 * d
-        colX = FloatArray(n) { x0 + (x1 - x0) * it / max(1, n - 1) }
-        colGap = FloatArray(n)
-        val baseGap = max(3.6f * r, 80 * d - (level - 1) * 2 * d)
-        val gapH = baseGap * 1.45f   // wide-open gaps: much easier to get through
-        val fwdCol = Random.nextInt(n)
-        ripCol = if (level >= 3 && n > 1) (fwdCol + 1 + Random.nextInt(n - 1)) % n else -1
-        narrowH = 0f
-        var prev = mid
-        for (i in 0 until n) {
-            val g = pickGap(gapH, prev, playH * 0.35f)
-            colGap[i] = g
-            prev = g
-            val x = colX[i]
-            if (i == ripCol) {
-                // the riptide gap, plus a narrow clean gap at the far edge
-                val nh = 2.6f * r
-                val nc = if (g < mid) playB - 10 * d - nh / 2f else playT + 10 * d + nh / 2f
-                narrowC = nc
-                narrowH = nh
-                val a = min(g - gapH / 2f, nc - nh / 2f)
-                val aB = min(g + gapH / 2f, nc + nh / 2f)
-                val b = max(g - gapH / 2f, nc - nh / 2f)
-                val bB = max(g + gapH / 2f, nc + nh / 2f)
-                addWall(x, playT, x + wallThick, a)
-                addWall(x, aB, x + wallThick, b)
-                addWall(x, bB, x + wallThick, playB)
-            } else {
-                addWall(x, playT, x + wallThick, g - gapH / 2f)
-                addWall(x, g + gapH / 2f, x + wallThick, playB)
+        // the rocks: columns with a gap in them, plus rocks hanging from the ceiling or rising from the floor
+        val cols = ArrayList<Float>()
+        val upB = ArrayList<Float>()      // where each column's upper piece ends
+        val lowT = ArrayList<Float>()     // where each column's lower piece starts
+        val wl = lv.walls
+        var k = 0
+        while (k + 4 < wl.size) {
+            val l = wl[k] * d * sx
+            val ya = yy(wl[k + 1])
+            val yb = yy(wl[k + 3])
+            val top = min(ya, yb)
+            val bot = max(ya, yb)
+            val kind = wl[k + 4].toInt()
+            val rr = if (kind == 0) l + wallThick else l + (wl[k + 2] - wl[k]) * d * sx
+            // small squares are floating boulders (they wear Beto's photo if there is one)
+            val boulder = kind == 1 && (wl[k + 2] - wl[k]) <= 31f && (wl[k + 3] - wl[k + 1]) <= 31f
+            addWall(l, top, rr, bot, pillar = boulder)
+            if (kind == 0) {
+                // columns come as an upper and a lower piece with the gap between them
+                if (cols.isEmpty() || abs(cols.last() - l) > 1f) { cols.add(l); upB.add(playT); lowT.add(playB) }
+                val gi = cols.size - 1
+                if (top <= playT + 1f) upB[gi] = bot else lowT[gi] = top
             }
+            k += 5
         }
-        // coral plugs: a gap that is blocked solid. Only a BOMB clears it (shells help you aim it).
-        plugCount = 0
-        val plugWant = if (level < 2) 0 else min(1 + (level - 2) / 4, 2)
-        for (i in (0 until n).shuffled()) {
-            if (plugCount >= plugWant) break
-            if (i == ripCol || i == fwdCol) continue
-            addWall(colX[i], colGap[i] - gapH / 2f, colX[i] + wallThick, colGap[i] + gapH / 2f, plug = true)
-            plugCount++
-        }
+        val gaps = ArrayList<Float>()
+        for (i in cols.indices) gaps.add((upB[i] + lowT[i]) / 2f)
+        colX = cols.toFloatArray()
+        colGap = gaps.toFloatArray()
+        ripCol = -1
+        narrowH = 0f
         nextCol = 0
-        suckFromX = colX[n - 1] + wallThick
-        val pulse = level >= 11
-
-        // shortcut gates: a chunk of wall that a gold switch blows open
-        val gates = ArrayList<Pair<Block, Int>>()
-        val gateWant = if (level >= 7) 2 else 1
-        for (i in (1 until n).shuffled()) {
-            if (gates.size >= gateWant) break
-            if (i == ripCol) continue
-            makeGate(i, baseGap)?.let { gates.add(Pair(it, i)) }
-        }
-
-        // forward stream: a boost lane carrying you right through one gap
-        val fwd = run {
-            val h = min(gapH - 8 * d, 56 * d)
-            val z = WaterZone(WaterZone.UP, laneL(fwdCol - 1), colGap[fwdCol] - h / 2f, laneR(fwdCol),
-                colGap[fwdCol] + h / 2f, 1f, 0f, 3.6f * d, pulse = pulse && Random.nextBoolean(),
-                phaseMs = Random.nextLong(12000))
-            zones.add(z)
-            z
-        }
-
-        // up/down stream in a lane. Sometimes it starts the wrong way: hit its buoy to flip it.
-        fun laneStream(lane: Int, towardGap: Boolean): WaterZone? {
-            if (lane < 0 || lane + 1 >= n) return null
-            val target = colGap[lane + 1]
-            val up = if (towardGap) target < mid else target >= mid
-            val lw = laneR(lane) - laneL(lane)
-            val bw = min(50 * d, lw * 0.55f)
-            val cxL = (laneL(lane) + laneR(lane)) / 2f
-            // the stream covers the whole lane height so it can be flipped and still be useful
-            val z = WaterZone(WaterZone.SIDE, cxL - bw / 2f, playT + 4 * d, cxL + bw / 2f, playB - 4 * d,
-                0f, if (up) -1f else 1f, 3f * d, pulse = pulse, phaseMs = Random.nextLong(12000))
-            zones.add(z)
-            return z
-        }
-        val streamLane = if (n > 1) (fwdCol + 1) % (n - 1) else 0
-        val lane1 = laneStream(streamLane, Random.nextFloat() < 0.5f)
-
-        // riptide: pushes you back left through the guarded gap (flip it with its buoy!)
-        var rip: WaterZone? = null
-        if (ripCol >= 0) {
-            val h = min(gapH - 6 * d, 60 * d)
-            rip = WaterZone(WaterZone.RIP, colX[ripCol] - 50 * d, colGap[ripCol] - h / 2f, laneR(ripCol),
-                colGap[ripCol] + h / 2f, -1f, 0f, (2.4f + min(1.0f, 0.1f * (level - 3))) * d,
-                pulse = pulse, phaseMs = Random.nextLong(12000))
-            zones.add(rip)
-        }
-
-        // whirlpool in a lane
-        var whirl: WaterZone? = null
-        if (level >= 6 && n >= 2) {
-            val lane = Random.nextInt(n - 1)
-            val lw = laneR(lane) - laneL(lane)
-            val rad = min(56 * d, lw / 2f + 6 * d)
-            val wcx = (laneL(lane) + laneR(lane)) / 2f
-            val wcy = playT + rad + Random.nextFloat() * max(1f, playH - 2 * rad)
-            whirl = WaterZone(WaterZone.WHIRL, wcx - rad, wcy - rad, wcx + rad, wcy + rad, 0f, 0f, 3.2f * d,
-                spin = if (Random.nextBoolean()) 1f else -1f)
-            zones.add(whirl)
-        }
-
-        // a second lane stream from level 9
-        val lane2 = if (level >= 9 && n >= 3) laneStream((streamLane + 1) % (n - 1), Random.nextBoolean()) else null
-
-        // pillars in the lanes from level 4
-        val pillars = if (level >= 4) min((level - 2) / 2, 5) else 0
-        var placed = 0
-        var tries = 0
-        while (placed < pillars && tries < 80 && n >= 2) {
-            tries++
-            val lane = Random.nextInt(n - 1)
-            val size = 28 * d
-            val lw = laneR(lane) - laneL(lane)
-            if (lw < size + 2 * r + 16 * d) continue
-            val pxx = laneL(lane) + 10 * d + Random.nextFloat() * (lw - size - 20 * d)
-            val pyy = playT + 12 * d + Random.nextFloat() * (playH - size - 24 * d)
-            val pcy = pyy + size / 2f
-            if (abs(pcy - colGap[lane]) < gapH + size) continue
-            if (abs(pcy - colGap[lane + 1]) < gapH + size) continue
-            if (blocks.any { it.pillar && abs(it.t - pyy) < size * 2 && abs(it.l - pxx) < size * 2 }) continue
-            addWall(pxx, pyy, pxx + size, pyy + size, pillar = true)
-            placed++
-        }
-
-        // seaweed landing pads
-        val weedCount = 1 + min(2, level / 4)
-        tries = 0
-        while (weeds.size < weedCount && tries < 80) {
-            tries++
-            val lane = Random.nextInt(n)
-            val ww = 44 * d
-            val wh = 54 * d
-            val lw = laneR(lane) - laneL(lane)
-            if (lw < ww + 8 * d) continue
-            val wl = laneL(lane) + 4 * d + Random.nextFloat() * (lw - ww - 8 * d)
-            val wt = playT + 6 * d + Random.nextFloat() * (playH - wh - 12 * d)
-            if (rectHitsWall(wl, wt, wl + ww, wt + wh, 6 * d)) continue
-            if (zones.any { it.kind != WaterZone.WHIRL && wl < it.r && wl + ww > it.l && wt < it.b && wt + wh > it.t }) continue
-            if (weeds.any { it.l < wl + ww + 10 * d && wl < it.r + 10 * d && it.t < wt + wh + 10 * d && wt < it.b + 10 * d }) continue
-            weeds.add(Weed(wl, wt, wl + ww, wt + wh))
-        }
-
-        // kelp slides around corners
-        val railWant = 0 // kelp slides removed; shells and bombs get you around corners
-        for (i in (0 until n).shuffled()) {
-            if (rails.size >= railWant) break
-            if (i == ripCol) continue
-            tryRail(i)
-        }
-
-        // currents you can tap to flip. A few spare flips beyond the number of currents so every
-        // hole can be set up right, but you still have to choose when and which.
-        lane1?.let { flippable.add(it) }
-        rip?.let { flippable.add(it) }
-        if (level >= 5) flippable.add(fwd)    // careful: flipping this one sends the boost lane backward
-        whirl?.let { if (level >= 8) flippable.add(it) }
-        lane2?.let { flippable.add(it) }
-        flipsLeft = flippable.size + 1
-        // gold switches for the gates, in the lane just before each gate
-        for ((gb, i) in gates) placeTarget(T_GATE, null, gb, laneL(i - 1) + 16 * d, colX[i] - 16 * d)
-        // bonus stars for sharpshooters
-        repeat(min(3, 1 + level / 4)) { placeTarget(T_BONUS, null, null, 110 * d, exitX - 40 * d) }
-
-        // things to pick up
-        repeat(if (level >= 5) 3 else 2) { spawnPickup(P_APPLE) }
-        spawnPickup(P_SPEED)
-        if (level >= 2) spawnPickup(P_BOMB)
-        if (level >= 6) spawnPickup(P_BOMB)
+        suckFromX = Float.MAX_VALUE
+        levelPar = lv.par
+        shellsLeft = lv.shells
+        startCy = playT + (if (flip) Levels.PLAY_H - lv.startY else lv.startY) * d * sy
     }
+
+    private var startCy = 0f
 
     /** Where a current's flip icon sits (the view draws it here, taps near it flip while Betito is flying). */
     fun flipIconY(z: WaterZone): Float =
@@ -1404,23 +1295,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             tryGrabRail(now)
             if (riding != null) continue
             val whirl = sampleWater(cx, cy, true, now)
-            // the hole sucks you in once you're in the last stretch
-            var sucked = false
-            if (cx > suckFromX && cx < holeX) {
-                val sdx = holeX - cx
-                val sdy = holeY - cy
-                val sd = hypot(sdx, sdy)
-                if (sd < suckR && sd > 1f) {
-                    val pull = 0.55f * d * (1f - sd / suckR) + 0.08f * d
-                    vx += sdx / sd * pull * hdt
-                    vy += sdy / sd * pull * hdt
-                    sucked = true
-                }
-            }
             val sticky = inWeed(cx, cy)
             val inFlow = (wx != 0f || wy != 0f) && !sticky
             val grip = if (sticky) 0.25f else 1f
-            val drag = if (sucked) rideDrag else if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
+            val drag = if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
             val k = 1f - min(1f, drag * hdt)
             vx *= k
             vy *= k
@@ -1454,7 +1332,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             cx += (vx + wx * grip) * hdt
             cy += (vy + wy * grip) * hdt
 
-            if (cx < r) { cx = r; vx = abs(vx) * 0.6f }
+            if (cx < r) { cx = r; if (-vx > 1.2f * d) bouncesThisShot++; vx = abs(vx) * bounceK }
             for (w in blocks) if (w.alive) collideTurtle(w.l, w.t, w.r, w.b, now)
             collideSharks(now)
             for (sh in shells) collideShell(sh, now)
@@ -1472,6 +1350,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
             // in the hole: through the exit gap
             if (cx > exitX + wallThick * 0.5f && cy > exitGapT && cy < exitGapB) { levelClear(now); return }
+        }
+        if (ready) {
+            val k = Math.pow(0.82, dt.toDouble()).toFloat()
+            vx *= k
+            vy *= k
         }
         heading = Math.toDegrees(atan2(faceY.toDouble(), faceX.toDouble())).toFloat()
         updateShells(dt, now)
@@ -1547,6 +1430,25 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         bombMode = !bombMode
         shellMode = false
         sfx?.play(if (bombMode) "pop" else "tick", 0.6f, 60L)
+    }
+
+    /** Tap a shell you placed to take it back into your pouch. Free, and only while Betito is resting. */
+    fun tapShell(x: Float, y: Float, now: Long): Boolean {
+        if (over || paused || !started || now < introUntil || !ready) return false
+        var best: ShellObj? = null
+        var bd = shellR + 14 * d
+        for (sh in shells) {
+            if (sh.bomb || !sh.settled) continue
+            val dd = hypot(x - sh.x, y - sh.y)
+            if (dd < bd) { bd = dd; best = sh }
+        }
+        val sh = best ?: return false
+        shells.remove(sh)
+        shellsLeft++
+        sfx?.play("pop", 0.5f, 60L, 0.8f)
+        for (k in 0 until 6) spawnParticle(sh.x, sh.y, (Random.nextFloat() - 0.5f) * 3 * d, (Random.nextFloat() - 0.5f) * 3 * d,
+            0xFFFFCC80.toInt(), 2.5f * d, 20f)
+        return true
     }
 
     private fun shellHitsWall(x: Float, y: Float): Boolean {
@@ -1728,7 +1630,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun inWeed(x: Float, y: Float): Boolean =
         weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
 
-    private fun launchSpeed(now: Long): Float = (if (now < speedUntil) 14f else 10.5f) * d
+    private fun launchSpeed(now: Long): Float = 12f * d
 
     /** How far a shot of this power glides in still water (for the distance ring). */
     fun stillDistance(now: Long): Float {
@@ -1776,7 +1678,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             score += 50 * b
             celebrate("STUCK THE LANDING!")
         }
-        if (shotCombo >= 1) queueTip("combo")
         shotCombo = 0
     }
 
@@ -1794,20 +1695,19 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         svx = aimDX * sp
         svy = aimDY * sp
         previewN = 0
-        // only part of the path is shown: reading the rest is the skill
+        previewBounceI = -1
+        var afterBounce = 0
+        // the dotted line runs until just after the first bounce: planning the bank is the skill
         for (f in 0 until pvMax) {
             for (s in 0 until 3) {
                 val hdt = 1f / 3f
-                sampleWater(sx, sy, false, now)
-                val sticky = inWeed(sx, sy)
-                val inFlow = (wx != 0f || wy != 0f) && !sticky
-                val grip = if (sticky) 0.25f else 1f
-                val k = 1f - (if (sticky) weedDrag else if (inFlow) rideDrag else waterDrag) * hdt
+                val k = 1f - waterDrag * hdt
                 svx *= k
                 svy *= k
-                sx += (svx + wx * grip) * hdt
-                sy += (svy + wy * grip) * hdt
-                if (sx < r) { sx = r; svx = abs(svx) * 0.6f }
+                sx += svx * hdt
+                sy += svy * hdt
+                var hitNow = false
+                if (sx < r) { sx = r; if (-svx > 1.2f * d) hitNow = true; svx = abs(svx) * bounceK }
                 for (w in blocks) {
                     if (!w.alive) continue
                     val qx = sx.coerceIn(w.l, w.r)
@@ -1823,6 +1723,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     sy += ny * (r - dist)
                     val vn = svx * nx + svy * ny
                     if (vn < 0f) {
+                        if (-vn > 1.2f * d) hitNow = true
                         val vtx = svx - vn * nx
                         val vty = svy - vn * ny
                         svx = -vn * bounceK * nx + vtx * slideK
@@ -1841,19 +1742,20 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     sy += ny * (minD - dist)
                     val vn = svx * nx + svy * ny
                     if (vn < 0f) {
+                        if (-vn > 1.0f * d) hitNow = true
                         val vtx = svx - vn * nx
                         val vty = svy - vn * ny
                         svx = -vn * shellBounce * nx + vtx * shellSlide
                         svy = -vn * shellBounce * ny + vty * shellSlide
                     }
                 }
+                if (hitNow && previewBounceI < 0) previewBounceI = previewN
             }
             previewX[previewN] = sx
             previewY[previewN] = sy
             previewN++
             if (sx > exitX || hypot(svx, svy) < 0.3f * d) break
-            if (rails.any { rl -> hypot(sx - rl.xs[0], sy - rl.ys[0]) < r + 12 * d ||
-                    hypot(sx - rl.xs[rl.xs.size - 1], sy - rl.ys[rl.ys.size - 1]) < r + 12 * d }) break
+            if (previewBounceI >= 0 && ++afterBounce > 26) break
         }
     }
 
@@ -1897,7 +1799,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             when {
                 col == ripCol && narrowH > 0f && abs(cy - narrowC) < narrowH -> celebrate("THREADED THE NEEDLE!", true)
                 col == ripCol -> celebrate("BEAT THE RIPTIDE!", true)
-                bouncesThisShot > 0 && !ready -> celebrate("BANK SHOT!")
+                bouncesThisShot >= 3 && !ready -> { score += 300 * band(); celebrate("TRIPLE BANK!!!", true); sfx?.play("jackpot", 0.8f, 0L) }
+                bouncesThisShot == 2 && !ready -> { score += 150 * band(); celebrate("DOUBLE BANK!!", true) }
+                bouncesThisShot == 1 && !ready -> { score += 50 * band(); celebrate("BANK SHOT!") }
                 else -> {
                     sfx?.play("ding", 0.6f, 0L, min(2f, 0.9f + 0.1f * nextCol))
                     popup = "WALL $nextCol/${colX.size}"
@@ -2128,10 +2032,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         bannerUntil = now + 3200L
         say(when {
             shots == 1 -> "A HOLE IN ONE?! You're the KING OF THE SEA!"
-            under >= 2 -> "Incredible! The currents obey you!"
-            under == 1 -> "Birdie! Smooth swimming!"
-            under == 0 -> "Right on par. Try chaining currents for a birdie!"
-            else -> "Made it! Use the currents, shells and flips to save shots."
+            under >= 2 -> "Incredible! You banked it like a pro!"
+            under == 1 -> "Birdie! Beautiful bank shots!"
+            under == 0 -> "Right on par. Place shells to bank around the corners for a birdie!"
+            else -> "Made it! Use your shells to set up bank shots and save shots."
         }, true)
         level++
         saveProgress()
@@ -2146,7 +2050,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         message = "OUT OF SHOTS"
         banner = "NEED PAR OR BETTER  ·  REPLAY HOLE $level"
         bannerUntil = now + 2500L
-        say("Ride the currents to go further! Tap a current to flip it, or fire a shell to bank around a corner.", true)
+        say("Place shells first: they bounce you around corners. Then bank your way through!", true)
         resumeAt = now + 2700L
     }
 

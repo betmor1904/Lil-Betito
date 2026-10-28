@@ -14,24 +14,10 @@ object Guide {
 
     val entries = listOf(
         Entry("shoot", "SHOOTING", "When Betito stops (green ring), touch anywhere, pull back and let go. Pull further for more power.", Color.parseColor("#76FF03")),
-        Entry("goal", "THE HOLE", "Get Betito into the glowing hole in the right wall. Near it, the water sucks you in.", Color.parseColor("#76FF03")),
+        Entry("bank", "BANK SHOTS", "Rocks and shells are bouncy! The dotted line shows your path up to the first bounce. Aim at a wall so the rebound carries you around the corner.", Color.parseColor("#80DEEA")),
+        Entry("goal", "THE HOLE", "Get Betito through the glowing gap in the right wall.", Color.parseColor("#76FF03")),
+        Entry("shell", "SHELLS", "Tap SHELL (bottom right), pull and let go to place one. Shells are springy bumpers that kick Betito out faster. They cost no shot, so set them up first! Tap a shell to take it back.", Color.parseColor("#FFB74D")),
         Entry("score", "PAR & SCORING", "Par is the shots a hole should take. Finish OVER par and you must REPLAY it! 1 under = BIRDIE, 2 under = EAGLE.", Color.parseColor("#FF5252")),
-        Entry("shell", "SHELLS", "Tap SHELL (bottom right), pull and let go to fire one. Betito bounces off it around corners. 3 per hole and no shot used!", Color.parseColor("#FFB74D")),
-        Entry("bomb", "BOMBS", "Tap BOMB (above SHELL), pull and let go to throw one. It blows a hole in walls and CORAL PLUGS after a moment. Coral plugs block a gap completely: bombs are the only way through!", Color.parseColor("#FF7043")),
-        Entry("turn", "QUICK TURN", "While Betito is still swimming, TAP HIM directly. Time freezes: drag your finger to flip him toward where you want to go, then let go! One turn per shot, before he stops.", Color.parseColor("#80DEEA")),
-        Entry("combo", "COMBOS", "Ride 2 or more currents or slides in ONE shot: NICE!!, DEADLY COMBO!!, KING OF THE SEA!!", Color.parseColor("#E040FB")),
-        Entry("blue", "BLUE CURRENT", "A boost lane. Shoot into it and it carries you forward, fast.", Color.rgb(0, 229, 255)),
-        Entry("green", "GREEN CURRENT", "Pushes up or down. Ride it toward the next gap in the wall.", Color.rgb(29, 233, 182)),
-        Entry("red", "RED RIPTIDE", "Pushes you BACKWARD! Tap it to flip it, or sneak past it.", Color.rgb(255, 82, 82)),
-        Entry("whirl", "WHIRLPOOL", "Spins you around and flings you out at a new angle.", Color.rgb(179, 136, 255)),
-        Entry("buoy", "FLIP ICON", "Tap a current with this icon to reverse it. You get a few flips per hole, even while Betito is swimming!", Color.WHITE),
-        Entry("lock", "GOLD LOCK", "Hit it to blow open the gold gate in the wall. Shortcut!", Color.parseColor("#FFC107")),
-        Entry("star", "PINK STAR", "Bonus points and a slot spin. Hit it on your way past.", Color.rgb(255, 64, 129)),
-        Entry("apple", "APPLE", "Swim through it to fill a slot reel up top. 3 matching = JACKPOT!", Color.parseColor("#FF5252")),
-        Entry("speed", "SPEED KELP", "Grab it and your shots go further for 8 seconds.", Color.parseColor("#FFEB3B")),
-        Entry("slide", "KELP SLIDE", "Shoot into either glowing end and it whips you around the corner.", Color.parseColor("#76FF03")),
-        Entry("weed", "SEAWEED", "Stops you dead. A safe spot to land.", Color.parseColor("#66BB6A")),
-        Entry("shark", "SHARK", "He won't bite, but he bumps your shot off course. Time it!", Color.parseColor("#B0BEC5")),
     )
 
     fun find(key: String): Entry? = entries.firstOrNull { it.key == key }

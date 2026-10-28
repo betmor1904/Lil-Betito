@@ -191,7 +191,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 if (id == aimPtr || cancel) {
                     // let go = launch (dragging back inside the small circle cancels)
                     if (!cancel && g.aiming) g.launchQueued = true
-                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) g.tapFlip(aimSX, aimSY, g.clock)
+                    else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) g.tapShell(aimSX, aimSY, g.clock)
                     aimPtr = -1
                     g.aiming = false
                 }
@@ -238,7 +238,6 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawFish(c)
         drawBubbles(c)
         drawWater(c, now)
-        drawSuction(c, now)
         drawWeeds(c, now)
         drawRails(c, now)
         drawWalls(c, now)
@@ -1003,7 +1002,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.typeface = Typeface.DEFAULT_BOLD
         p.textSize = 11 * d
         p.color = Color.argb((220 * a).toInt(), 255, 255, 255)
-        c.drawText("BIRDIE = ${g.par - 1}   EAGLE = ${g.par - 2}   MAX ${g.maxShots}", w / 2, cy + 40 * d, p)
+        c.drawText("SHELLS ${g.shellsLeft}   BIRDIE = ${g.par - 1}   EAGLE = ${g.par - 2}", w / 2, cy + 40 * d, p)
         p.textSize = 10 * d
         p.color = Color.argb((160 * a).toInt(), 255, 255, 255)
         c.drawText("TAP TO START", w / 2, cy + 62 * d, p)
@@ -1243,32 +1242,6 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.drawText("MAX ${g.maxShots}", 14 * d + p.measureText(sc) + 30 * d, top + 32 * d, p)
         p.clearShadowLayer()
 
-        // slot reels, top right (the close button sits at the far right)
-        val bs = 24 * d
-        val gap = 4 * d
-        val rx0 = w - 60 * d - 3 * bs - 2 * gap
-        for (i in 0 until 3) {
-            val x0 = rx0 + i * (bs + gap)
-            rect.set(x0, top + 6 * d, x0 + bs, top + 6 * d + bs)
-            p.style = Paint.Style.FILL
-            p.color = Color.argb(220, 25, 10, 40)
-            c.drawRoundRect(rect, 5 * d, 5 * d, p)
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2 * d
-            p.color = if (g.reelResolving) {
-                if ((now / 120) % 2 == 0L) Color.parseColor("#FFD54F") else Color.WHITE
-            } else Color.parseColor("#B388FF")
-            c.drawRoundRect(rect, 5 * d, 5 * d, p)
-            p.style = Paint.Style.FILL
-            val s = g.reels[i]
-            if (s >= 0) symbol(c, s, rect.centerX(), rect.centerY(), bs)
-            else {
-                p.color = Color.argb(90, 255, 255, 255)
-                p.textAlign = Paint.Align.CENTER
-                p.textSize = 12 * d
-                c.drawText("?", rect.centerX(), rect.centerY() + 4 * d, p)
-            }
-        }
     }
 
     /** One slot symbol. 0 cherry, 1 bell, 2 bar, 3 seven, 4 coin. */
@@ -1432,10 +1405,22 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.style = Paint.Style.FILL
         for (i in 0 until g.previewN) {
             if (i % 2 == 1) continue
-            // dots fade out: you only get to see the start of the shot
-            val a = (230 * (1f - i / g.pvMax.toFloat())).toInt().coerceIn(0, 255)
-            p.color = Color.argb(a, Color.red(col), Color.green(col), Color.blue(col))
-            c.drawCircle(g.previewX[i], g.previewY[i], (3.2f - 1.4f * i / g.pvMax) * d, p)
+            // the line stays bright up to the first bounce, then fades out just after it
+            val bi = g.previewBounceI
+            val a = if (bi < 0) (230 * (1f - i / g.previewN.toFloat() * 0.7f)).toInt()
+                else if (i <= bi) 230
+                else (230 * (1f - (i - bi) / 26f)).toInt()
+            p.color = Color.argb(a.coerceIn(0, 255), Color.red(col), Color.green(col), Color.blue(col))
+            c.drawCircle(g.previewX[i], g.previewY[i], (3.2f - 1.2f * i / g.pvMax) * d, p)
+        }
+        if (g.previewBounceI >= 0) {
+            val bx = g.previewX[g.previewBounceI]
+            val by = g.previewY[g.previewBounceI]
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = Color.argb(230, 255, 255, 255)
+            c.drawCircle(bx, by, g.r * 0.9f + 2 * d * sin(now / 90.0).toFloat(), p)
+            p.style = Paint.Style.FILL
         }
     }
 
@@ -1558,7 +1543,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     }
 
     private fun drawShellButton(c: Canvas, now: Long) {
-        drawBombButton(c, now)
+        bombBtnR.setEmpty()
         if (g.over) { shellBtnR.setEmpty(); return }
         val rad = 26 * d
         val bx = width - 16 * d - rad

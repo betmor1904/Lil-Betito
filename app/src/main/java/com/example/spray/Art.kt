@@ -401,6 +401,24 @@ object Art {
                 c.drawArc(r, spin + 180f, 100f, false, p)
                 p.style = Paint.Style.FILL
             }
+            "bank" -> {
+                // a rock wall, and a shot that bounces off it
+                p.color = Color.parseColor("#4A3B5C")
+                c.drawRect(x - s * 0.9f, y + s * 0.55f, x + s * 0.9f, y + s * 0.95f, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2.5f * d
+                p.strokeCap = Paint.Cap.ROUND
+                p.color = Color.argb(220, 128, 222, 234)
+                val k = (now % 1600L) / 1600f
+                val bx = x - s * 0.1f
+                c.drawLine(x - s * 0.85f, y - s * 0.7f, bx, y + s * 0.5f, p)
+                c.drawLine(bx, y + s * 0.5f, x + s * 0.85f, y - s * 0.7f, p)
+                p.style = Paint.Style.FILL
+                p.color = Color.rgb(118, 255, 3)
+                val t = if (k < 0.5f) k * 2f else (k - 0.5f) * 2f
+                if (k < 0.5f) c.drawCircle(x - s * 0.85f + (bx - (x - s * 0.85f)) * t, y - s * 0.7f + (s * 1.2f) * t, s * 0.18f, p)
+                else c.drawCircle(bx + (x + s * 0.85f - bx) * t, y + s * 0.5f - (s * 1.2f) * t, s * 0.18f, p)
+            }
             "shell" -> {
                 val rr = s * 0.7f
                 p.color = Color.rgb(255, 183, 77)
