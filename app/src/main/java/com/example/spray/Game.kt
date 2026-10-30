@@ -45,15 +45,15 @@ object ShellKinds {
     val names = arrayOf("BOUNCY", "RUBBER", "MEGA", "SPONGE", "TWIST")
     val colors = intArrayOf(0xFFFFC107.toInt(), 0xFF43A047.toInt(), 0xFFE53935.toInt(), 0xFF90A4AE.toInt(), 0xFF2196F3.toInt())
     val tips = arrayOf(
-        "Springy: kicks you out faster than you hit it",
-        "Clean mirror bounce, keeps your speed",
-        "Huge kick: sends you out much faster",
-        "Soaks the hit: you slow right down",
-        "Bounces you, then bends the path 40 degrees clockwise")
+        "ZAP: springy kick, and it freezes every shark for 4 seconds",
+        "SLICK: clean bounce, then you glide with no water drag for 2 seconds",
+        "BURN: huge kick, and it burns away coral plugs nearby",
+        "STOP: soaks the hit and parks you dead still",
+        "WAVE: bounces you, then bends the path 40 degrees clockwise")
     /** How much of the speed INTO the shell comes back out (1 = mirror bounce). */
-    val bounce = floatArrayOf(1.35f, 1.0f, 1.9f, 0.25f, 1.0f)
+    val bounce = floatArrayOf(1.35f, 1.0f, 1.9f, 0f, 1.0f)
     /** How much of the speed ALONG the shell is kept. */
-    val slide = floatArrayOf(1.0f, 1.0f, 1.0f, 0.55f, 1.0f)
+    val slide = floatArrayOf(1.0f, 1.0f, 1.0f, 0f, 1.0f)
     /** Extra clockwise turn (radians) applied to the speed that leaves the shell. */
     val twist = floatArrayOf(0f, 0f, 0f, 0f, 0.7f)
 }
@@ -80,6 +80,7 @@ class Shark(var x: Float, var y: Float, val ax: Float, val ay: Float, val bx: Fl
     var vy = 0f
     var heading = 0f
     var bumpAt = 0L
+    var stunUntil = 0L   // zapped by a lightning shell: frozen until then
 }
 
 class Fish(var x: Float, var y: Float, var vx: Float, val size: Float, val color: Int)
@@ -161,6 +162,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var cheerAt = 0L        // hole cleared: jump, loop and wave
     var oopsAt = 0L         // over par: head droops
     var speedUntil = 0L
+    var glideUntil = 0L     // rubber shell: no water drag until then
 
     // ---------- slingshot input (set by the view) ----------
     var aiming = false
@@ -538,6 +540,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         visited.clear()
         resetReels()
         speedUntil = 0L
+        glideUntil = 0L
         shells.clear()
         bombsLeft = 0
         shellMode = false
@@ -976,6 +979,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     private fun updateSharks(now: Long, dt: Float) {
         for (s in sharks) {
+            if (now < s.stunUntil) { s.vx = 0f; s.vy = 0f; continue }
             val tx = if (s.toB) s.bx else s.ax
             val ty = if (s.toB) s.by else s.ay
             val dx = tx - s.x
@@ -1345,7 +1349,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val sticky = inWeed(cx, cy)
             val inFlow = (wx != 0f || wy != 0f) && !sticky
             val grip = if (sticky) 0.25f else 1f
-            val drag = if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
+            val drag = if (now < glideUntil && !sticky) 0f else if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
             val k = 1f - min(1f, drag * hdt)
             vx *= k
             vy *= k
@@ -1665,12 +1669,60 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 sh.hitAt = now
                 bouncesThisShot++
                 sfx?.play("clink", 0.4f + min(0.5f, -vn / (12 * d)), 60L, 1.8f)
+                shellSkill(sh, now)
                 if (!shellHitThisShot && shots > 0) {
                     shellHitThisShot = true
                     celebrate("SHELL BANK!")
                 }
                 for (k in 0 until 5) spawnParticle(sh.x + nx * shellR, sh.y + ny * shellR, nx * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d,
                     ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xFFFFCC80.toInt(), 2.5f * d, 20f)
+            }
+        }
+    }
+
+    /** Each shell type has its own trick when Betito bounces off it. */
+    private fun shellSkill(sh: ShellObj, now: Long) {
+        when (sh.kind) {
+            0 -> {   // lightning: freeze the sharks
+                if (sharks.isNotEmpty()) {
+                    for (s in sharks) s.stunUntil = now + 4000L
+                    celebrate("ZAP!", true)
+                    say("Zap! The sharks are frozen!", true)
+                }
+                for (k in 0 until 14) {
+                    val a = Random.nextFloat() * 6.283f
+                    spawnParticle(sh.x, sh.y, cos(a) * 4 * d, sin(a) * 4 * d, 0xFFFFF176.toInt(), 3f * d, 22f)
+                }
+            }
+            1 -> {   // rubber: long slippery glide
+                glideUntil = now + 2200L
+                say("Slick! You'll glide far.", true)
+            }
+            2 -> {   // flames: burn coral plugs close to the shell
+                var burned = 0
+                for (w in ArrayList(blocks)) {
+                    if (!w.alive || !w.plug) continue
+                    val qx = sh.x.coerceIn(w.l, w.r)
+                    val qy = sh.y.coerceIn(w.t, w.b)
+                    if (hypot(sh.x - qx, sh.y - qy) > shellR * 3.2f) continue
+                    w.alive = false
+                    w.openAt = now
+                    burned++
+                }
+                if (burned > 0) {
+                    score += 50 * burned * band()
+                    celebrate("BURNED IT!", true)
+                    say("The flames burned the coral away!", true)
+                    flash = 0.3f
+                    flashColor = 0xFFFFCC80.toInt()
+                    for (k in 0 until 24) {
+                        val a = Random.nextFloat() * 6.283f
+                        spawnParticle(sh.x, sh.y, cos(a) * 5 * d, sin(a) * 5 * d, 0xFFFF7043.toInt(), 3.5f * d, 30f)
+                    }
+                }
+            }
+            3 -> {   // sponge: park Betito
+                say("Parked!", true)
             }
         }
     }

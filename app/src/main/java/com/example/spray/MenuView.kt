@@ -14,6 +14,8 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.min
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -134,17 +136,47 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             val bob = sin(now / 1500.0 + i * 2.1).toFloat() * 5 * d
             Yarn.drawDecal(c, ids[i], w * xs[i], h * ys[i] + bob, (if (ids[i] == 2) 36 else 110) * d, 40)
         }
-        val period = 26000L
+        // the shark glides right to left, wagging his whole body like a tail
+        val period = 24000L
         val k = ((now - start) % period) / period.toFloat()
-        val sw = min(w * 0.30f, 120 * d)
-        val sx = w + sw - (w + 2 * sw) * k          // swims right to left
-        val sy = h * 0.34f + sin(now / 900.0).toFloat() * 10 * d
+        val sw = min(w * 0.38f, 170 * d)
+        val sx = w + sw - (w + 2 * sw) * k
+        val sy = h * 0.30f + sin(now / 1500.0).toFloat() * h * 0.05f
+        val wag = sin(now / 260.0).toFloat()
         c.save()
         c.translate(sx, sy)
-        c.scale(-1f, 1f)                            // art faces right, he's heading left
-        c.rotate(sin(now / 900.0).toFloat() * 4f)
+        c.scale(-1f, 1f)
+        c.rotate(wag * 5f + cos(now / 1500.0).toFloat() * 4f)
+        c.scale(1f + 0.03f * wag, 1f - 0.03f * wag)
         Yarn.drawShark(c, sw)
         c.restore()
+        // Betito swims left to right: paddles, waves hello, climbs, and does a spin
+        val tp = 20000L
+        val t = ((now - start + 7000L) % tp) / tp.toFloat()
+        val tw = min(w * 0.26f, 100 * d)
+        val tx = -tw + (w + 2 * tw) * t
+        val ty = h * 0.78f - sin(t * 6.283f * 1.5f) * h * 0.09f
+        val slope = -cos(t * 6.283f * 1.5f) * 0.25f
+        val pose = when {
+            t < 0.28f -> 0
+            t < 0.42f -> 3
+            t < 0.70f -> 1
+            t < 0.80f -> 0
+            t < 0.90f -> 5
+            else -> 0
+        }
+        val spinRot = if (pose == 5) ((t - 0.80f) / 0.10f) * 360f else 0f
+        val bob = sin(now / 330.0).toFloat() * 4 * d
+        val pop = if (pose == 3) 1f + 0.06f * abs(sin(now / 180.0)).toFloat() else 1f
+        Yarn.drawPose(c, pose, tx, ty + bob, tw * 0.8f * pop, slope * 25f + spinRot)
+        // a little bubble wake behind him
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 1.5f * d
+        p.color = Color.argb(150, 220, 245, 255)
+        for (i in 1..5) {
+            c.drawCircle(tx - tw * 0.45f - i * 14 * d, ty + bob + sin(now / 300.0 + i).toFloat() * 6 * d, (6 - i) * d, p)
+        }
+        p.style = Paint.Style.FILL
     }
 
     /** The crochet shells float around the corners of the menu. */
@@ -217,7 +249,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         val tx = -60 * d + (w + 120 * d) * k
         val ty = h * 0.8f + sin(now / 700.0).toFloat() * 14 * d
         val heading = Math.toDegrees(kotlin.math.atan2(Math.cos(now / 700.0) * 14 * d / 700.0, ((w + 120 * d) / 14000.0))).toFloat()
-        Art.turtle(c, p, path, tx, ty, 20 * d, heading, now)
+        if (!Yarn.loaded) Art.turtle(c, p, path, tx, ty, 20 * d, heading, now)
     }
 
     private fun addBtn(id: String, l: Float, t: Float, r: Float, b: Float): RectF {

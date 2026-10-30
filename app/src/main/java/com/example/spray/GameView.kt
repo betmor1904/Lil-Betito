@@ -250,6 +250,35 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     // drawing
     // ============================================================
 
+    /** After a hole is cleared Betito zooms across the whole screen in front of everything, big, with a spin in the middle. */
+    private fun drawFlyBy(c: Canvas, w: Float, h: Float, now: Long) {
+        if (!Yarn.loaded || g.cheerAt == 0L) return
+        val age = now - g.cheerAt
+        val dur = 3000L
+        if (age < 0 || age > dur) return
+        val t = age / dur.toFloat()
+        val e = t * t * (3f - 2f * t) * 0.35f + t * 0.65f          // eased, but keeps moving
+        val size = h * 0.62f
+        val x = -size * 0.6f + (w + size * 1.2f) * e
+        val y = h * 0.52f - sin(t * 3.1416f) * h * 0.16f
+        val pose = when {
+            t < 0.35f -> 0
+            t < 0.62f -> 5
+            t < 0.85f -> 4
+            else -> 0
+        }
+        val rot = if (pose == 5) (t - 0.35f) / 0.27f * 720f else -cos(t * 3.1416f) * 14f
+        // bubble wake
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2.5f * d
+        for (i in 1..9) {
+            p.color = Color.argb((190 * (1f - i / 10f)).toInt(), 225, 245, 255)
+            c.drawCircle(x - size * 0.4f - i * 22 * d, y + sin(now / 200.0 + i).toFloat() * 10 * d, (11 - i) * d, p)
+        }
+        p.style = Paint.Style.FILL
+        Yarn.drawPose(c, pose, x, y, size, rot)
+    }
+
     /** Faint yarn squiggles drifting in the sea so it feels like water, kept pale so walls and shells still pop. */
     private fun drawWaterDecals(c: Canvas, w: Float, h: Float, now: Long) {
         val xs = floatArrayOf(0.12f, 0.33f, 0.55f, 0.78f, 0.90f, 0.22f, 0.66f, 0.45f, 0.06f)
@@ -304,6 +333,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawShellButton(c, now)
         drawPraise(c, w, h, now)
         drawMessages(c, w, h, now)
+        drawFlyBy(c, w, h, now)
         drawIntro(c, w, h, now)
         if (g.flash > 0f) {
             val fc = if (g.flashColor != 0) g.flashColor else Color.WHITE
@@ -1072,6 +1102,15 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private fun drawShark(c: Canvas, s: Shark, now: Long) {
         val u = 16 * d
         val bumped = now - s.bumpAt < 500L
+        if (now < s.stunUntil) {
+            p.textAlign = Paint.Align.CENTER
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = 15 * d
+            p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            p.color = Color.parseColor("#FFF176")
+            c.drawText("\u26A1 zzz", s.x, s.y - 30 * d + sin(now / 150.0).toFloat() * 3 * d, p)
+            p.clearShadowLayer()
+        }
         c.save()
         c.translate(s.x, s.y)
         c.rotate(s.heading)
@@ -1154,7 +1193,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         if (TurtleRig.loaded) {
             // the crochet Betito: a side view that paddles, crouches, stretches, tucks and cheers
             anim.update(g, now)
-            TurtleRig.draw(c, u, anim.pose)
+            TurtleRig.draw(c, u * 1.5f, anim.pose)
             c.restore()
             drawComboTag(c, now)
             return
@@ -1860,10 +1899,6 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.clearShadowLayer()
             if (g.stars > 0) {
                 drawStars(c, w, h, now)
-                val age = now - g.starsAt
-                val hop = kotlin.math.abs(sin(age / 260.0)).toFloat() * 8 * d
-                Yarn.drawPose(c, if (g.stars >= 3) Yarn.POSE_HAPPY else Yarn.POSE_WAVE, w / 2, h * 0.6f - 122 * d - hop, 74 * d,
-                    sin(age / 400.0).toFloat() * 5f)
             }
         }
     }
