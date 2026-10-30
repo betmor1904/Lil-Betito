@@ -34,7 +34,7 @@ class ReefView(ctx: Context, private val prefs: SharedPreferences, private val s
     private class Flight(val kind: Int, val fx: Float, val fy: Float, val tx: Float, val ty: Float, val at: Long, val dur: Long)
     private class Snap(val ledges: List<List<Int>>, val moves: Int, val since: Int, val shark: Int, val next: Int, val zap: Int, val wave: Int)
     private class Pending(val ledge: Int, val at: Long)
-    private class PopFx(val kind: Int, val x: Float, val y: Float, val at: Long, val rot: Float, val w: Float)
+    private class PopFx(val kind: Int, val x: Float, val y: Float, val at: Long, val rot: Float, val size: Float)
     private class Btn(val id: String, val r: RectF)
 
     private val CAP = 4
