@@ -250,6 +250,26 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     // drawing
     // ============================================================
 
+    /** Comic sound-effect patches that pop out, wobble and fade. */
+    private fun drawPops(c: Canvas, now: Long) {
+        if (!Yarn.loaded || g.pops.isEmpty()) return
+        for (pp in g.pops) {
+            val age = now - pp.at
+            if (age < 0 || age > 800L) continue
+            val sc = when {
+                age < 140L -> 0.3f + 1.0f * (age / 140f)
+                age < 260L -> 1.3f - 0.3f * ((age - 140L) / 120f)
+                age < 600L -> 1f
+                else -> 1f - 0.25f * ((age - 600L) / 200f)
+            }
+            val a = if (age < 600L) 255 else (255 * (1f - (age - 600L) / 200f)).toInt().coerceIn(0, 255)
+            val wob = sin(age / 55.0).toFloat() * 3f * (1f - age / 800f)
+            val x = pp.x.coerceIn(pp.size * 0.5f, width - pp.size * 0.5f)
+            val y = (pp.y - age / 800f * 10 * d).coerceIn(pp.size * 0.4f, height - pp.size * 0.4f)
+            Yarn.drawPop(c, pp.kind, x, y, pp.size * sc, a, pp.rot + wob)
+        }
+    }
+
     /** After a hole is cleared Betito zooms across the whole screen in front of everything, big, with a spin in the middle. */
     private fun drawFlyBy(c: Canvas, w: Float, h: Float, now: Long) {
         if (!Yarn.loaded || g.cheerAt == 0L) return
@@ -325,6 +345,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawTracer(c)
         drawTurtle(c, now)
         drawParticles(c)
+        drawPops(c, now)
         if (shaking) c.restore()
         drawHud(c, w, now)
         drawTracker(c, w, now)

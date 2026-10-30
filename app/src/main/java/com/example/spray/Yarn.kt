@@ -21,6 +21,15 @@ object Yarn {
     const val POSE_WAVE = 3
     const val POSE_GOODBYE = 7
     const val DECAL_COUNT = 8
+    // comic sound-effect patches
+    const val POP_CLOUD = 0
+    const val POP_BURST = 1
+    const val POP_BING = 2
+    const val POP_POW = 3
+    const val POP_ZAP = 4
+    const val POP_BOOM = 5
+    const val POP_WHAM = 6
+    const val POP_BAM = 7
     var loaded = false
         private set
     private val shells = arrayOfNulls<Bitmap>(ShellKinds.COUNT)
@@ -28,6 +37,7 @@ object Yarn {
     private var shark: Bitmap? = null
     private val poses = arrayOfNulls<Bitmap>(POSE_COUNT)
     private val decals = arrayOfNulls<Bitmap>(DECAL_COUNT)
+    private val pops = arrayOfNulls<Bitmap>(8)
     var sea: BitmapShader? = null
         private set
     var wall: BitmapShader? = null
@@ -71,6 +81,9 @@ object Yarn {
                 R.drawable.decal_waves_a, R.drawable.decal_waves_b, R.drawable.decal_arrows_a, R.drawable.decal_arrows_b,
                 R.drawable.decal_splash)
             for (i in decalIds.indices) decals[i] = bmp(decalIds[i])
+            val popIds = intArrayOf(R.drawable.pop_cloud, R.drawable.pop_burst, R.drawable.pop_bing, R.drawable.pop_pow,
+                R.drawable.pop_zap, R.drawable.pop_boom, R.drawable.pop_wham, R.drawable.pop_bam)
+            for (i in popIds.indices) pops[i] = bmp(popIds[i])
             sea = shader(R.drawable.yarn_sea)
             wall = shader(R.drawable.yarn_wall)
             rock = shader(R.drawable.yarn_rock)
@@ -135,6 +148,20 @@ object Yarn {
     fun drawDecal(c: Canvas, i: Int, x: Float, y: Float, w: Float, a: Int, rot: Float = 0f) {
         if (!loaded) return
         val b = decals.getOrNull(i) ?: return
+        val h = w * b.height / b.width
+        c.save()
+        c.translate(x, y)
+        c.rotate(rot)
+        rect.set(-w / 2f, -h / 2f, w / 2f, h / 2f)
+        paint.alpha = a
+        c.drawBitmap(b, null, rect, paint)
+        c.restore()
+    }
+
+    /** Draws a comic sound-effect patch (POW!, ZAP!...) centered on (x, y), `w` wide. */
+    fun drawPop(c: Canvas, kind: Int, x: Float, y: Float, w: Float, a: Int, rot: Float) {
+        if (!loaded) return
+        val b = pops.getOrNull(kind) ?: return
         val h = w * b.height / b.width
         c.save()
         c.translate(x, y)

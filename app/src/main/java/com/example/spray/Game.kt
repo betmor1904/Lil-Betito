@@ -83,6 +83,9 @@ class Shark(var x: Float, var y: Float, val ax: Float, val ay: Float, val bx: Fl
     var stunUntil = 0L   // zapped by a lightning shell: frozen until then
 }
 
+/** A comic sound-effect patch (POW!, ZAP!...) that pops up where something happens. */
+class Pop(val kind: Int, val x: Float, val y: Float, val at: Long, val rot: Float, val size: Float)
+
 class Fish(var x: Float, var y: Float, var vx: Float, val size: Float, val color: Int)
 
 class Bubble(var x: Float, var y: Float, val rad: Float, val speed: Float, val seed: Float)
@@ -162,6 +165,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var cheerAt = 0L        // hole cleared: jump, loop and wave
     var oopsAt = 0L         // over par: head droops
     var speedUntil = 0L
+    val pops = ArrayList<Pop>()
+    private var lastPopAt = 0L
     var glideUntil = 0L     // rubber shell: no water drag until then
 
     // ---------- slingshot input (set by the view) ----------
@@ -541,6 +546,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         resetReels()
         speedUntil = 0L
         glideUntil = 0L
+        pops.clear()
         shells.clear()
         bombsLeft = 0
         shellMode = false
@@ -1021,6 +1027,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     s.bumpAt = now
                     bumpAt = now
                     sharkThisShot = true
+                    pop(Yarn.POP_BAM, cx, cy - 28 * d, now, 66f, true)
                     sfx?.play("bonk", 0.9f, 0L)
                     popup = "SHARK BUMP!"
                     popupAt = now
@@ -1133,6 +1140,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 vy *= 0.85f
             }
             val b = band()
+            pop(Yarn.POP_BING, t.x, t.y - 24 * d, now, 66f, true)
             sfx?.play("ding", 1f, 0L, 1.6f)
             sfx?.play("kaching", 0.9f, 0L)
             burst(t.x, t.y, 0xFFFFFFFF.toInt(), 16)
@@ -1166,6 +1174,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                         }
                     }
                     score += 250 * b
+                    pop(Yarn.POP_BURST, t.x, t.y, now, 100f, true)
                     sfx?.play("bust", 1f, 0L)
                     sfx?.play("rumble", 0.8f, 0L)
                     shake(8f, now)
@@ -1444,6 +1453,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (-vn > 1.2f * d) {
                 bumpAt = now
                 bouncesThisShot++
+                if (-vn > 6f * d) pop(Yarn.POP_WHAM, cx - nx * r * 1.5f, cy - ny * r * 1.5f - 18 * d, now, 60f)
                 sfx?.play("clink", 0.25f + min(0.5f, -vn / (12 * d)), 60L, 1.3f)
                 for (k in 0 until 4) spawnParticle(cx - nx * r, cy - ny * r, nx * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d,
                     ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xCCB39DDB.toInt(), 2.5f * d, 20f)
@@ -1619,6 +1629,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (y0 > w.t) addWall(w.l, w.t, w.r, min(w.b, y0), w.pillar)
             if (y1 < w.b) addWall(w.l, max(w.t, y1), w.r, w.b, w.pillar)
         }
+        pop(Yarn.POP_BOOM, sh.x, sh.y - 10 * d, now, 110f, true)
         sfx?.play("bust", 1f, 0L)
         sfx?.play("rumble", 0.8f, 0L)
         shake(12f, now)
@@ -1670,6 +1681,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 bouncesThisShot++
                 sfx?.play("clink", 0.4f + min(0.5f, -vn / (12 * d)), 60L, 1.8f)
                 shellSkill(sh, now)
+                pop(when (sh.kind) { 0 -> Yarn.POP_ZAP; 1 -> Yarn.POP_BING; 2 -> Yarn.POP_POW; 3 -> Yarn.POP_CLOUD; else -> Yarn.POP_BAM },
+                    sh.x + nx * shellR * 1.2f, sh.y + ny * shellR * 1.2f - 18 * d, now, 58f)
                 if (!shellHitThisShot && shots > 0) {
                     shellHitThisShot = true
                     celebrate("SHELL BANK!")
@@ -1678,6 +1691,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xFFFFCC80.toInt(), 2.5f * d, 20f)
             }
         }
+    }
+
+    /** Pops a comic sound-effect patch. `size` is in dp; `force` skips the cooldown that keeps things from getting spammy. */
+    fun pop(kind: Int, x: Float, y: Float, now: Long, size: Float = 64f, force: Boolean = false) {
+        if (!force && now - lastPopAt < 350L) return
+        lastPopAt = now
+        pops.removeAll { now - it.at > 900L }
+        if (pops.size > 5) pops.removeAt(0)
+        pops.add(Pop(kind, x, y, now, (Random.nextFloat() - 0.5f) * 20f, size * d))
     }
 
     /** Each shell type has its own trick when Betito bounces off it. */
@@ -1776,6 +1798,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         tipLookedThisRest = false
         kickAt = now
         sfx?.play("launch", 0.4f + 0.5f * p, 0L, 1.6f - 0.5f * p)
+        if (p > 0.85f) pop(Yarn.POP_POW, cx, cy - 30 * d, now, 58f, true)
         for (k in 0 until 8) spawnParticle(cx - aimDX * r, cy - aimDY * r,
             -aimDX * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d, -aimDY * 2 * d + (Random.nextFloat() - 0.5f) * 2 * d,
             0x99FFFFFF.toInt(), 3 * d, 25f)
