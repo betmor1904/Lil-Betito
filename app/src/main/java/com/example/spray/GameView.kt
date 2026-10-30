@@ -16,7 +16,8 @@ import kotlin.math.sin
  * and turns touches into input. Slingshot: touch anywhere, pull back, let go.
  */
 class GameView(ctx: Context, private val g: Game) : View(ctx) {
-    init { Sprites.load(ctx) }
+    init { Sprites.load(ctx); TurtleRig.load(ctx) }
+    private val anim = TurtleAnim()
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val water = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -1113,6 +1114,14 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.style = Paint.Style.FILL
         p.color = if (boosted) Color.argb(110, 255, 235, 59) else Color.argb(70, 0, 229, 255)
         c.drawCircle(0f, 0f, 1.9f * u, p)
+        if (TurtleRig.loaded) {
+            // the crochet Betito: a side view that paddles, crouches, stretches, tucks and cheers
+            anim.update(g, now)
+            TurtleRig.draw(c, u, anim.pose)
+            c.restore()
+            drawComboTag(c, now)
+            return
+        }
         c.rotate(g.heading)
         val kt = now - g.kickAt
         val sq = if (g.kickAt == 0L || kt > 180L) 0f else 1f - kt / 180f
@@ -1156,7 +1165,11 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
         p.style = Paint.Style.FILL
         c.restore()
-        // live combo counter over his head
+        drawComboTag(c, now)
+    }
+
+    /** Live combo counter over his head. */
+    private fun drawComboTag(c: Canvas, now: Long) {
         if (g.shotCombo >= 2 && !g.ready && !g.over) {
             val age = now - g.comboAt
             val sc = if (age < 250) 1f + 0.6f * (1f - age / 250f) else 1f

@@ -157,6 +157,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var heading = 0f
     var bumpAt = 0L
     var kickAt = 0L
+    var happyAt = 0L        // a praise word just popped up: Betito does a little happy move
+    var cheerAt = 0L        // hole cleared: jump, loop and wave
+    var oopsAt = 0L         // over par: head droops
     var speedUntil = 0L
 
     // ---------- slingshot input (set by the view) ----------
@@ -518,6 +521,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         stars = 0
         praise = null
         cheerStreak = 0
+        cheerAt = 0L
+        oopsAt = 0L
         shots = 0
         bouncesThisShot = 0
         shotZones.clear()
@@ -1897,6 +1902,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     fun celebrate(text: String, big: Boolean = false) {
         cheerStreak++
+        happyAt = clock
         praise = text
         praiseAt = clock
         praiseBig = big
@@ -2054,6 +2060,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         endShot(now)
         if (shots > par) {
             // over par: no credit, the hole has to be replayed
+            oopsAt = now
             score = holeStartScore
             sfx?.play("lose", 1f, 0L)
             stars = 0
@@ -2065,6 +2072,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             resumeAt = now + 3000L
             return
         }
+        cheerAt = now
         val b = band()
         val secs = (now - levelStartMs) / 1000f
         val under = par - shots

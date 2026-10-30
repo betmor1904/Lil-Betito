@@ -56,6 +56,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
 
     init {
         Sprites.load(ctx)
+        TurtleRig.load(ctx)
         refresh()
     }
 

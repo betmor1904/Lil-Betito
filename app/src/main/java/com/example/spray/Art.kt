@@ -210,6 +210,7 @@ object Art {
     fun turtle(c: Canvas, p: Paint, path: Path, x: Float, y: Float, u: Float, headingDeg: Float, now: Long) {
         c.save()
         c.translate(x, y)
+        if (TurtleRig.loaded) { TurtleRig.drawSimple(c, u, headingDeg, now); c.restore(); return }
         c.rotate(headingDeg)
         if (Sprites.drawTurtle(c, u)) { c.restore(); return }
         val flap = sin(now / 140.0).toFloat() * 18f
