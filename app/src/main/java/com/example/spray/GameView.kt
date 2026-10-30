@@ -42,8 +42,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private var aimSY = 0f
     private var aimTX = 0f
     private var aimTY = 0f
-    private val maxPull get() = 110 * d
-    private val deadPull get() = 14 * d
+    private val maxPull get() = 125 * d
+    private val deadPull get() = 24 * d
 
     var onResize: ((Int, Int) -> Unit)? = null
 
@@ -65,7 +65,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private val btnR = Array(5) { RectF() }
     private val skipR = RectF()
     private var turnPtr = -1
-    private val shellBtnR = RectF()
+    private val trayR = Array(ShellKinds.COUNT) { RectF() }
+    private var pulledThisTouch = false
     private val bombBtnR = RectF()
     private var guideOpen = false
     private val guide = GuideBook(d)
@@ -138,9 +139,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             return true
         }
         // the SHELL button
-        if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over && shellBtnR.contains(x0, y0)) {
-            g.toggleShellMode(g.clock)
-            return true
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over) {
+            val ti = trayR.indexOfFirst { it.contains(x0, y0) }
+            if (ti >= 0) {
+                g.toggleShellMode(ti, g.clock)
+                return true
+            }
         }
         // the pause button
         if (e.actionMasked == MotionEvent.ACTION_DOWN && pauseR.contains(x0, y0)) {
@@ -155,10 +159,17 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 val x = e.getX(i)
                 val y = e.getY(i)
                 g.skipIntro(g.clock)
+                if (aimPtr != -1 && id != aimPtr && g.aiming) {
+                    // a second finger tapped while you were aiming: cancel, no shot spent
+                    cancelAim()
+                    announceCancel()
+                    return true
+                }
                 if (turnPtr == -1 && g.beginTurnGrab(x, y, g.clock)) {
                     turnPtr = id
                 } else if (aimPtr == -1) {
                     tapDownAt = g.clock
+                    pulledThisTouch = false
                     aimPtr = id
                     aimSX = x
                     aimSY = y
@@ -191,6 +202,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 if (id == aimPtr || cancel) {
                     // let go = launch (dragging back inside the small circle cancels)
                     if (!cancel && g.aiming) g.launchQueued = true
+                    else if (!cancel && pulledThisTouch) announceCancel()   // dragged back into the circle and let go
                     else if (!cancel && g.clock - tapDownAt < 450L && hypot(aimTX - aimSX, aimTY - aimSY) < deadPull) g.tapShell(aimSX, aimSY, g.clock)
                     aimPtr = -1
                     g.aiming = false
@@ -198,6 +210,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             }
         }
         return true
+    }
+
+    private fun announceCancel() {
+        g.sfxClick()
+        g.popup = "SHOT CANCELLED - NOTHING USED"
+        g.popupAt = g.clock
     }
 
     /** Pull vector = where you touched minus where your finger is now. He launches the opposite way you drag. */
@@ -210,6 +228,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             return
         }
         g.aiming = true
+        pulledThisTouch = true
         g.aimDX = dx / len
         g.aimDY = dy / len
         g.aimPower = ((len - deadPull) / (maxPull - deadPull)).coerceIn(0f, 1f)
@@ -1391,50 +1410,98 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.color = if (i < filled || (i == 0 && g.aimPower > 0f)) powerColor(k) else Color.argb(60, 255, 255, 255)
             c.drawArc(rect, 135f + i * 22.5f + 1.5f, 19.5f, false, p)
         }
-        // distance ring: how far this power glides in still water (currents change it!)
-        if (g.ready) {
+        p.style = Paint.Style.FILL
+        drawCue(c)
+        if (g.previewN == 0 && g.previewBounceN == 0) return
+        drawPoolLine(c, now)
+    }
+
+    /** The pool-table aim line: small red dots along the whole path, a ghost turtle ring at every bounce. */
+    private fun drawPoolLine(c: Canvas, now: Long) {
+        val alphaBySeg = intArrayOf(240, 200, 160, 120)
+        p.style = Paint.Style.FILL
+        for (i in 0 until g.previewN) {
+            val seg = g.previewSeg[i].coerceIn(0, 3)
+            val a = alphaBySeg[seg]
+            val rad = (2.4f - 0.3f * seg) * d
+            p.color = Color.argb(a * 2 / 3, 60, 0, 0)
+            c.drawCircle(g.previewX[i], g.previewY[i], rad + 1.2f * d, p)
+            p.color = Color.argb(a, 255, 45, 45)
+            c.drawCircle(g.previewX[i], g.previewY[i], rad, p)
+        }
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 10 * d
+        for (b in 0 until g.previewBounceN) {
+            val bx = g.previewBX[b]
+            val by = g.previewBY[b]
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.color = Color.argb(220 - 30 * b, 255, 255, 255)
+            c.drawCircle(bx, by, g.r * 0.95f + 1.5f * d * sin(now / 100.0 + b).toFloat(), p)
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(240, 255, 45, 45)
+            c.drawCircle(bx, by, 3 * d, p)
+            p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            p.color = Color.WHITE
+            c.drawText("${b + 1}", bx, by - g.r * 1.2f, p)
+            p.clearShadowLayer()
+        }
+        if (g.previewStops) {
+            // where he would come to rest
+            p.style = Paint.Style.STROKE
             p.strokeWidth = 1.5f * d
             p.pathEffect = dash
-            p.color = Color.argb(110, 255, 255, 255)
-            c.drawCircle(g.cx, g.cy, g.stillDistance(now), p)
+            p.color = Color.argb(160, 255, 255, 255)
+            c.drawCircle(g.previewEndX, g.previewEndY, g.r, p)
             p.pathEffect = null
         }
         p.style = Paint.Style.FILL
-        if (g.previewN == 0) return
-        val col = aimColor()
-        p.style = Paint.Style.FILL
-        for (i in 0 until g.previewN) {
-            if (i % 2 == 1) continue
-            // the line stays bright up to the first bounce, then fades out just after it
-            val bi = g.previewBounceI
-            val a = if (bi < 0) (230 * (1f - i / g.previewN.toFloat() * 0.7f)).toInt()
-                else if (i <= bi) 230
-                else (230 * (1f - (i - bi) / 26f)).toInt()
-            p.color = Color.argb(a.coerceIn(0, 255), Color.red(col), Color.green(col), Color.blue(col))
-            c.drawCircle(g.previewX[i], g.previewY[i], (3.2f - 1.2f * i / g.pvMax) * d, p)
-        }
-        if (g.previewBounceI >= 0) {
-            val bx = g.previewX[g.previewBounceI]
-            val by = g.previewY[g.previewBounceI]
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2.5f * d
-            p.color = Color.argb(230, 255, 255, 255)
-            c.drawCircle(bx, by, g.r * 0.9f + 2 * d * sin(now / 90.0).toFloat(), p)
-            p.style = Paint.Style.FILL
-        }
     }
 
-    private fun drawShellBody(c: Canvas, x: Float, y: Float, rad: Float, a: Int) {
+    /** A pool cue behind Betito: it slides back as you pull, so the shot feels like lining up on a table. */
+    private fun drawCue(c: Canvas) {
+        if (!g.aiming || !g.ready || g.shellMode || g.bombMode) return
+        val gap = g.r * 1.7f + 30 * d * g.aimPower
+        val len = 110 * d
+        val ux = -g.aimDX
+        val uy = -g.aimDY
+        val x0 = g.cx + ux * gap
+        val y0 = g.cy + uy * gap
+        val x1 = x0 + ux * len
+        val y1 = y0 + uy * len
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeWidth = 5.5f * d
+        p.color = Color.argb(230, 215, 178, 122)
+        c.drawLine(x0 + ux * 8 * d, y0 + uy * 8 * d, x1, y1, p)
+        p.strokeWidth = 4.2f * d
+        p.color = Color.argb(240, 78, 52, 46)
+        c.drawLine(x0 + ux * 8 * d, y0 + uy * 8 * d, x0 + ux * 30 * d, y0 + uy * 30 * d, p)
+        p.strokeWidth = 5.5f * d
+        p.color = Color.argb(240, 100, 181, 246)
+        c.drawLine(x0, y0, x0 + ux * 6 * d, y0 + uy * 6 * d, p)
         p.style = Paint.Style.FILL
-        p.color = Color.argb(a, 255, 183, 77)
+    }
+
+    private fun drawShellBody(c: Canvas, x: Float, y: Float, rad: Float, a: Int, kind: Int = 0) {
+        val col = ShellKinds.colors[kind]
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(a, Color.red(col), Color.green(col), Color.blue(col))
         c.drawCircle(x, y, rad, p)
         p.style = Paint.Style.STROKE
         p.strokeWidth = 1.6f * d
-        p.color = Color.argb(a, 130, 70, 20)
+        p.color = Color.argb(a, Color.red(col) / 2, Color.green(col) / 2, Color.blue(col) / 2)
         c.drawCircle(x, y, rad, p)
         for (i in -1..1) {
             val ox = i * rad * 0.45f
             c.drawLine(x + ox * 0.4f, y + rad * 0.85f, x + ox * 1.3f, y - rad * 0.8f, p)
+        }
+        if (kind == 4) {
+            // twist: a little clockwise arrow on top
+            p.color = Color.argb(a, 255, 255, 255)
+            rect.set(x - rad * 0.5f, y - rad * 0.5f, x + rad * 0.5f, y + rad * 0.5f)
+            c.drawArc(rect, 200f, 230f, false, p)
         }
         p.style = Paint.Style.FILL
     }
@@ -1445,7 +1512,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.color = Color.argb(60, 0, 0, 0)
             c.drawCircle(sh.x + 2 * d, sh.y + 3 * d, g.shellR * pop, p)
             if (sh.bomb) drawBombBody(c, sh.x, sh.y, g.shellR * 1.1f, now, sh.explodeAt, 255)
-            else drawShellBody(c, sh.x, sh.y, g.shellR * pop, 255)
+            else drawShellBody(c, sh.x, sh.y, g.shellR * pop, 255, sh.kind)
         }
         // aiming a shell: show the landing spot
         if (g.bombMode && g.aiming && g.ready) {
@@ -1463,11 +1530,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.style = Paint.Style.STROKE
             p.strokeWidth = 2 * d
             p.pathEffect = dash
-            p.color = Color.argb(170, 255, 183, 77)
+            val kc = ShellKinds.colors[g.shellKind]
+            p.color = Color.argb(190, Color.red(kc), Color.green(kc), Color.blue(kc))
             c.drawLine(g.cx, g.cy, g.shellLandX, g.shellLandY, p)
             p.pathEffect = null
             p.style = Paint.Style.FILL
-            drawShellBody(c, g.shellLandX, g.shellLandY, g.shellR, 130)
+            drawShellBody(c, g.shellLandX, g.shellLandY, g.shellR, 130, g.shellKind)
         }
     }
 
@@ -1542,40 +1610,44 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.clearShadowLayer()
     }
 
+    /** The shell tray (bottom right): one round button per shell type you have this hole. Tap one, then pull to fire it. */
     private fun drawShellButton(c: Canvas, now: Long) {
         bombBtnR.setEmpty()
-        if (g.over) { shellBtnR.setEmpty(); return }
-        val rad = 26 * d
-        val bx = width - 16 * d - rad
-        val by = height - 16 * d - rad
-        shellBtnR.set(bx - rad - 10 * d, by - rad - 10 * d, bx + rad + 10 * d, by + rad + 10 * d)
-        val armed = g.shellMode
-        p.style = Paint.Style.FILL
-        p.color = if (armed) Color.argb(235, 255, 160, 40) else Color.argb(190, 20, 30, 50)
-        c.drawCircle(bx, by, rad, p)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 2.5f * d
-        p.color = if (armed) Color.WHITE else Color.argb(200, 255, 183, 77)
-        c.drawCircle(bx, by, rad - d, p)
-        drawShellBody(c, bx, by - 3 * d, 11 * d, if (g.shellsLeft > 0) 255 else 90)
-        p.style = Paint.Style.FILL
+        for (r in trayR) r.setEmpty()
+        if (g.over) return
+        val rad = 22 * d
+        val bx = width - 14 * d - rad
+        var by = height - 14 * d - rad
         p.textAlign = Paint.Align.CENTER
         p.typeface = Typeface.DEFAULT_BOLD
-        p.color = Color.WHITE
-        p.textSize = 11 * d
-        p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
-        c.drawText("x${g.shellsLeft}", bx, by + rad - 6 * d, p)
-        if (armed) {
-            p.textSize = 11 * d
-            c.drawText("PULL TO FIRE SHELL", bx - 70 * d, by - rad - 6 * d, p)
+        for (k in 0 until ShellKinds.COUNT) {
+            if (g.pouchStart[k] <= 0) continue
+            trayR[k].set(bx - rad - 6 * d, by - rad - 4 * d, bx + rad + 6 * d, by + rad + 4 * d)
+            val armed = g.shellMode && g.shellKind == k
+            val have = g.pouch[k]
+            val col = ShellKinds.colors[k]
+            p.style = Paint.Style.FILL
+            p.color = if (armed) Color.argb(240, Color.red(col), Color.green(col), Color.blue(col)) else Color.argb(190, 20, 30, 50)
+            c.drawCircle(bx, by, rad, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = if (armed) Color.WHITE else Color.argb(if (have > 0) 220 else 90, Color.red(col), Color.green(col), Color.blue(col))
+            c.drawCircle(bx, by, rad - d, p)
+            drawShellBody(c, bx, by - 3 * d, 9 * d, if (have > 0) 255 else 80, k)
+            p.style = Paint.Style.FILL
+            p.color = Color.WHITE
+            p.textSize = 10 * d
+            p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            c.drawText("x$have", bx, by + rad - 5 * d, p)
+            if (armed) {
+                p.textAlign = Paint.Align.RIGHT
+                p.textSize = 11 * d
+                c.drawText("${ShellKinds.names[k]}: PULL TO FIRE", bx - rad - 10 * d, by + 4 * d, p)
+                p.textAlign = Paint.Align.CENTER
+            }
+            p.clearShadowLayer()
+            by -= rad * 2 + 8 * d
         }
-        if (g.flippable.isNotEmpty()) {
-            p.textAlign = Paint.Align.RIGHT
-            p.textSize = 12 * d
-            p.color = if (g.flipsLeft > 0) Color.rgb(128, 222, 234) else Color.argb(150, 255, 255, 255)
-            c.drawText("TAP CURRENT TO FLIP: ${g.flipsLeft}", bx - rad - 14 * d, by + 4 * d, p)
-        }
-        p.clearShadowLayer()
     }
 
     private fun drawControls(c: Canvas, now: Long) {
@@ -1586,6 +1658,13 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.color = Color.argb(70, 255, 255, 255)
             c.drawCircle(aimSX, aimSY, deadPull, p)
             if (g.aiming) {
+                // the cancel zone: drag back in here (or tap a 2nd finger) and let go to cancel
+                p.color = Color.argb(150, 255, 193, 7)
+                p.strokeWidth = 3 * d
+                c.drawCircle(aimSX, aimSY, deadPull, p)
+                val xs = deadPull * 0.38f
+                c.drawLine(aimSX - xs, aimSY - xs, aimSX + xs, aimSY + xs, p)
+                c.drawLine(aimSX - xs, aimSY + xs, aimSX + xs, aimSY - xs, p)
                 val col = aimColor()
                 val pull = hypot(aimSX - aimTX, aimSY - aimTY).coerceAtMost(maxPull)
                 val ex = aimSX - g.aimDX * pull
@@ -1603,6 +1682,9 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
                 val label = if (!g.ready) "WAIT..." else "POWER ${(g.aimPower * 100).toInt()}%"
                 c.drawText(label, aimSX, aimSY - deadPull - 8 * d, p)
+                p.textSize = 10 * d
+                p.color = Color.argb(220, 255, 213, 79)
+                c.drawText("BACK IN THE X = CANCEL", aimSX, aimSY + deadPull + 16 * d, p)
                 p.clearShadowLayer()
             }
             p.style = Paint.Style.FILL

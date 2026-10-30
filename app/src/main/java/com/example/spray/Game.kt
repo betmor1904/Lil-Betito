@@ -32,11 +32,30 @@ class Target(val x: Float, val y: Float, val kind: Int, val zone: WaterZone? = n
 }
 
 /** A bounce shell the player has shot out: it settles and Betito can bank off it. */
-class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float, val bomb: Boolean = false) {
+class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float, val bomb: Boolean = false, val kind: Int = 0) {
     var explodeAt = 0L   // bombs only: when it goes off
     var settled = false
     var hitAt = 0L
     val seed = Random.nextFloat() * 6f
+}
+
+/** The five shell types. Each one rebounds Betito differently, so planning which to place where is the strategy. */
+object ShellKinds {
+    const val COUNT = 5
+    val names = arrayOf("BOUNCY", "RUBBER", "MEGA", "SPONGE", "TWIST")
+    val colors = intArrayOf(0xFFFFB74D.toInt(), 0xFF66BB6A.toInt(), 0xFFF06292.toInt(), 0xFF90A4AE.toInt(), 0xFF42A5F5.toInt())
+    val tips = arrayOf(
+        "Springy: kicks you out faster than you hit it",
+        "Clean mirror bounce, keeps your speed",
+        "Huge kick: sends you out much faster",
+        "Soaks the hit: you slow right down",
+        "Bounces you, then bends the path 40 degrees clockwise")
+    /** How much of the speed INTO the shell comes back out (1 = mirror bounce). */
+    val bounce = floatArrayOf(1.35f, 1.0f, 1.9f, 0.25f, 1.0f)
+    /** How much of the speed ALONG the shell is kept. */
+    val slide = floatArrayOf(1.0f, 1.0f, 1.0f, 0.55f, 1.0f)
+    /** Extra clockwise turn (radians) applied to the speed that leaves the shell. */
+    val twist = floatArrayOf(0f, 0f, 0f, 0f, 0.7f)
 }
 
 /** A kelp slide: shoot into either end and it carries you around a corner. */
@@ -149,7 +168,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     // ---------- bounce shells: free, they don't cost a shot ----------
     val shells = ArrayList<ShellObj>()
-    var shellsLeft = 3
+    val pouch = IntArray(ShellKinds.COUNT)       // shells you still hold, per type
+    val pouchStart = IntArray(ShellKinds.COUNT)  // what this hole started with
+    var shellKind = 0                             // the type armed when shellMode is on
+    val shellsLeft get() = pouch.sum()
+    private val shellOut = FloatArray(2)
     var bombsLeft = 1
     private var plugCount = 0
     var bombMode = false            // tapped BOMB: the next pull throws a bomb
@@ -175,8 +198,6 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private val rideDrag = 0.006f       // riding a current barely slows you
     private val weedDrag = 0.16f
     private val bounceK = 0.92f         // bank shots: a rock keeps 92% of the speed it is hit with
-    private val shellBounce = 1.35f       // shells are springy: they kick Betito out FASTER than he went in
-    private val shellSlide = 1.0f
     private val slideK = 0.95f          // how much speed is kept sliding along the wall
     private val maxSpeed get() = 17.5f * d
     var ready = true
@@ -198,12 +219,19 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private var railDir = 1f
     private var railSpeed = 0f
 
-    // aim preview: the first part of the path, simulated with real physics
-    val pvMax = 150
-    var previewBounceI = -1
+    // aim preview (pool-style): evenly spaced dots along the whole path, through up to 3 bounces
+    val pvMax = 260
     val previewX = FloatArray(pvMax)
     val previewY = FloatArray(pvMax)
+    val previewSeg = IntArray(pvMax)       // which leg of the path each dot is on (0 = before the first bounce)
     var previewN = 0
+    val previewMaxBounces = 3
+    val previewBX = FloatArray(previewMaxBounces)
+    val previewBY = FloatArray(previewMaxBounces)
+    var previewBounceN = 0
+    var previewEndX = 0f
+    var previewEndY = 0f
+    var previewStops = false               // true when the path ends with him coming to rest inside the preview
 
     // ---------- game state ----------
     /** The game's own clock in ms. It stops while paused or while Octo is explaining something. */
@@ -508,6 +536,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         shells.clear()
         bombsLeft = 0
         shellMode = false
+        shellKind = 0
         bombMode = false
         shellHitThisShot = false
         turnUsed = false
@@ -528,7 +557,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         say(when (level) {
             1 -> "Pull back and let go! Bounce off the rocks to get around corners. Par or better to advance!"
-            2 -> "Tap SHELL, then pull to place a shell. Bank Betito off it! Tap a shell to take it back."
+            2 -> "Tap a shell (bottom right), then pull to place it. Bank Betito off it! Tap a placed shell to take it back."
             else -> "Par $par. Place your shells first, then bank your way through!"
         }, true)
     }
@@ -652,11 +681,24 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         nextCol = 0
         suckFromX = Float.MAX_VALUE
         levelPar = lv.par
-        shellsLeft = lv.shells
+        setPouch(lv.shells, level)
         startCy = playT + (if (flip) Levels.PLAY_H - lv.startY else lv.startY) * d * sy
     }
 
     private var startCy = 0f
+
+    /** Holes 1-8 give you the classic bouncy shells; new types arrive a few at a time so each one gets learned. */
+    private fun setPouch(classic: Int, lvl: Int) {
+        pouch.fill(0)
+        pouch[0] = classic
+        if (lvl >= 2) pouch[1] = 1
+        if (lvl >= 4) pouch[3] = 1
+        if (lvl >= 6) pouch[2] = 1
+        if (lvl >= 9) pouch[4] = 1
+        if (lvl >= 16) { pouch[1]++; pouch[4]++ }
+        for (k in pouch.indices) pouchStart[k] = pouch[k]
+        shellKind = 0
+    }
 
     /** Where a current's flip icon sits (the view draws it here, taps near it flip while Betito is flying). */
     fun flipIconY(z: WaterZone): Float =
@@ -1404,18 +1446,20 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // bounce shells
     // ============================================================
 
-    /** The SHELL button: arm (or disarm) a shell. Your next pull-and-release fires it instead of Betito. */
-    fun toggleShellMode(now: Long) {
+    /** A tray button: arm (or disarm) one shell type. Your next pull-and-release fires it instead of Betito. */
+    fun toggleShellMode(kind: Int, now: Long) {
         if (over || now < introUntil) return
-        if (shellsLeft <= 0) {
+        if (pouch[kind] <= 0) {
             sfx?.play("tick", 0.3f, 150L)
-            popup = "NO SHELLS LEFT"
+            popup = "NO ${ShellKinds.names[kind]} SHELLS LEFT"
             popupAt = now
             return
         }
-        shellMode = !shellMode
+        if (shellMode && shellKind == kind) shellMode = false
+        else { shellMode = true; shellKind = kind }
         bombMode = false
-        sfx?.play(if (shellMode) "pop" else "tick", 0.6f, 60L)
+        sfx?.play(if (shellMode) "pop" else "tick", 0.6f, 60L, 0.8f + 0.15f * kind)
+        if (shellMode) { popup = "${ShellKinds.names[kind]} SHELL"; popupAt = now }
     }
 
     /** The BOMB button: arm (or disarm) a bomb. Your next pull-and-release throws it. */
@@ -1444,7 +1488,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
         val sh = best ?: return false
         shells.remove(sh)
-        shellsLeft++
+        pouch[sh.kind]++
         sfx?.play("pop", 0.5f, 60L, 0.8f)
         for (k in 0 until 6) spawnParticle(sh.x, sh.y, (Random.nextFloat() - 0.5f) * 3 * d, (Random.nextFloat() - 0.5f) * 3 * d,
             0xFFFFCC80.toInt(), 2.5f * d, 20f)
@@ -1505,7 +1549,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             return
         }
         val sh = ShellObj(cx + aimDX * (r + shellR + 3 * d), cy + aimDY * (r + shellR + 3 * d),
-            aimDX * launchSpeed(now) * p, aimDY * launchSpeed(now) * p, bomb)
+            aimDX * launchSpeed(now) * p, aimDY * launchSpeed(now) * p, bomb, shellKind)
         shells.add(sh)
         kickAt = now
         if (bomb) {
@@ -1515,10 +1559,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             sfx?.play("launch", 0.5f + 0.4f * p, 0L, 1.2f)
             say(if (bombsLeft > 0) "Bomb away! Stand back, it blows soon!" else "Bomb away! Stand clear!", true)
         } else {
-            shellsLeft--
+            pouch[shellKind]--
             shellMode = false
             sfx?.play("launch", 0.35f + 0.4f * p, 0L, 2.0f)
-            say(if (shellsLeft > 0) "Shell out! Bank Betito off it. It's free!" else "That's your last shell!", true)
+            say(if (shellsLeft > 0) "${ShellKinds.names[sh.kind]} shell out! Bank Betito off it. It's free!" else "That's your last shell!", true)
         }
     }
 
@@ -1608,10 +1652,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         cy += ny * (minD - dist)
         val vn = vx * nx + vy * ny
         if (vn < 0f) {
-            val vtx = vx - vn * nx
-            val vty = vy - vn * ny
-            vx = -vn * shellBounce * nx + vtx * shellSlide
-            vy = -vn * shellBounce * ny + vty * shellSlide
+            shellRebound(sh.kind, vx, vy, nx, ny)
+            vx = shellOut[0]
+            vy = shellOut[1]
             if (-vn > 1.0f * d) {
                 bumpAt = now
                 sh.hitAt = now
@@ -1625,6 +1668,25 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                     ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xFFFFCC80.toInt(), 2.5f * d, 20f)
             }
         }
+    }
+
+    /** Betito's velocity after hitting a shell of this type (normal n points from the shell to Betito). Used by the game AND the aim preview. */
+    private fun shellRebound(kind: Int, ivx: Float, ivy: Float, nx: Float, ny: Float) {
+        val vn = ivx * nx + ivy * ny
+        val vtx = ivx - vn * nx
+        val vty = ivy - vn * ny
+        var ox = -vn * ShellKinds.bounce[kind] * nx + vtx * ShellKinds.slide[kind]
+        var oy = -vn * ShellKinds.bounce[kind] * ny + vty * ShellKinds.slide[kind]
+        val tw = ShellKinds.twist[kind]
+        if (tw != 0f) {
+            val c = cos(tw)
+            val sn = sin(tw)
+            val rx = ox * c - oy * sn
+            oy = ox * sn + oy * c
+            ox = rx
+        }
+        shellOut[0] = ox
+        shellOut[1] = oy
     }
 
     private fun inWeed(x: Float, y: Float): Boolean =
@@ -1687,7 +1749,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private var svx = 0f
     private var svy = 0f
 
-    /** Runs the real swim physics forward a short way so the dotted aim line bends with currents and banks off walls. */
+    /**
+     * Pool-style aim line: runs the real swim physics (water drag, rock bounces, shell rebounds) and
+     * drops a small dot every few dp along the whole path, through up to three bounces.
+     */
     private fun computePreview(now: Long) {
         val sp = launchSpeed(now) * aimPower.coerceIn(0.12f, 1f)
         sx = cx
@@ -1695,67 +1760,86 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         svx = aimDX * sp
         svy = aimDY * sp
         previewN = 0
-        previewBounceI = -1
-        var afterBounce = 0
-        // the dotted line runs until just after the first bounce: planning the bank is the skill
-        for (f in 0 until pvMax) {
-            for (s in 0 until 3) {
-                val hdt = 1f / 3f
-                val k = 1f - waterDrag * hdt
-                svx *= k
-                svy *= k
-                sx += svx * hdt
-                sy += svy * hdt
-                var hitNow = false
-                if (sx < r) { sx = r; if (-svx > 1.2f * d) hitNow = true; svx = abs(svx) * bounceK }
-                for (w in blocks) {
-                    if (!w.alive) continue
-                    val qx = sx.coerceIn(w.l, w.r)
-                    val qy = sy.coerceIn(w.t, w.b)
-                    val dx = sx - qx
-                    val dy = sy - qy
-                    val d2 = dx * dx + dy * dy
-                    if (d2 >= r * r || d2 < 0.0001f) continue
-                    val dist = sqrt(d2)
-                    val nx = dx / dist
-                    val ny = dy / dist
-                    sx += nx * (r - dist)
-                    sy += ny * (r - dist)
-                    val vn = svx * nx + svy * ny
-                    if (vn < 0f) {
-                        if (-vn > 1.2f * d) hitNow = true
-                        val vtx = svx - vn * nx
-                        val vty = svy - vn * ny
-                        svx = -vn * bounceK * nx + vtx * slideK
-                        svy = -vn * bounceK * ny + vty * slideK
-                    }
+        previewBounceN = 0
+        previewStops = false
+        val spacing = 8f * d
+        var acc = 0f
+        var sinceBounce = 99
+        var tail = 0
+        val hdt = 1f / 3f
+        val k = 1f - waterDrag * hdt
+        for (step in 0 until 3000) {
+            svx *= k
+            svy *= k
+            val sp0 = hypot(svx, svy)
+            if (sp0 > maxSpeed) { svx = svx / sp0 * maxSpeed; svy = svy / sp0 * maxSpeed }
+            sx += svx * hdt
+            sy += svy * hdt
+            var hitNow = false
+            if (sx < r) { sx = r; if (-svx > 1.2f * d) hitNow = true; svx = abs(svx) * bounceK }
+            for (w in blocks) {
+                if (!w.alive) continue
+                val qx = sx.coerceIn(w.l, w.r)
+                val qy = sy.coerceIn(w.t, w.b)
+                val dx = sx - qx
+                val dy = sy - qy
+                val d2 = dx * dx + dy * dy
+                if (d2 >= r * r || d2 < 0.0001f) continue
+                val dist = sqrt(d2)
+                val nx = dx / dist
+                val ny = dy / dist
+                sx += nx * (r - dist)
+                sy += ny * (r - dist)
+                val vn = svx * nx + svy * ny
+                if (vn < 0f) {
+                    if (-vn > 1.2f * d) hitNow = true
+                    val vtx = svx - vn * nx
+                    val vty = svy - vn * ny
+                    svx = -vn * bounceK * nx + vtx * slideK
+                    svy = -vn * bounceK * ny + vty * slideK
                 }
-                for (sh in shells) {
-                    val dx = sx - sh.x
-                    val dy = sy - sh.y
-                    val dist = hypot(dx, dy)
-                    val minD = r + shellR
-                    if (dist >= minD || dist < 0.0001f) continue
-                    val nx = dx / dist
-                    val ny = dy / dist
-                    sx += nx * (minD - dist)
-                    sy += ny * (minD - dist)
-                    val vn = svx * nx + svy * ny
-                    if (vn < 0f) {
-                        if (-vn > 1.0f * d) hitNow = true
-                        val vtx = svx - vn * nx
-                        val vty = svy - vn * ny
-                        svx = -vn * shellBounce * nx + vtx * shellSlide
-                        svy = -vn * shellBounce * ny + vty * shellSlide
-                    }
-                }
-                if (hitNow && previewBounceI < 0) previewBounceI = previewN
             }
-            previewX[previewN] = sx
-            previewY[previewN] = sy
-            previewN++
-            if (sx > exitX || hypot(svx, svy) < 0.3f * d) break
-            if (previewBounceI >= 0 && ++afterBounce > 26) break
+            for (sh in shells) {
+                val dx = sx - sh.x
+                val dy = sy - sh.y
+                val dist = hypot(dx, dy)
+                val minD = r + shellR
+                if (dist >= minD || dist < 0.0001f) continue
+                val nx = dx / dist
+                val ny = dy / dist
+                sx += nx * (minD - dist)
+                sy += ny * (minD - dist)
+                val vn = svx * nx + svy * ny
+                if (vn < 0f) {
+                    if (-vn > 1.0f * d) hitNow = true
+                    shellRebound(sh.kind, svx, svy, nx, ny)
+                    svx = shellOut[0]
+                    svy = shellOut[1]
+                }
+            }
+            sinceBounce++
+            if (hitNow && sinceBounce >= 5 && previewBounceN < previewMaxBounces) {
+                previewBX[previewBounceN] = sx
+                previewBY[previewBounceN] = sy
+                previewBounceN++
+                sinceBounce = 0
+            }
+            acc += hypot(svx, svy) * hdt
+            if (acc >= spacing) {
+                acc -= spacing
+                if (previewN < pvMax && hypot(sx - cx, sy - cy) > r * 1.7f) {
+                    previewX[previewN] = sx
+                    previewY[previewN] = sy
+                    previewSeg[previewN] = previewBounceN
+                    previewN++
+                    if (previewBounceN >= previewMaxBounces && ++tail > 5) break
+                }
+            }
+            previewEndX = sx
+            previewEndY = sy
+            if (sx > exitX) break
+            if (hypot(svx, svy) < 0.3f * d) { previewStops = true; break }
+            if (previewN >= pvMax) break
         }
     }
 
