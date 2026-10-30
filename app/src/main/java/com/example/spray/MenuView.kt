@@ -37,6 +37,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
 
     // what the activity does for us
     var onPlay: ((Boolean) -> Unit)? = null
+    var onReef: (() -> Unit)? = null
     var onPickPhoto: (() -> Unit)? = null
     var onRemovePhoto: (() -> Unit)? = null
     var onPrivacy: (() -> Unit)? = null
@@ -299,9 +300,10 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         // buttons, right half
         val bw = min(250 * d, w * 0.36f)
         val bx = w * 0.72f - bw / 2f
-        val bh = 50 * d
-        val gap = 12 * d
-        val total = 4 * bh + 3 * gap
+        val nBtns = if (savedLevel > 1) 5 else 4
+        val gap = 10 * d
+        val bh = min(50 * d, (h - 56 * d - (nBtns - 1) * gap) / nBtns)
+        val total = nBtns * bh + (nBtns - 1) * gap
         var by = (h - total) / 2f - 8 * d
         val active = screen == Screen.MAIN
         fun big(id: String, label: String, color: Int, ts: Float = 18f) {
@@ -316,6 +318,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         } else {
             big("new", "PLAY", Color.parseColor("#2E7D32"), 22f)
         }
+        big("reef", "REEF SORT", Color.parseColor("#00897B"))
         big("guide", "HOW TO PLAY", Color.parseColor("#6A1B9A"))
         big("settings", "SETTINGS", Color.parseColor("#37474F"))
     }
@@ -467,6 +470,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             "continue" -> onPlay?.invoke(true)
             "new" -> onPlay?.invoke(false)
             "guide" -> openGuide()
+            "reef" -> onReef?.invoke()
             "settings" -> screen = Screen.SETTINGS
             "close" -> screen = Screen.MAIN
             "sound" -> {
