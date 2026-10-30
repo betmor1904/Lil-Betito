@@ -42,6 +42,10 @@ class MainActivity : Activity() {
             sfx?.play("letsgo", 0.8f, 0L)
             startActivity(Intent(this, ReefActivity::class.java))
         }
+        m.onChess = {
+            sfx?.play("letsgo", 0.8f, 0L)
+            startActivity(Intent(this, ChessActivity::class.java))
+        }
         m.onPickPhoto = {
             startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*"), pickCode)
         }
