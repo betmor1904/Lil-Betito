@@ -43,7 +43,7 @@ class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float, val bom
 object ShellKinds {
     const val COUNT = 5
     val names = arrayOf("BOUNCY", "RUBBER", "MEGA", "SPONGE", "TWIST")
-    val colors = intArrayOf(0xFFFFB74D.toInt(), 0xFF66BB6A.toInt(), 0xFFF06292.toInt(), 0xFF90A4AE.toInt(), 0xFF42A5F5.toInt())
+    val colors = intArrayOf(0xFFFFC107.toInt(), 0xFF43A047.toInt(), 0xFFE53935.toInt(), 0xFF90A4AE.toInt(), 0xFF2196F3.toInt())
     val tips = arrayOf(
         "Springy: kicks you out faster than you hit it",
         "Clean mirror bounce, keeps your speed",

@@ -27,6 +27,8 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bg = Paint()
+    private val bgTint = Paint()
+    private val seaP = Paint()
     private val path = Path()
     private val panel = RectF()
     private val guide = GuideBook(d)
@@ -57,6 +59,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
     init {
         Sprites.load(ctx)
         TurtleRig.load(ctx)
+        Yarn.load(ctx)
         refresh()
     }
 
@@ -82,6 +85,9 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         bg.shader = LinearGradient(0f, 0f, 0f, h.toFloat(),
             intArrayOf(Color.parseColor("#0E5A8A"), Color.parseColor("#0A3D62"), Color.parseColor("#031428")),
             null, Shader.TileMode.CLAMP)
+        bgTint.shader = bg.shader
+        bgTint.alpha = 90
+        seaP.shader = Yarn.sea
         for (i in bubX.indices) {
             bubX[i] = Random.nextFloat() * w
             bubY[i] = Random.nextFloat() * h
@@ -100,8 +106,12 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         lastFrame = now
         val w = width.toFloat()
         val h = height.toFloat()
-        c.drawRect(0f, 0f, w, h, bg)
+        if (Yarn.loaded) {
+            c.drawRect(0f, 0f, w, h, seaP)
+            c.drawRect(0f, 0f, w, h, bgTint)
+        } else c.drawRect(0f, 0f, w, h, bg)
         drawScenery(c, w, h, now, dt)
+        drawShellDecor(c, w, h, now)
         buttons.clear()
         drawMain(c, w, h, now)
         when (screen) {
@@ -111,6 +121,22 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             else -> {}
         }
         postInvalidateOnAnimation()
+    }
+
+    /** The crochet shells float around the corners of the menu. */
+    private fun drawShellDecor(c: Canvas, w: Float, h: Float, now: Long) {
+        if (!Yarn.loaded) return
+        val rad = min(w, h) * 0.07f
+        val spots = floatArrayOf(0.07f, 0.84f, 0.93f, 0.82f, 0.08f, 0.17f, 0.92f, 0.19f)
+        val kinds = intArrayOf(0, 2, 4, -1)   // lightning, flames, waves, bomb
+        for (i in 0 until 4) {
+            val x = w * spots[i * 2]
+            val y = h * spots[i * 2 + 1] + sin(now / 900.0 + i * 1.6).toFloat() * 5 * d
+            c.save()
+            c.rotate(sin(now / 1300.0 + i).toFloat() * 6f, x, y)
+            if (kinds[i] >= 0) Yarn.drawShell(c, kinds[i], x, y, rad, 255) else Yarn.drawBomb(c, x, y, rad, 255)
+            c.restore()
+        }
     }
 
     private fun drawScenery(c: Canvas, w: Float, h: Float, now: Long, dt: Float) {

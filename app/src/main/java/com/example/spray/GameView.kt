@@ -16,12 +16,17 @@ import kotlin.math.sin
  * and turns touches into input. Slingshot: touch anywhere, pull back, let go.
  */
 class GameView(ctx: Context, private val g: Game) : View(ctx) {
-    init { Sprites.load(ctx); TurtleRig.load(ctx) }
+    init { Sprites.load(ctx); TurtleRig.load(ctx); Yarn.load(ctx) }
     private val anim = TurtleAnim()
     private val d = resources.displayMetrics.density
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val water = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bg = Paint()
+    private val bgTint = Paint()
+    private val seaP = Paint()
+    private val wallP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rockP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val holeP = Paint()
     private val path = Path()
     private val starPath = Path()
     private val rect = RectF()
@@ -52,6 +57,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         bg.shader = LinearGradient(0f, 0f, 0f, h.toFloat(),
             intArrayOf(Color.parseColor("#0A3D62"), Color.parseColor("#06274A"), Color.parseColor("#031428")),
             null, Shader.TileMode.CLAMP)
+        bgTint.shader = bg.shader
+        bgTint.alpha = 95
+        seaP.shader = Yarn.sea
+        wallP.shader = Yarn.wall
+        rockP.shader = Yarn.rock
+        holeP.shader = Yarn.hole
         onResize?.invoke(w, h)
     }
 
@@ -243,7 +254,10 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         val now = g.clock
         val w = width.toFloat()
         val h = height.toFloat()
-        c.drawRect(0f, 0f, w, h, bg)
+        if (Yarn.loaded) {
+            c.drawRect(0f, 0f, w, h, seaP)      // knitted sea
+            c.drawRect(0f, 0f, w, h, bgTint)    // deeper toward the bottom
+        } else c.drawRect(0f, 0f, w, h, bg)
         if (!g.started) return
 
         // screen shake on big moments
@@ -672,13 +686,23 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 p.style = Paint.Style.FILL
                 continue
             }
-            p.color = if (w.pillar) Color.parseColor("#6D4C41") else Color.parseColor("#4A3B5C")
-            c.drawRoundRect(rect, 5 * d, 5 * d, p)
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2 * d
-            p.color = if (w.pillar) Color.parseColor("#A1887F") else Color.parseColor("#8E7CC3")
-            c.drawRoundRect(rect, 5 * d, 5 * d, p)
-            p.style = Paint.Style.FILL
+            if (Yarn.loaded) {
+                // yarn: purple braid for walls, brown cable knit for rocks
+                c.drawRoundRect(rect, 6 * d, 6 * d, if (w.pillar) rockP else wallP)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 1.6f * d
+                p.color = if (w.pillar) Color.argb(170, 60, 30, 14) else Color.argb(170, 36, 14, 60)
+                c.drawRoundRect(rect, 6 * d, 6 * d, p)
+                p.style = Paint.Style.FILL
+            } else {
+                p.color = if (w.pillar) Color.parseColor("#6D4C41") else Color.parseColor("#4A3B5C")
+                c.drawRoundRect(rect, 5 * d, 5 * d, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2 * d
+                p.color = if (w.pillar) Color.parseColor("#A1887F") else Color.parseColor("#8E7CC3")
+                c.drawRoundRect(rect, 5 * d, 5 * d, p)
+                p.style = Paint.Style.FILL
+            }
             if (w.pillar && photo != null) {
                 val size = min(w.r - w.l, w.b - w.t) - 6 * d
                 val mx = (w.l + w.r) / 2f
@@ -699,6 +723,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.color = Color.argb(((90 * pulse).toInt() - i * 18).coerceIn(0, 255), 118, 255, 3)
             c.drawRect(g.exitX - (i + 1) * 14 * d, g.exitGapT, g.exitX + 30 * d, g.exitGapB, p)
         }
+        if (Yarn.loaded) c.drawRect(g.exitX, g.exitGapT, g.exitX + 12 * d, g.exitGapB, holeP)   // lime yarn in the hole
         p.color = Color.parseColor("#76FF03")
         val my = (g.exitGapT + g.exitGapB) / 2f
         path.reset()
@@ -1498,6 +1523,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     }
 
     private fun drawShellBody(c: Canvas, x: Float, y: Float, rad: Float, a: Int, kind: Int = 0) {
+        if (Yarn.drawShell(c, kind, x, y, rad, a)) return   // the crochet shell picture
         val col = ShellKinds.colors[kind]
         p.style = Paint.Style.FILL
         p.color = Color.argb(a, Color.red(col), Color.green(col), Color.blue(col))
@@ -1580,6 +1606,15 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     }
 
     private fun drawBombBody(c: Canvas, x: Float, y: Float, rad: Float, now: Long, explodeAt: Long, a: Int) {
+        if (Yarn.drawBomb(c, x, y, rad, a)) {
+            val left0 = if (explodeAt > 0) explodeAt - now else 9999L
+            if (left0 in 0..700 && (now / 90) % 2 == 0L) {   // about to go off: flash red
+                p.style = Paint.Style.FILL
+                p.color = Color.argb(a * 3 / 5, 255, 40, 30)
+                c.drawCircle(x, y, rad, p)
+            }
+            return
+        }
         val left = if (explodeAt > 0) explodeAt - now else 9999L
         val hot = left in 0..700 && (now / 90) % 2 == 0L
         p.style = Paint.Style.FILL
