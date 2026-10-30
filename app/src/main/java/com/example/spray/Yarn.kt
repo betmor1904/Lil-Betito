@@ -15,10 +15,19 @@ import android.graphics.Shader
  * If anything fails to load, everything falls back to the old code-drawn shapes.
  */
 object Yarn {
+    // poses: 0 swim forward, 1 swim up, 2 look up, 3 wave, 4 happy wave, 5 spin, 6 swim away, 7 wave goodbye
+    const val POSE_COUNT = 8
+    const val POSE_HAPPY = 4
+    const val POSE_WAVE = 3
+    const val POSE_GOODBYE = 7
+    const val DECAL_COUNT = 8
     var loaded = false
         private set
     private val shells = arrayOfNulls<Bitmap>(ShellKinds.COUNT)
     private var bomb: Bitmap? = null
+    private var shark: Bitmap? = null
+    private val poses = arrayOfNulls<Bitmap>(POSE_COUNT)
+    private val decals = arrayOfNulls<Bitmap>(DECAL_COUNT)
     var sea: BitmapShader? = null
         private set
     var wall: BitmapShader? = null
@@ -53,6 +62,15 @@ object Yarn {
             shells[3] = bmp(R.drawable.crochet_shell_sponge)
             shells[4] = bmp(R.drawable.crochet_shell_twist)
             bomb = bmp(R.drawable.crochet_bomb)
+            shark = bmp(R.drawable.crochet_shark)
+            val poseIds = intArrayOf(R.drawable.pose_swim_forward, R.drawable.pose_swim_up, R.drawable.pose_look_up,
+                R.drawable.pose_wave, R.drawable.pose_happy_wave, R.drawable.pose_spin, R.drawable.pose_swim_away,
+                R.drawable.pose_wave_goodbye)
+            for (i in poseIds.indices) poses[i] = bmp(poseIds[i])
+            val decalIds = intArrayOf(R.drawable.decal_swirl_a, R.drawable.decal_swirl_b, R.drawable.decal_bubble,
+                R.drawable.decal_waves_a, R.drawable.decal_waves_b, R.drawable.decal_arrows_a, R.drawable.decal_arrows_b,
+                R.drawable.decal_splash)
+            for (i in decalIds.indices) decals[i] = bmp(decalIds[i])
             sea = shader(R.drawable.yarn_sea)
             wall = shader(R.drawable.yarn_wall)
             rock = shader(R.drawable.yarn_rock)
@@ -84,5 +102,46 @@ object Yarn {
         val b = bomb ?: return false
         draw(c, b, x, y, rad, a)
         return true
+    }
+
+    /** Draws the crochet shark centered on (0,0), nose to the right, `w` wide. */
+    fun drawShark(c: Canvas, w: Float): Boolean {
+        if (!loaded) return false
+        val b = shark ?: return false
+        val h = w * b.height / b.width
+        rect.set(-w / 2f, -h / 2f, w / 2f, h / 2f)
+        paint.alpha = 255
+        c.drawBitmap(b, null, rect, paint)
+        return true
+    }
+
+    /** Draws one of Betito's poses centered on (x, y), `h` tall, tilted by `rot` degrees. */
+    fun drawPose(c: Canvas, pose: Int, x: Float, y: Float, h: Float, rot: Float = 0f, flip: Boolean = false): Boolean {
+        if (!loaded) return false
+        val b = poses.getOrNull(pose) ?: return false
+        val w = h * b.width / b.height
+        c.save()
+        c.translate(x, y)
+        c.rotate(rot)
+        if (flip) c.scale(-1f, 1f)
+        rect.set(-w / 2f, -h / 2f, w / 2f, h / 2f)
+        paint.alpha = 255
+        c.drawBitmap(b, null, rect, paint)
+        c.restore()
+        return true
+    }
+
+    /** Draws a yarn water squiggle (swirl, waves, arrows, bubble ring, splash) centered on (x, y), `w` wide. */
+    fun drawDecal(c: Canvas, i: Int, x: Float, y: Float, w: Float, a: Int, rot: Float = 0f) {
+        if (!loaded) return
+        val b = decals.getOrNull(i) ?: return
+        val h = w * b.height / b.width
+        c.save()
+        c.translate(x, y)
+        c.rotate(rot)
+        rect.set(-w / 2f, -h / 2f, w / 2f, h / 2f)
+        paint.alpha = a
+        c.drawBitmap(b, null, rect, paint)
+        c.restore()
     }
 }

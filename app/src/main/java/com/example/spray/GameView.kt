@@ -250,6 +250,17 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     // drawing
     // ============================================================
 
+    /** Faint yarn squiggles drifting in the sea so it feels like water, kept pale so walls and shells still pop. */
+    private fun drawWaterDecals(c: Canvas, w: Float, h: Float, now: Long) {
+        val xs = floatArrayOf(0.12f, 0.33f, 0.55f, 0.78f, 0.90f, 0.22f, 0.66f, 0.45f, 0.06f)
+        val ys = floatArrayOf(0.30f, 0.75f, 0.22f, 0.68f, 0.28f, 0.52f, 0.46f, 0.86f, 0.80f)
+        val ids = intArrayOf(0, 3, 5, 1, 7, 2, 4, 6, 2)
+        for (i in xs.indices) {
+            val bob = sin(now / 1700.0 + i * 1.9).toFloat() * 4 * d
+            Yarn.drawDecal(c, ids[i], w * xs[i], h * ys[i] + bob, (if (ids[i] == 2) 34 else 96) * d, 46, sin(now / 2600.0 + i).toFloat() * 3f)
+        }
+    }
+
     override fun onDraw(c: Canvas) {
         val now = g.clock
         val w = width.toFloat()
@@ -257,6 +268,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         if (Yarn.loaded) {
             c.drawRect(0f, 0f, w, h, seaP)      // knitted sea
             c.drawRect(0f, 0f, w, h, bgTint)    // deeper toward the bottom
+            drawWaterDecals(c, w, h, now)
         } else c.drawRect(0f, 0f, w, h, bg)
         if (!g.started) return
 
@@ -1065,7 +1077,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         c.rotate(s.heading)
         // facing left he'd be upside down, so flip him over instead
         if (cos(Math.toRadians(s.heading.toDouble())) < -0.01) c.scale(1f, -1f)
-        if (Sprites.drawShark(c, u * 1.1f)) {
+        if (Yarn.drawShark(c, u * 3.3f) || Sprites.drawShark(c, u * 1.1f)) {
             c.restore()
             if (now - s.bumpAt < 500L) {
                 p.textAlign = Paint.Align.CENTER
@@ -1846,7 +1858,13 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.setShadowLayer(8f, 3f, 3f, Color.BLACK)
             fitText(c, m, w / 2, h * 0.6f, 32 * d, w * 0.8f)
             p.clearShadowLayer()
-            if (g.stars > 0) drawStars(c, w, h, now)
+            if (g.stars > 0) {
+                drawStars(c, w, h, now)
+                val age = now - g.starsAt
+                val hop = kotlin.math.abs(sin(age / 260.0)).toFloat() * 8 * d
+                Yarn.drawPose(c, if (g.stars >= 3) Yarn.POSE_HAPPY else Yarn.POSE_WAVE, w / 2, h * 0.6f - 122 * d - hop, 74 * d,
+                    sin(age / 400.0).toFloat() * 5f)
+            }
         }
     }
 

@@ -111,6 +111,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             c.drawRect(0f, 0f, w, h, bgTint)
         } else c.drawRect(0f, 0f, w, h, bg)
         drawScenery(c, w, h, now, dt)
+        drawCruisers(c, w, h, now)
         drawShellDecor(c, w, h, now)
         buttons.clear()
         drawMain(c, w, h, now)
@@ -121,6 +122,29 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             else -> {}
         }
         postInvalidateOnAnimation()
+    }
+
+    /** A friendly crochet shark cruises behind the menu, with yarn current squiggles and a waving Betito in the sea. */
+    private fun drawCruisers(c: Canvas, w: Float, h: Float, now: Long) {
+        if (!Yarn.loaded) return
+        val xs = floatArrayOf(0.18f, 0.5f, 0.82f, 0.34f, 0.7f)
+        val ys = floatArrayOf(0.42f, 0.30f, 0.52f, 0.66f, 0.72f)
+        val ids = intArrayOf(0, 3, 5, 6, 2)
+        for (i in xs.indices) {
+            val bob = sin(now / 1500.0 + i * 2.1).toFloat() * 5 * d
+            Yarn.drawDecal(c, ids[i], w * xs[i], h * ys[i] + bob, (if (ids[i] == 2) 36 else 110) * d, 40)
+        }
+        val period = 26000L
+        val k = ((now - start) % period) / period.toFloat()
+        val sw = min(w * 0.30f, 120 * d)
+        val sx = w + sw - (w + 2 * sw) * k          // swims right to left
+        val sy = h * 0.34f + sin(now / 900.0).toFloat() * 10 * d
+        c.save()
+        c.translate(sx, sy)
+        c.scale(-1f, 1f)                            // art faces right, he's heading left
+        c.rotate(sin(now / 900.0).toFloat() * 4f)
+        Yarn.drawShark(c, sw)
+        c.restore()
     }
 
     /** The crochet shells float around the corners of the menu. */
