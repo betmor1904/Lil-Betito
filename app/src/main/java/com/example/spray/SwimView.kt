@@ -29,7 +29,9 @@ import kotlin.random.Random
 class SwimView(ctx: Context, private val prefs: SharedPreferences, private val sfx: Sfx?) : View(ctx) {
     var onQuit: (() -> Unit)? = null
 
-    private val d = resources.displayMetrics.density
+    private val ui = resources.displayMetrics.density   // real screen density (text, touch sizes)
+    private val zoom = 0.62f                              // below 1 = zoomed out: more of the world on screen
+    private val d = ui * zoom                             // world unit
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rockP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val wallP = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -59,6 +61,10 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         // boost power each good friend stores
         val power = floatArrayOf(0.9f, 1.7f, 1.1f, 0.6f, 0.35f)
         val names = arrayOf("JELLYFISH", "DOLPHIN", "SEAHORSE", "CLOWNFISH", "STARFISH")
+        const val NONE_TOP = -100000f      // pillar with no top part
+        const val NONE_BOT = 100000f       // pillar with no bottom part
+        // how hard each friend bounces you off the floor
+        val launchMult = floatArrayOf(1.0f, 1.2f, 1.1f, 0.9f, 0f)
         const val READY = 0
         const val RUN = 1
         const val DEAD = 2
@@ -69,7 +75,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     private val flapV get() = 6.3f * d
     private val maxFall get() = 9f * d
     private val pullAcc get() = 1.15f * d
-    private val ceilH get() = 20 * d
+    private val ceilH get() = 0f            // the sky is open; only the floor is deadly
     private val floorH get() = 32 * d
     private val br get() = 14 * d            // Betito's hit radius
     private val spriteH get() = 54 * d
@@ -130,7 +136,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         state = READY
         worldX = 0f
         bx = baseX
-        by = height * 0.5f
+        by = height * 0.38f
         ovx = 0f
         vy = 0f
         extra = 0f
@@ -153,9 +159,10 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         for (i in 0 until 18) {
             bubs.add(Bub(Random.nextFloat() * width, Random.nextFloat() * height, (2 + Random.nextFloat() * 4) * d, 0.3f + Random.nextFloat() * 0.5f))
         }
-        // a friend waiting early on so the "press things" idea is obvious
-        objs.add(Obj(K_JELLY, width * 0.50f, height * 0.36f, 26 * d, height * 0.36f, 0f, 0f))
-        genX = width * 1.15f
+        // a jellyfish pad waiting on the floor so the "dive at it" idea is obvious
+        val fy = height - floorH - 28 * d * 0.6f
+        objs.add(Obj(K_JELLY, width * 0.50f, fy, 28 * d, fy, 0f, 0f))
+        genX = width * 0.95f
         lastGap = 0f
         genAhead()
     }
@@ -164,46 +171,46 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     // world generation
     // ============================================================
     private fun genAhead() {
-        val h = height.toFloat()
+        val floorY = height - floorH
         while (genX < camX + width + 500 * d) {
             val m = max(0f, genX / (8f * d))
-            val gapH = (195f - min(60f, m / 8f)) * d
-            val top = ceilH + gapH / 2f + 12 * d
-            val bot = h - floorH - gapH / 2f - 12 * d
-            var cy = top + Random.nextFloat() * max(1f, bot - top)
-            if (lastGap != 0f) cy = cy.coerceIn(lastGap - 130 * d, lastGap + 130 * d).coerceIn(top, bot)
-            lastGap = cy
-            pillars.add(Pillar(genX, 58 * d, cy - gapH / 2f, cy + gapH / 2f))
-            val spacing = (470f - min(150f, m / 3f)) * d
-            placeObjects(genX + spacing * 0.5f, m)
-            genX += spacing
-        }
-    }
-
-    private fun placeObjects(mid: Float, m: Float) {
-        val h = height.toFloat()
-        // a friend in the open water
-        if (Random.nextFloat() < 0.8f) {
+            val seg = (330f + Random.nextFloat() * 90f + min(120f, m / 4f)) * d
+            // a landing pad on the floor: dive at it, bounce up
             val dolphinChance = 0.08f + min(0.12f, m / 2000f)
             val r = Random.nextFloat()
             val kind = when {
                 r < dolphinChance -> K_DOLPHIN
-                r < dolphinChance + 0.30f -> K_JELLY
-                r < dolphinChance + 0.45f -> K_SEAHORSE
-                r < dolphinChance + 0.58f -> K_CLOWN
-                else -> K_STAR
+                r < dolphinChance + 0.40f -> K_JELLY
+                r < dolphinChance + 0.65f -> K_SEAHORSE
+                else -> K_CLOWN
             }
-            val y = ceilH + 44 * d + Random.nextFloat() * (h - floorH - ceilH - 88 * d)
-            objs.add(Obj(kind, mid + (Random.nextFloat() - 0.5f) * 140 * d, y, 26 * d, y, 0f, 0f))
-        }
-        // trouble gets added the farther you go
-        if (m > 120f && Random.nextFloat() < 0.35f) {
-            val y = h - floorH - 20 * d
-            objs.add(Obj(K_CRAB, mid + (Random.nextFloat() - 0.5f) * 240 * d, y, 22 * d, y, 0f, 0f))
-        }
-        if (m > 300f && Random.nextFloat() < 0.30f) {
-            val y = ceilH + 90 * d + Random.nextFloat() * (h - floorH - ceilH - 180 * d)
-            objs.add(Obj(K_SHARK, mid + (Random.nextFloat() - 0.5f) * 200 * d, y, 30 * d, y, 70 * d, Random.nextFloat() * 6f))
+            val pr = 28 * d
+            val py = floorY - pr * 0.6f
+            objs.add(Obj(kind, genX, py, pr, py, 0f, 0f))
+            // a rock rising from the floor (jump it)
+            if (m > 40f && Random.nextFloat() < min(0.75f, 0.35f + m / 600f)) {
+                val rockH = floorY * (0.14f + 0.30f * min(1f, m / 500f) * Random.nextFloat())
+                pillars.add(Pillar(genX + seg * 0.55f, 52 * d, NONE_TOP, floorY - rockH))
+            }
+            // a hanging rock (stay under it)
+            if (m > 150f && Random.nextFloat() < 0.35f) {
+                pillars.add(Pillar(genX + seg * 0.82f, 52 * d, floorY * (0.12f + 0.25f * Random.nextFloat()), NONE_BOT))
+            }
+            // a star up in the sky: the reward for staying high
+            if (Random.nextFloat() < 0.5f) {
+                val sy = 30 * d + Random.nextFloat() * floorY * 0.35f
+                objs.add(Obj(K_STAR, genX + seg * 0.3f, sy, 24 * d, sy, 0f, 0f))
+            }
+            // trouble: crabs by the pads, sharks in the air
+            if (m > 120f && Random.nextFloat() < 0.30f) {
+                val cy = floorY - 20 * d
+                objs.add(Obj(K_CRAB, genX + seg * 0.25f, cy, 22 * d, cy, 0f, 0f))
+            }
+            if (m > 300f && Random.nextFloat() < 0.30f) {
+                val sy = floorY * (0.25f + 0.30f * Random.nextFloat())
+                objs.add(Obj(K_SHARK, genX + seg * 0.5f, sy, 30 * d, sy, 70 * d, Random.nextFloat() * 6f))
+            }
+            genX += seg
         }
     }
 
@@ -237,7 +244,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             }
         }
         // double tap (two quick taps near each other) fires a stored boost
-        if (stored > 0f && now - lastTapAt < 260L && hypot(x - lastTapX, y - lastTapY) < 80 * d) {
+        if (stored > 0f && now - lastTapAt < 260L && hypot(x - lastTapX, y - lastTapY) < 90 * ui) {
             fireBoost(now)
             lastTapAt = 0L
             return
@@ -259,7 +266,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
 
     private fun pick(x: Float, y: Float): Obj? {
         var best: Obj? = null
-        var bd = 64 * d
+        var bd = 70 * ui
         for (o in objs) {
             if (o.hazard || o.taken) continue
             val ox = sxOf(o.x)
@@ -301,7 +308,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             if (b.y < -10 * d) b.y = height + 10 * d
         }
         if (state == READY) {
-            by = height * 0.5f + sin(now / 380.0).toFloat() * 9 * d
+            by = height * 0.38f + sin(now / 380.0).toFloat() * 9 * d
             return
         }
         if (state == DEAD) return
@@ -376,7 +383,11 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         }
 
         // rock, ceiling, floor
-        if (by - br < ceilH || by + br > height - floorH) die(now, "SQUISHED!")
+        if (by - br < 0f) {
+            by = br
+            if (vy < 0f) vy = 0f
+        }
+        if (by + br > height - floorH) die(now, "SPLASHED!")
         for (pl in pillars) {
             val px = sxOf(pl.x)
             if (bx + br * 0.8f > px && bx - br * 0.8f < px + pl.w) {
@@ -402,7 +413,13 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             storedFrom = o.kind
         }
         extra = min(extra + base * 0.25f * pw, base * 3.5f)
-        if (o.kind == K_JELLY) vy = -7 * d                // jellyfish bounce you up
+        if (o.kind != K_STAR) {
+            // landing on a floor friend: the harder you dove in, the higher you fly
+            val down = max(vy, 0f)
+            val lv = ((5f * d + 0.7f * down + 0.12f * speed) * launchMult[o.kind]).coerceIn(7f * d, 16f * d)
+            vy = -lv
+            shakeMs = 140f
+        }
         if (o.kind == K_STAR) bonusM += 25
         sfx?.play(if (o.kind == K_DOLPHIN) "woo" else "coin", 0.9f, 0L)
         pops.add(Pop(Yarn.POP_BING, o.x, o.y - 30 * d, now, 6f))
@@ -510,11 +527,9 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             wallP.shader = null
             wallP.color = Color.parseColor("#4E342E")
         }
-        c.drawRect(0f, 0f, w, ceilH, wallP)
         c.drawRect(0f, h - floorH, w, h, wallP)
         p.style = Paint.Style.FILL
         p.color = Color.argb(120, 0, 0, 0)
-        c.drawRect(0f, ceilH, w, ceilH + 3 * d, p)
         c.drawRect(0f, h - floorH - 3 * d, w, h - floorH, p)
     }
 
@@ -532,13 +547,18 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         for (pl in pillars) {
             val px = sxOf(pl.x)
             if (px > w + 10 * d || px + pl.w < -10 * d) continue
-            c.drawRoundRect(px, -30 * d, px + pl.w, pl.gapTop, 14 * d, 14 * d, rockP)
-            c.drawRoundRect(px, pl.gapBot, px + pl.w, h + 30 * d, 14 * d, 14 * d, rockP)
             p.style = Paint.Style.STROKE
             p.strokeWidth = 3 * d
-            p.color = Color.argb(150, 20, 10, 5)
-            c.drawRoundRect(px, -30 * d, px + pl.w, pl.gapTop, 14 * d, 14 * d, p)
-            c.drawRoundRect(px, pl.gapBot, px + pl.w, h + 30 * d, 14 * d, 14 * d, p)
+            if (pl.gapTop > 0f) {
+                c.drawRoundRect(px, -30 * d, px + pl.w, pl.gapTop, 14 * d, 14 * d, rockP)
+                p.color = Color.argb(150, 20, 10, 5)
+                c.drawRoundRect(px, -30 * d, px + pl.w, pl.gapTop, 14 * d, 14 * d, p)
+            }
+            if (pl.gapBot < h) {
+                c.drawRoundRect(px, pl.gapBot, px + pl.w, h + 30 * d, 14 * d, 14 * d, rockP)
+                p.color = Color.argb(150, 20, 10, 5)
+                c.drawRoundRect(px, pl.gapBot, px + pl.w, h + 30 * d, 14 * d, 14 * d, p)
+            }
             p.style = Paint.Style.FILL
         }
     }
@@ -650,7 +670,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         p.style = Paint.Style.FILL
         p.typeface = Typeface.DEFAULT_BOLD
         p.textAlign = align
-        p.textSize = size * d
+        p.textSize = size * ui
         p.color = color
         p.setShadowLayer(4f, 1.5f, 1.5f, Color.BLACK)
         c.drawText(s, x, y, p)
@@ -658,30 +678,30 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     }
 
     private fun drawHud(c: Canvas, w: Float, h: Float, now: Long) {
-        text(c, "${meters()} m", 18 * d, ceilH + 30 * d, 26f, Color.WHITE, Paint.Align.LEFT)
-        text(c, "BEST $best m", 18 * d, ceilH + 48 * d, 12f, Color.argb(220, 255, 224, 130), Paint.Align.LEFT)
+        text(c, "${meters()} m", 18 * ui, ceilH + 30 * ui, 26f, Color.WHITE, Paint.Align.LEFT)
+        text(c, "BEST $best m", 18 * ui, ceilH + 48 * ui, 12f, Color.argb(220, 255, 224, 130), Paint.Align.LEFT)
         if (state != RUN) return
         // speed bar
         val base = baseSpeed()
         val k = (speedNow() / (base * 4.2f)).coerceIn(0f, 1f)
-        val bw = 130 * d
-        val bxl = w - bw - 18 * d
-        val byt = ceilH + 14 * d
+        val bw = 130 * ui
+        val bxl = w - bw - 18 * ui
+        val byt = ceilH + 14 * ui
         p.style = Paint.Style.FILL
         p.color = Color.argb(110, 0, 0, 0)
-        rect.set(bxl, byt, bxl + bw, byt + 11 * d)
-        c.drawRoundRect(rect, 6 * d, 6 * d, p)
+        rect.set(bxl, byt, bxl + bw, byt + 11 * ui)
+        c.drawRoundRect(rect, 6 * ui, 6 * ui, p)
         p.color = if (slowMs > 0f) Color.parseColor("#FF7043") else if (boostMs > 0f) Color.parseColor("#E040FB") else Color.parseColor("#4FC3F7")
-        rect.set(bxl, byt, bxl + bw * k, byt + 11 * d)
-        c.drawRoundRect(rect, 6 * d, 6 * d, p)
-        text(c, if (slowMs > 0f) "SQUISHED! SLOW" else if (boostMs > 0f) "BOOST!!" else "SPEED", bxl + bw / 2f, byt + 30 * d, 11f, Color.WHITE)
+        rect.set(bxl, byt, bxl + bw * k, byt + 11 * ui)
+        c.drawRoundRect(rect, 6 * ui, 6 * ui, p)
+        text(c, if (slowMs > 0f) "SQUISHED! SLOW" else if (boostMs > 0f) "BOOST!!" else "SPEED", bxl + bw / 2f, byt + 30 * ui, 11f, Color.WHITE)
         // stored boost
         if (stored > 0f) {
             val pulse = 0.5f + 0.5f * sin(now / 140.0).toFloat()
             val nm = if (storedFrom in names.indices) names[storedFrom] else "BOOST"
-            text(c, "$nm BOOST x${"%.1f".format(stored)}   DOUBLE TAP!", w / 2f, h - floorH - 14 * d, (14 + 2 * pulse), Color.parseColor("#FFD54F"))
+            text(c, "$nm BOOST x${"%.1f".format(stored)}   DOUBLE TAP!", w / 2f, h - floorH - 14 * ui, (14 + 2 * pulse), Color.parseColor("#FFD54F"))
         } else if (hintMs < 12000f) {
-            text(c, "PRESS A GLOWING FRIEND TO GRAB A BOOST", w / 2f, h - floorH - 14 * d, 12f, Color.argb(210, 255, 255, 255))
+            text(c, "PRESS A FRIEND ON THE FLOOR: DIVE, THEN BOUNCE HIGH", w / 2f, h - floorH - 14 * ui, 12f, Color.argb(210, 255, 255, 255))
         }
     }
 
@@ -689,10 +709,10 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         p.style = Paint.Style.FILL
         p.color = Color.argb(120, 0, 0, 0)
         rect.set(w * 0.2f, h * 0.18f, w * 0.8f, h * 0.44f)
-        c.drawRoundRect(rect, 18 * d, 18 * d, p)
-        text(c, "SWIM RUN", w / 2f, h * 0.18f + 34 * d, 28f, Color.WHITE)
-        text(c, "TAP = SWIM UP.   PRESS A FRIEND = PULL TO IT.", w / 2f, h * 0.18f + 58 * d, 13f, Color.parseColor("#B3E5FC"))
-        text(c, "REACH IT FAST FOR A BIGGER BOOST, THEN DOUBLE TAP!", w / 2f, h * 0.18f + 76 * d, 13f, Color.parseColor("#FFE082"))
+        c.drawRoundRect(rect, 18 * ui, 18 * ui, p)
+        text(c, "SWIM RUN", w / 2f, h * 0.18f + 34 * ui, 28f, Color.WHITE)
+        text(c, "TAP = SWIM UP.   PRESS A FLOOR FRIEND = DIVE AT IT.", w / 2f, h * 0.18f + 58 * ui, 13f, Color.parseColor("#B3E5FC"))
+        text(c, "DIVE FASTER = BOUNCE HIGHER. TOUCH THE FLOOR = SPLASH!", w / 2f, h * 0.18f + 76 * ui, 13f, Color.parseColor("#FFE082"))
         val pulse = 0.5f + 0.5f * sin(SystemClock.uptimeMillis() / 250.0).toFloat()
         text(c, "TAP TO START", w / 2f, h * 0.62f, 18f + 2 * pulse, Color.WHITE)
     }
@@ -702,15 +722,15 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         p.color = Color.argb(150, 0, 0, 0)
         c.drawRect(0f, 0f, w, h, p)
         text(c, deathText, w / 2f, h * 0.30f, 32f, Color.parseColor("#FF8A65"))
-        text(c, "${meters()} m", w / 2f, h * 0.30f + 46 * d, 40f, Color.WHITE)
-        text(c, if (newBest) "NEW BEST!" else "BEST $best m", w / 2f, h * 0.30f + 70 * d, 16f, Color.parseColor("#FFD54F"))
+        text(c, "${meters()} m", w / 2f, h * 0.30f + 46 * ui, 40f, Color.WHITE)
+        text(c, if (newBest) "NEW BEST!" else "BEST $best m", w / 2f, h * 0.30f + 70 * ui, 16f, Color.parseColor("#FFD54F"))
         val pulse = 0.5f + 0.5f * sin(now / 250.0).toFloat()
-        text(c, "TAP TO TRY AGAIN", w / 2f, h * 0.30f + 106 * d, 18f + 2 * pulse, Color.WHITE)
-        val bw = 120 * d
-        val bh = 38 * d
-        menuR.set(w / 2f - bw / 2f, h * 0.30f + 126 * d, w / 2f + bw / 2f, h * 0.30f + 126 * d + bh)
+        text(c, "TAP TO TRY AGAIN", w / 2f, h * 0.30f + 106 * ui, 18f + 2 * pulse, Color.WHITE)
+        val bw = 120 * ui
+        val bh = 38 * ui
+        menuR.set(w / 2f - bw / 2f, h * 0.30f + 126 * ui, w / 2f + bw / 2f, h * 0.30f + 126 * ui + bh)
         p.color = Color.parseColor("#37474F")
-        c.drawRoundRect(menuR, 12 * d, 12 * d, p)
-        text(c, "MENU", w / 2f, menuR.centerY() + 6 * d, 16f, Color.WHITE)
+        c.drawRoundRect(menuR, 12 * ui, 12 * ui, p)
+        text(c, "MENU", w / 2f, menuR.centerY() + 6 * ui, 16f, Color.WHITE)
     }
 }
