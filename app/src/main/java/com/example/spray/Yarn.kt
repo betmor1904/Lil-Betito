@@ -41,6 +41,15 @@ object Yarn {
     // crochet critters: 0 octopus, 1 seahorse, 2 clownfish, 3 crab, 4 starfish, 5 dolphin, 6 jellyfish
     const val PAL_COUNT = 7
     private val pals = arrayOfNulls<Bitmap>(PAL_COUNT)
+    // the new crochet Betito: 0 swim, 1 stroke (flipper up), 2 happy wave, 3 dive (head down), 4 tumble, 5 curled in his shell, 6 shell only
+    const val B_SWIM = 0
+    const val B_STROKE = 1
+    const val B_WAVE = 2
+    const val B_DIVE = 3
+    const val B_TUMBLE = 4
+    const val B_CURL = 5
+    const val B_SHELL = 6
+    private val bet = arrayOfNulls<Bitmap>(7)
     var reef: Bitmap? = null
         private set
     var sea: BitmapShader? = null
@@ -94,6 +103,12 @@ object Yarn {
                     R.drawable.pal_crab, R.drawable.pal_starfish, R.drawable.pal_dolphin, R.drawable.pal_jellyfish)
                 for (i in palIds.indices) pals[i] = bmp(palIds[i])
                 reef = bmp(R.drawable.bg_reef)
+            } catch (e: Exception) {
+            }
+            try {
+                val betIds = intArrayOf(R.drawable.betito_swim, R.drawable.betito_stroke, R.drawable.betito_wave,
+                    R.drawable.betito_dive, R.drawable.betito_tumble, R.drawable.betito_curl, R.drawable.betito_shell)
+                for (i in betIds.indices) bet[i] = bmp(betIds[i])
             } catch (e: Exception) {
             }
             sea = shader(R.drawable.yarn_sea)
@@ -152,6 +167,23 @@ object Yarn {
         rect.set(-w / 2f, -h / 2f, w / 2f, h / 2f)
         paint.alpha = 255
         c.drawBitmap(b, null, rect, paint)
+        c.restore()
+        return true
+    }
+
+    /** Draws one of the new crochet Betito pictures centered on (x, y), `wd` wide, turned `rot` degrees. False if it has no picture. */
+    fun drawBet(c: Canvas, i: Int, x: Float, y: Float, wd: Float, rot: Float = 0f, a: Int = 255,
+                sx: Float = 1f, sy: Float = 1f): Boolean {
+        val b = bet.getOrNull(i) ?: return false
+        val h = wd * b.height / b.width
+        c.save()
+        c.translate(x, y)
+        c.rotate(rot)
+        c.scale(sx, sy)
+        rect.set(-wd / 2f, -h / 2f, wd / 2f, h / 2f)
+        paint.alpha = a.coerceIn(0, 255)
+        c.drawBitmap(b, null, rect, paint)
+        paint.alpha = 255
         c.restore()
         return true
     }
