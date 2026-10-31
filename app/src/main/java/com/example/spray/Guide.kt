@@ -13,7 +13,7 @@ object Guide {
     class Entry(val key: String, val title: String, val text: String, val color: Int)
 
     val entries = listOf(
-        Entry("shoot", "SHOOTING", "When everything stops (green ring), touch anywhere, pull back and let go. Pull further for more power. Pull back into the X to cancel without spending a shot.", Color.parseColor("#76FF03")),
+        Entry("shoot", "SHOOTING", "When everything stops (green ring), touch anywhere, pull back and let go. Pull further for more power. Pull back into the X to cancel without spending a shot. TWO THUMBS: aim with one, then touch with the other to LOCK the line. Pull the second thumb back for power and let go to shoot.", Color.parseColor("#76FF03")),
         Entry("pocket", "SINK THE SHELLS", "Betito is the cue ball. Hit the shells so they roll into the dark holes. The white line shows where a shell will go, and turns green with IN! when it's headed for a hole. Don't fall in a hole yourself: that's a SCRATCH and costs a shot.", Color.parseColor("#FFC107")),
         Entry("door", "THE DOOR", "The door in the right wall is locked until every shell is sunk. Then it opens and pulls Betito in. Swim out to finish the hole.", Color.parseColor("#76FF03")),
         Entry("bank", "BANK SHOTS", "Walls and rocks are bouncy. The red dots trace Betito's path with a ring at each bounce. Sink a shell off a wall for BANK SHOT!!, hit a shell after a bounce for KICK SHOT!", Color.parseColor("#80DEEA")),

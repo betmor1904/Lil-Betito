@@ -51,6 +51,15 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private val maxPull get() = 125 * d
     private val deadPull get() = 24 * d
 
+    // two-thumb aim: while finger 1 is aiming, a 2nd finger LOCKS the line; the 2nd finger then pulls back for power
+    private var locked = false
+    private var lockPtr = -1
+    private var lockSX = 0f
+    private var lockSY = 0f
+    private var lockTX = 0f
+    private var lockTY = 0f
+    private var lockLen = 0f      // how far finger 1 had pulled when the line was locked (for drawing the frozen band)
+
     var onResize: ((Int, Int) -> Unit)? = null
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
@@ -86,6 +95,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private var tapDownAt = 0L
 
     private fun cancelAim() {
+        locked = false
+        lockPtr = -1
         aimPtr = -1
         g.aiming = false
         g.launchQueued = false
@@ -217,10 +228,19 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 val x = e.getX(i)
                 val y = e.getY(i)
                 g.skipIntro(g.clock)
+                if (locked) return true   // line is locked: extra fingers do nothing
                 if (aimPtr != -1 && id != aimPtr && g.aiming) {
-                    // a second finger tapped while you were aiming: cancel, no shot spent
-                    cancelAim()
-                    announceCancel()
+                    // a second finger came down while you were aiming: LOCK the line.
+                    // The 2nd finger now pulls back for power; let go of it to shoot.
+                    locked = true
+                    lockPtr = id
+                    lockSX = x
+                    lockSY = y
+                    lockTX = x
+                    lockTY = y
+                    lockLen = hypot(aimSX - aimTX, aimSY - aimTY).coerceAtMost(maxPull)
+                    g.aimPower = 0f
+                    g.sfxClick()
                     return true
                 }
                 if (turnPtr == -1 && g.beginTurnGrab(x, y, g.clock)) {
@@ -242,6 +262,16 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                     if (ti >= 0) g.setTurnDir(e.getX(ti), e.getY(ti))
                     return true
                 }
+                if (locked) {
+                    // direction is frozen; only the 2nd finger matters (its pull = power)
+                    val li = e.findPointerIndex(lockPtr)
+                    if (li >= 0) {
+                        lockTX = e.getX(li)
+                        lockTY = e.getY(li)
+                        updateLockPower()
+                    }
+                    return true
+                }
                 val i = e.findPointerIndex(aimPtr)
                 if (i >= 0) {
                     aimTX = e.getX(i)
@@ -255,6 +285,31 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 if (turnPtr != -1 && (cancel || id == turnPtr)) {
                     if (cancel) g.turnGrab = false else g.endTurnGrab(g.clock)
                     turnPtr = -1
+                    return true
+                }
+                if (locked) {
+                    if (cancel) {
+                        cancelAim()
+                    } else if (id == lockPtr) {
+                        if (hypot(lockSX - lockTX, lockSY - lockTY) >= deadPull) {
+                            // let go of the power finger = shoot along the locked line
+                            g.launchQueued = true
+                            locked = false
+                            lockPtr = -1
+                            aimPtr = -1
+                            g.aiming = false
+                        } else if (aimPtr != -1) {
+                            // power finger went back into the X: unlock, keep aiming with finger 1
+                            locked = false
+                            lockPtr = -1
+                            updateAim()
+                        } else {
+                            cancelAim()
+                            announceCancel()
+                        }
+                    } else if (id == aimPtr) {
+                        aimPtr = -1   // finger 1 lifted: the line stays locked
+                    }
                     return true
                 }
                 if (id == aimPtr || cancel) {
@@ -323,6 +378,12 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         g.sfxClick()
         g.popup = "SHOT CANCELLED - NOTHING USED"
         g.popupAt = g.clock
+    }
+
+    /** Locked line: the 2nd finger's pull distance from where it touched sets the power (any direction). */
+    private fun updateLockPower() {
+        val len = hypot(lockSX - lockTX, lockSY - lockTY)
+        g.aimPower = if (len < deadPull) 0f else ((len - deadPull) / (maxPull - deadPull)).coerceIn(0f, 1f)
     }
 
     /** Pull vector = where you touched minus where your finger is now. He launches the opposite way you drag. */
@@ -2290,7 +2351,65 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
     }
 
+    /** Line locked: frozen band from finger 1's spot, plus the power band under the 2nd finger. */
+    private fun drawLocked(c: Canvas) {
+        val lockCol = Color.argb(235, 0, 229, 255)
+        p.strokeCap = Paint.Cap.ROUND
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.DEFAULT_BOLD
+        // frozen aim band (where finger 1 left it)
+        val ex = aimSX - g.aimDX * lockLen
+        val ey = aimSY - g.aimDY * lockLen
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 4 * d
+        p.color = lockCol
+        c.drawLine(aimSX, aimSY, ex, ey, p)
+        c.drawCircle(aimSX, aimSY, deadPull, p)
+        p.style = Paint.Style.FILL
+        c.drawCircle(ex, ey, 9 * d, p)
+        p.textSize = 12 * d
+        p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        c.drawText("LINE LOCKED", aimSX, aimSY - deadPull - 8 * d, p)
+        // power finger
+        val col = aimColor()
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2 * d
+        p.color = Color.argb(150, 255, 193, 7)
+        c.drawCircle(lockSX, lockSY, deadPull, p)
+        val xs = deadPull * 0.38f
+        c.drawLine(lockSX - xs, lockSY - xs, lockSX + xs, lockSY + xs, p)
+        c.drawLine(lockSX - xs, lockSY + xs, lockSX + xs, lockSY - xs, p)
+        val pull = hypot(lockSX - lockTX, lockSY - lockTY).coerceAtMost(maxPull)
+        if (pull >= deadPull) {
+            val ux = (lockTX - lockSX) / hypot(lockTX - lockSX, lockTY - lockSY)
+            val uy = (lockTY - lockSY) / hypot(lockTX - lockSX, lockTY - lockSY)
+            p.strokeWidth = (5 - 2.5f * g.aimPower) * d
+            p.color = Color.argb(200, Color.red(col), Color.green(col), Color.blue(col))
+            c.drawLine(lockSX, lockSY, lockSX + ux * pull, lockSY + uy * pull, p)
+            p.style = Paint.Style.FILL
+            c.drawCircle(lockSX + ux * pull, lockSY + uy * pull, 10 * d, p)
+        }
+        p.style = Paint.Style.FILL
+        p.textSize = 12 * d
+        p.color = Color.WHITE
+        val label = if (!g.ready) "WAIT..." else "POWER ${(g.aimPower * 100).toInt()}%"
+        c.drawText(label, lockSX, lockSY - deadPull - 8 * d, p)
+        p.textSize = 10 * d
+        p.color = Color.argb(220, 255, 213, 79)
+        c.drawText("PULL BACK, LET GO TO SHOOT", lockSX, lockSY + deadPull + 16 * d, p)
+        p.clearShadowLayer()
+    }
+
     private fun drawControls(c: Canvas, now: Long) {
+        if (locked && !g.aiming) {
+            // the game reset the aim (new hole, etc.): drop the lock
+            locked = false
+            lockPtr = -1
+        }
+        if (locked) {
+            drawLocked(c)
+            return
+        }
         // slingshot band: from where you touched to where your finger is
         if (aimPtr != -1) {
             p.style = Paint.Style.STROKE
@@ -2298,7 +2417,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.color = Color.argb(70, 255, 255, 255)
             c.drawCircle(aimSX, aimSY, deadPull, p)
             if (g.aiming) {
-                // the cancel zone: drag back in here (or tap a 2nd finger) and let go to cancel
+                // the cancel zone: drag back in here and let go to cancel (a 2nd finger LOCKS the line)
                 p.color = Color.argb(150, 255, 193, 7)
                 p.strokeWidth = 3 * d
                 c.drawCircle(aimSX, aimSY, deadPull, p)
@@ -2324,7 +2443,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 c.drawText(label, aimSX, aimSY - deadPull - 8 * d, p)
                 p.textSize = 10 * d
                 p.color = Color.argb(220, 255, 213, 79)
-                c.drawText("BACK IN THE X = CANCEL", aimSX, aimSY + deadPull + 16 * d, p)
+                c.drawText("BACK IN THE X = CANCEL   2ND THUMB = LOCK", aimSX, aimSY + deadPull + 16 * d, p)
                 p.clearShadowLayer()
             }
             p.style = Paint.Style.FILL
@@ -2343,7 +2462,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             c.drawCircle(hx - 60 * d * k, hy + 10 * d * k, 9 * d, p)
             p.textAlign = Paint.Align.CENTER
             p.textSize = 11 * d
-            c.drawText("TOUCH, PULL BACK, LET GO", hx, hy - 18 * d, p)
+            c.drawText("TOUCH + PULL TO AIM. 2ND THUMB LOCKS IT, PULL IT FOR POWER", hx, hy - 18 * d, p)
         }
     }
 
