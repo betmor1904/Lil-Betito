@@ -122,6 +122,25 @@ class Ball(var x: Float, var y: Float, val kind: Int) {
 /** A hole in the sea floor. Shells that roll in are sunk; if Betito falls in it's a scratch. */
 class Pocket(val x: Float, val y: Float)
 
+/** A reef friend floating on the table. Swim Betito through it to get its power. */
+class Power(val x: Float, val y: Float, val kind: Int) {
+    var taken = false
+    var takenAt = 0L
+}
+
+object Powers {
+    const val BLAST = 0      // jellyfish: a zap that sends every nearby shell flying
+    const val DASH = 1       // dolphin: super speed, harder bounces, harder hits
+    const val FREE = 2       // starfish: gives a shot back
+    const val BIGHOLES = 3   // crab: the holes get bigger for this shot and the next
+    const val SCARE = 4      // clownfish: the sharks freeze
+    const val MAGNET = 5     // seahorse: the holes pull shells in for this shot and the next
+    const val COUNT = 6
+    val pal = intArrayOf(6, 5, 4, 3, 2, 1)      // which crochet friend wears each power
+    val names = arrayOf("BLAST", "SPEED", "FREE SHOT", "BIG HOLES", "SHARK SCARE", "MAGNET")
+    val colors = intArrayOf(0xFFE040FB.toInt(), 0xFF40C4FF.toInt(), 0xFFFFD740.toInt(), 0xFFFF7043.toInt(), 0xFFFF9100.toInt(), 0xFF69F0AE.toInt())
+}
+
 class Fish(var x: Float, var y: Float, var vx: Float, val size: Float, val color: Int)
 
 class Bubble(var x: Float, var y: Float, val rad: Float, val speed: Float, val seed: Float)
@@ -219,7 +238,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // ---------- billiards ----------
     val balls = ArrayList<Ball>()
     val pockets = ArrayList<Pocket>()
-    val pocketR get() = 22f * d
+    val pocketR get() = 22f * d * (if (bigHoleShots > 0) 1.55f else 1f)
+    val powers = ArrayList<Power>()
+    var superUntil = 0L          // dolphin dash
+    var bigHoleShots = 0         // crab: shots left with big holes
+    var magnetShots = 0          // seahorse: shots left with magnet holes
+    var blastAt = 0L
+    var blastX = 0f
+    var blastY = 0f
+    val blastRad get() = 170f * d
     var doorOpen = false
     var doorOpenAt = 0L
     private var doorBlock: Block? = null
@@ -305,6 +332,14 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var previewBallEX = 0f                 // where that shell heads (straight line)
     var previewBallEY = 0f
     var previewBallIn = false              // the shell's line runs into a pocket
+    val previewBallPts = FloatArray(6)     // the shell's path: start, a bounce, the end
+    var previewBallPtN = 0
+    var previewBall2Hit = false            // the first shell runs into a second one
+    var previewB2X = 0f
+    var previewB2Y = 0f
+    var previewB2EX = 0f                   // where the second shell heads
+    var previewB2EY = 0f
+    var previewB2In = false
     var previewTurnDX = 0f                 // which way Betito glances off
     var previewTurnDY = 0f
     var previewScratch = false             // the path drops Betito into a pocket
@@ -469,6 +504,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             "door" -> Tip(key, holeX - 10 * d, holeY, 56 * d)
             "pocket" -> balls.firstOrNull { !it.sunk }?.let { Tip(key, it.x, it.y, 46 * d) }
             "par" -> Tip(key, W / 2f, playT + 12 * d, 90 * d)
+            "power" -> powers.firstOrNull { !it.taken }?.let { Tip(key, it.x, it.y, 40 * d) }
             "blue" -> zoneTip(WaterZone.UP)
             "green" -> zoneTip(WaterZone.SIDE)
             "red" -> zoneTip(WaterZone.RIP)
@@ -492,7 +528,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     // the order Octo introduces things in when a hole starts
-    private val tipOrder = listOf("shark")
+    private val tipOrder = listOf("power", "shark")
 
     private fun queueStartTips() {
         startTipsQueued = true
@@ -627,6 +663,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         scratchThisShot = false
         touchedBallThisShot = false
         scratchAt = 0L
+        superUntil = 0L
+        bigHoleShots = 0
+        magnetShots = 0
+        blastAt = 0L
 
         buildTable()
         // pool golf: one shot per shell plus the shot out the door is a BIRDIE; par gives you one spare
@@ -845,6 +885,98 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (hypot(x - sx0, y - mid) < 110 * d) continue
             if (sharks.any { segDist(x, y, it.ax, it.ay, it.bx, it.by) < sharkR + shellR + 10 * d }) continue
             balls.add(Ball(x, y, balls.size % 5))
+        }
+
+        // reef friends with powers (from hole 2)
+        powers.clear()
+        val nPowers = when { lv < 2 -> 0; lv < 6 -> 1; else -> 2 }
+        val kinds = (0 until Powers.COUNT).filter { it != Powers.SCARE || sharks.isNotEmpty() }.shuffled(rnd)
+        tries = 0
+        var ki = 0
+        while (powers.size < nPowers && tries < 300 && ki < kinds.size) {
+            tries++
+            val x = 130 * d + rnd.nextFloat() * max(1f, exitX - 200 * d)
+            val y = playT + 34 * d + rnd.nextFloat() * max(1f, playB - playT - 68 * d)
+            if (pockets.any { hypot(it.x - x, it.y - y) < pocketR + 40 * d }) continue
+            if (pointHitsWall(x, y, 22 * d)) continue
+            if (balls.any { hypot(it.x - x, it.y - y) < shellR + 34 * d }) continue
+            if (powers.any { hypot(it.x - x, it.y - y) < 90 * d }) continue
+            if (hypot(x - sx0, y - mid) < 90 * d) continue
+            if (sharks.any { segDist(x, y, it.ax, it.ay, it.bx, it.by) < sharkR + 24 * d }) continue
+            powers.add(Power(x, y, kinds[ki++]))
+        }
+    }
+
+    /** Betito swam through a reef friend: use its power. */
+    private fun takePower(pw: Power, now: Long) {
+        pw.taken = true
+        pw.takenAt = now
+        val bd = band()
+        score += 100 * bd
+        sfx?.play("woo", 0.9f, 0L)
+        for (k in 0 until 18) {
+            val a = Random.nextFloat() * 6.283f
+            spawnParticle(pw.x, pw.y, cos(a) * 4 * d, sin(a) * 4 * d, Powers.colors[pw.kind], 3 * d, 28f)
+        }
+        when (pw.kind) {
+            Powers.BLAST -> {
+                blastAt = now
+                blastX = pw.x
+                blastY = pw.y
+                var flung = 0
+                for (b in balls) {
+                    if (b.sunk) continue
+                    val dx = b.x - pw.x
+                    val dy = b.y - pw.y
+                    val dd = hypot(dx, dy)
+                    if (dd > blastRad || dd < 0.01f) continue
+                    val sp = (5f + 11f * (1f - dd / blastRad)) * d
+                    b.vx += dx / dd * sp
+                    b.vy += dy / dd * sp
+                    b.hitAt = now
+                    flung++
+                }
+                for (s in sharks) if (hypot(s.x - pw.x, s.y - pw.y) < blastRad) s.stunUntil = now + 3000L
+                sfx?.play("bust", 1f, 0L)
+                sfx?.play("rumble", 0.8f, 0L)
+                pop(Yarn.POP_BOOM, pw.x, pw.y - 24 * d, now, 76f, true)
+                flash = 0.35f
+                flashColor = 0xFFE1BEE7.toInt()
+                shake(11f, now)
+                celebrate(if (flung >= 2) "JELLY BLAST!!" else "ZAP!", true)
+                say(if (flung > 0) "KABOOM! The jellyfish zapped the shells everywhere!" else "Zap! Swim through it near the shells next time.", true)
+            }
+            Powers.DASH -> {
+                superUntil = now + 5000L
+                vx *= 1.6f
+                vy *= 1.6f
+                pop(Yarn.POP_POW, cx, cy - 26 * d, now, 66f, true)
+                celebrate("SUPER SPEED!!", true)
+                say("Dolphin dash! Faster, bouncier, and you hit shells harder!", true)
+            }
+            Powers.FREE -> {
+                shots = max(0, shots - 1)
+                lastShotAt = now
+                pop(Yarn.POP_BING, cx, cy - 26 * d, now, 60f, true)
+                celebrate("FREE SHOT!", true)
+                say("The starfish gave you a shot back!", true)
+            }
+            Powers.BIGHOLES -> {
+                bigHoleShots = 2
+                celebrate("BIG HOLES!!", true)
+                say("Snip snip! The crab made every hole bigger for this shot and the next.", true)
+            }
+            Powers.SCARE -> {
+                for (s in sharks) s.stunUntil = now + 20000L
+                pop(Yarn.POP_ZAP, cx, cy - 26 * d, now, 60f, true)
+                celebrate("SHARK SCARE!", true)
+                say("The clownfish scared the sharks stiff!", true)
+            }
+            Powers.MAGNET -> {
+                magnetShots = 2
+                celebrate("MAGNET HOLES!!", true)
+                say("The seahorse turned the holes into magnets for this shot and the next!", true)
+            }
         }
     }
 
@@ -1612,7 +1744,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val sticky = inWeed(cx, cy)
             val inFlow = (wx != 0f || wy != 0f) && !sticky
             val grip = if (sticky) 0.25f else 1f
-            val drag = if (now < glideUntil && !sticky) 0f else if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
+            var drag = if (now < glideUntil && !sticky) 0f else if (sticky) weedDrag else if (inFlow && !ready) rideDrag else waterDrag
+            if (now < superUntil) drag *= 0.5f
             val k = 1f - min(1f, drag * hdt)
             vx *= k
             vy *= k
@@ -1650,9 +1783,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 }
             }
             val sp0 = hypot(vx, vy)
-            if (sp0 > maxSpeed) {
-                vx = vx / sp0 * maxSpeed
-                vy = vy / sp0 * maxSpeed
+            val cap = if (now < superUntil) maxSpeed * 1.45f else maxSpeed
+            if (sp0 > cap) {
+                vx = vx / sp0 * cap
+                vy = vy / sp0 * cap
             }
             cx += (vx + wx * grip) * hdt
             cy += (vy + wy * grip) * hdt
@@ -1674,6 +1808,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             }
             checkTargets(now)
             stepBalls(hdt, now)
+            if (!ready) for (pw in powers) if (!pw.taken && hypot(cx - pw.x, cy - pw.y) < r + 18 * d) takePower(pw, now)
             if (pockets.any { hypot(cx - it.x, cy - it.y) < pocketR * 0.7f }) scratch(now)
 
             val sp = hypot(vx, vy)
@@ -1737,8 +1872,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val j = vn * (1f + ballE) / 2f
             vx -= j * nx
             vy -= j * ny
-            b.vx += j * nx
-            b.vy += j * ny
+            val boost = if (now < superUntil) 1.45f else 1f
+            b.vx += j * nx * boost
+            b.vy += j * ny * boost
             if (vn > 1f * d) {
                 b.hitAt = now
                 bumpAt = now
@@ -1762,6 +1898,18 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             if (b.sunk || (b.vx == 0f && b.vy == 0f)) continue
             b.vx *= k
             b.vy *= k
+            if (magnetShots > 0) {
+                // seahorse magnet: rolling shells near a hole curve into it
+                for (pk in pockets) {
+                    val mdx = pk.x - b.x
+                    val mdy = pk.y - b.y
+                    val md = hypot(mdx, mdy)
+                    if (md < 95 * d && md > 1f) {
+                        b.vx += mdx / md * 0.35f * d * hdt
+                        b.vy += mdy / md * 0.35f * d * hdt
+                    }
+                }
+            }
             val sp = hypot(b.vx, b.vy)
             if (sp > maxSpeed) { b.vx = b.vx / sp * maxSpeed; b.vy = b.vy / sp * maxSpeed }
             b.x += b.vx * hdt
@@ -1998,8 +2146,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             // rocks bounce you: this is what makes bank shots work
             val vtx = vx - vn * nx
             val vty = vy - vn * ny
-            vx = -vn * bounceK * nx + vtx * slideK
-            vy = -vn * bounceK * ny + vty * slideK
+            val bk = if (now < superUntil) 1.05f else bounceK
+            vx = -vn * bk * nx + vtx * slideK
+            vy = -vn * bk * ny + vty * slideK
             if (-vn > 1.2f * d) {
                 bumpAt = now
                 bouncesThisShot++
@@ -2618,6 +2767,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     /** A shot has come to rest: the big combo-plus-buoy shots get the top praise. */
     private fun endShot(now: Long) {
         if (shots == 0) return
+        if (bigHoleShots > 0) bigHoleShots--
+        if (magnetShots > 0) magnetShots--
         if (!over && ballsLeft > 0 && sunkThisShot == 0 && !scratchThisShot) {
             say(if (!touchedBallThisShot) arrayOf("Missed the shells! Line up the red dots with a shell.",
                     "So close! Aim the white line at a hole.").random()
@@ -2647,6 +2798,75 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
      * Pool-style aim line: runs the real swim physics (water drag, rock bounces, shell rebounds) and
      * drops a small dot every few dp along the whole path, through up to three bounces.
      */
+    /** Follows the hit shell (one wall bounce allowed) and the second shell it knocks, for the aim line. */
+    private fun tracePreviewShell(first: Ball, dx0: Float, dy0: Float) {
+        previewBallPtN = 0
+        previewBall2Hit = false
+        previewB2In = false
+        fun pt(x: Float, y: Float) {
+            if (previewBallPtN < 3) {
+                previewBallPts[previewBallPtN * 2] = x
+                previewBallPts[previewBallPtN * 2 + 1] = y
+                previewBallPtN++
+            }
+        }
+        var ex = first.x
+        var ey = first.y
+        var dx = dx0
+        var dy = dy0
+        pt(ex, ey)
+        val st = 4 * d
+        var gone = 0f
+        var banks = 0
+        var second: Ball? = null
+        while (gone < 380 * d) {
+            var nx2 = ex + dx * st
+            var ny2 = ey + dy * st
+            if (pointHitsWall(nx2, ny2, shellR)) {
+                if (banks >= 1) break
+                val hx = pointHitsWall(ex + dx * st, ey, shellR)
+                val hy = pointHitsWall(ex, ey + dy * st, shellR)
+                if (hx || !hy) dx = -dx
+                if (hy || !hx) dy = -dy
+                banks++
+                pt(ex, ey)
+                nx2 = ex + dx * st
+                ny2 = ey + dy * st
+                if (pointHitsWall(nx2, ny2, shellR)) break
+            }
+            ex = nx2
+            ey = ny2
+            gone += st
+            if (pockets.any { hypot(ex - it.x, ey - it.y) < pocketR }) { previewBallIn = true; break }
+            val o = balls.firstOrNull { it !== first && !it.sunk && hypot(it.x - ex, it.y - ey) < shellR * 2f }
+            if (o != null) { second = o; break }
+        }
+        pt(ex, ey)
+        previewBallEX = ex
+        previewBallEY = ey
+        val s2 = second ?: return
+        previewBall2Hit = true
+        previewB2X = s2.x
+        previewB2Y = s2.y
+        val ll = max(0.001f, hypot(s2.x - ex, s2.y - ey))
+        val ux = (s2.x - ex) / ll
+        val uy = (s2.y - ey) / ll
+        var x2 = s2.x
+        var y2 = s2.y
+        var g2 = 0f
+        while (g2 < 260 * d) {
+            val nx3 = x2 + ux * st
+            val ny3 = y2 + uy * st
+            if (pointHitsWall(nx3, ny3, shellR)) break
+            x2 = nx3
+            y2 = ny3
+            g2 += st
+            if (pockets.any { hypot(x2 - it.x, y2 - it.y) < pocketR }) { previewB2In = true; break }
+        }
+        previewB2EX = x2
+        previewB2EY = y2
+    }
+
     private fun computePreview(now: Long) {
         val sp = launchSpeed(now) * aimPower.coerceIn(0.12f, 1f)
         sx = cx
@@ -2747,21 +2967,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 val bl = max(0.001f, hypot(hitBall.x - sx, hitBall.y - sy))
                 val bnx = (hitBall.x - sx) / bl
                 val bny = (hitBall.y - sy) / bl
-                // the shell's straight path until a wall or a pocket
-                var ex = hitBall.x
-                var ey = hitBall.y
-                var gone = 0f
-                while (gone < 260 * d) {
-                    val nx2 = ex + bnx * 4 * d
-                    val ny2 = ey + bny * 4 * d
-                    if (pointHitsWall(nx2, ny2, shellR)) break
-                    ex = nx2
-                    ey = ny2
-                    gone += 4 * d
-                    if (pockets.any { hypot(ex - it.x, ey - it.y) < pocketR }) { previewBallIn = true; break }
-                }
-                previewBallEX = ex
-                previewBallEY = ey
+                // the shell's path: it can bank off one wall, and may knock a second shell
+                tracePreviewShell(hitBall, bnx, bny)
                 val vn = svx * bnx + svy * bny
                 val tx = svx - vn * bnx
                 val ty = svy - vn * bny
@@ -3126,6 +3333,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             }
         }
         // trail while riding a combo or boosted
+        if (!over && !ready && now < superUntil) {
+            spawnParticle(cx - faceX * r, cy - faceY * r, 0f, 0f, neon[((now / 60) % neon.size).toInt()], 5 * d, 22f)
+        }
         if (!over && !ready) {
             if (shotCombo >= 2) spawnParticle(cx - faceX * r, cy - faceY * r, 0f, 0f, neon[((now / 80) % neon.size).toInt()], 4 * d, 20f)
             else if (now < speedUntil) spawnParticle(cx - faceX * r, cy - faceY * r, 0f, 0f, 0xAAFFEB3B.toInt(), 4 * d, 18f)

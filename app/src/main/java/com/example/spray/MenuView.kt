@@ -121,8 +121,7 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             }
         } else c.drawRect(0f, 0f, w, h, bg)
         drawScenery(c, w, h, now, dt)
-        drawCruisers(c, w, h, now)
-        drawCrew(c, w, h, now)
+        drawLineup(c, w, h, now)
         drawShellDecor(c, w, h, now)
         buttons.clear()
         drawMain(c, w, h, now)
@@ -133,6 +132,61 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             else -> {}
         }
         postInvalidateOnAnimation()
+    }
+
+    /**
+     * The whole crew stands in a row under the title, facing you, each gently swaying and bobbing
+     * like the characters on a candy game's start screen. Betito is in the middle and waves now and then.
+     */
+    private val lineupOval = RectF()
+
+    private fun drawLineup(c: Canvas, w: Float, h: Float, now: Long) {
+        if (!Yarn.loaded) return
+        val t = (now - start) / 1000.0
+        val k = (h / (360f * d)).coerceIn(0.75f, 1.3f)
+        val base = h - 30 * d
+        val left = w * 0.04f
+        val right = w * 0.53f
+        // the shark hangs back behind the group
+        run {
+            val sw = 120 * d * k
+            val sx = left + (right - left) * 0.72f
+            val sy = base - 96 * d * k + sin(t * 0.9).toFloat() * 4 * d
+            c.save()
+            c.translate(sx, sy)
+            c.rotate(sin(t * 0.8).toFloat() * 4f)
+            c.scale(-1f, 1f)
+            Yarn.drawShark(c, sw)
+            c.restore()
+        }
+        // front row, left to right: crab, starfish, seahorse, Betito, octopus, jellyfish, clownfish, dolphin
+        val ids = intArrayOf(3, 4, 1, -1, 0, 6, 2, 5)
+        val hts = floatArrayOf(44f, 50f, 74f, 96f, 80f, 76f, 44f, 64f)
+        val n = ids.size
+        for (i in 0 until n) {
+            val x = left + (right - left) * i / (n - 1).toFloat()
+            val hh = hts[i] * d * k
+            val ph = i * 0.9
+            val sway = sin(t * 1.5 + ph).toFloat() * 5f
+            val bob = abs(sin(t * 1.5 + ph)).toFloat() * 4 * d
+            val breathe = sin(t * 3.0 + ph).toFloat() * 0.025f
+            // soft shadow on the sand
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(70, 0, 0, 0)
+            lineupOval.set(x - hh * 0.35f, base - 4 * d, x + hh * 0.35f, base + 5 * d)
+            c.drawOval(lineupOval, p)
+            c.save()
+            c.rotate(sway, x, base)          // sway from the feet, not the middle
+            val cy0 = base - hh / 2f - bob
+            if (ids[i] < 0) {
+                // Betito: happy, and every few seconds a big wave
+                val pose = if ((now - start) % 6000L < 1300L) Yarn.POSE_WAVE else Yarn.POSE_HAPPY
+                Yarn.drawPose(c, pose, x, cy0, hh * (1f + breathe))
+            } else {
+                Yarn.drawPal(c, ids[i], x, cy0, hh, 0f, false, 1f - breathe, 1f + breathe, 255)
+            }
+            c.restore()
+        }
     }
 
     /** Every crochet friend and every shell floats around the home screen. */

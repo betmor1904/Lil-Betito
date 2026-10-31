@@ -446,6 +446,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         for (s in g.sharks) drawShark(c, s, now)
         drawShells(c, now)
         drawBalls(c, now)
+        drawPowers(c, now)
         drawAimPreview(c, now)
         drawTracer(c)
         drawTurtle(c, now)
@@ -1211,10 +1212,32 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.style = Paint.Style.FILL
     }
 
+    /** An arrow head at (x1, y1) pointing away from (x0, y0), in the current paint. */
+    private fun arrow(c: Canvas, x0: Float, y0: Float, x1: Float, y1: Float) {
+        val dx = x1 - x0
+        val dy = y1 - y0
+        val l = hypot(dx, dy)
+        if (l < 8 * d) return
+        val ux = dx / l
+        val uy = dy / l
+        val st = p.style
+        p.style = Paint.Style.STROKE
+        c.drawLine(x1, y1, x1 - ux * 9 * d - uy * 6 * d, y1 - uy * 9 * d + ux * 6 * d, p)
+        c.drawLine(x1, y1, x1 - ux * 9 * d + uy * 6 * d, y1 - uy * 9 * d - ux * 6 * d, p)
+        p.style = st
+    }
+
     /** Holes in the sea floor, and the pull of the door once it's open. */
     private fun drawPockets(c: Canvas, now: Long) {
         val pr = g.pocketR
         for (pk in g.pockets) {
+            if (g.magnetShots > 0 || g.bigHoleShots > 0) {
+                val pu = 0.5f + 0.5f * sin(now / 200.0).toFloat()
+                val mc = if (g.magnetShots > 0) Powers.colors[Powers.MAGNET] else Powers.colors[Powers.BIGHOLES]
+                p.style = Paint.Style.FILL
+                p.color = Color.argb((50 + 50 * pu).toInt(), Color.red(mc), Color.green(mc), Color.blue(mc))
+                c.drawCircle(pk.x, pk.y, pr + (12 + 6 * pu) * d, p)
+            }
             p.style = Paint.Style.FILL
             p.color = Color.argb(70, 0, 0, 0)
             c.drawCircle(pk.x + 2 * d, pk.y + 3 * d, pr + 5 * d, p)
@@ -1276,10 +1299,88 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 continue
             }
             val pop = if (now - b.hitAt < 160) 1.2f - (now - b.hitAt) / 160f * 0.2f else 1f
+            // a soft light halo so shells stand out from the reef picture
+            val glow = 0.5f + 0.5f * sin(now / 420.0 + b.kind).toFloat()
+            p.style = Paint.Style.FILL
+            p.color = Color.argb((38 + 22 * glow).toInt(), 255, 250, 220)
+            c.drawCircle(b.x, b.y, sr * 1.85f * pop, p)
+            p.color = Color.argb((60 + 30 * glow).toInt(), 255, 250, 220)
+            c.drawCircle(b.x, b.y, sr * 1.42f * pop, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1.5f * d
+            p.color = Color.argb((150 + 70 * glow).toInt(), 255, 255, 255)
+            c.drawCircle(b.x, b.y, sr * 1.18f * pop, p)
             p.style = Paint.Style.FILL
             p.color = Color.argb(60, 0, 0, 0)
             c.drawCircle(b.x + 2 * d, b.y + 3 * d, sr * pop, p)
             drawShellBody(c, b.x, b.y, sr * pop, 255, b.kind)
+        }
+    }
+
+    /** Reef friends with powers: they bob in a colored bubble with their power's name. */
+    private fun drawPowers(c: Canvas, now: Long) {
+        for (pw in g.powers) {
+            val col = Powers.colors[pw.kind]
+            val cr = Color.red(col)
+            val cg = Color.green(col)
+            val cb = Color.blue(col)
+            var sc = 1f
+            var a = 255
+            if (pw.taken) {
+                val age = now - pw.takenAt
+                if (age > 500L) continue
+                sc = 1f + age / 500f * 0.9f
+                a = (255 * (1f - age / 500f)).toInt()
+            }
+            val bob = sin(now / 380.0 + pw.x).toFloat() * 3 * d
+            val x = pw.x
+            val y = pw.y + bob
+            val pulse = 0.5f + 0.5f * sin(now / 250.0 + pw.y).toFloat()
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(a * (50 + (40 * pulse).toInt()) / 255, cr, cg, cb)
+            c.drawCircle(x, y, 24 * d * sc, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = Color.argb(a * 220 / 255, cr, cg, cb)
+            c.drawCircle(x, y, (21 + 2 * pulse) * d * sc, p)
+            // little sparkles circling it
+            p.style = Paint.Style.FILL
+            for (k in 0 until 3) {
+                val ang = now / 500.0 + k * 2.094
+                p.color = Color.argb(a * 230 / 255, 255, 255, 255)
+                c.drawCircle(x + cos(ang).toFloat() * 26 * d * sc, y + sin(ang).toFloat() * 26 * d * sc, 2 * d, p)
+            }
+            val sway = sin(now / 600.0 + pw.x).toFloat() * 8f
+            if (!Yarn.drawPal(c, Powers.pal[pw.kind], x, y, 34 * d * sc, sway, false, 1f, 1f, a)) {
+                p.color = Color.argb(a, cr, cg, cb)
+                star(c, x, y, 12 * d * sc)
+            }
+            if (!pw.taken) {
+                p.textAlign = Paint.Align.CENTER
+                p.typeface = Typeface.DEFAULT_BOLD
+                p.textSize = 9 * d
+                p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                p.color = Color.WHITE
+                c.drawText(Powers.names[pw.kind], x, y + 34 * d, p)
+                p.clearShadowLayer()
+            }
+        }
+        // jellyfish blast: a purple ring racing out
+        val ba = now - g.blastAt
+        if (g.blastAt != 0L && ba < 500L) {
+            val k = ba / 500f
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = (10 - 8 * k) * d
+            p.color = Color.argb((220 * (1f - k)).toInt(), 224, 64, 251)
+            c.drawCircle(g.blastX, g.blastY, g.blastRad * k, p)
+            p.style = Paint.Style.FILL
+        }
+        // dolphin dash: Betito glows blue
+        if (now < g.superUntil) {
+            val pu = 0.5f + 0.5f * sin(now / 90.0).toFloat()
+            p.style = Paint.Style.FILL
+            p.color = Color.argb((70 + 60 * pu).toInt(), 64, 196, 255)
+            c.drawCircle(g.cx, g.cy, g.r * 2.3f, p)
         }
     }
 
@@ -1811,17 +1912,41 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.strokeCap = Paint.Cap.ROUND
             p.strokeWidth = 3 * d
             p.color = if (inHole) Color.argb(235, 118, 255, 3) else Color.argb(220, 255, 255, 255)
-            c.drawLine(g.previewBallX, g.previewBallY, g.previewBallEX, g.previewBallEY, p)
-            val ddx = g.previewBallEX - g.previewBallX
-            val ddy = g.previewBallEY - g.previewBallY
-            val dl = hypot(ddx, ddy)
-            if (dl > 8 * d) {
-                val ux = ddx / dl
-                val uy = ddy / dl
-                val ex = g.previewBallEX
-                val ey = g.previewBallEY
-                c.drawLine(ex, ey, ex - ux * 9 * d - uy * 6 * d, ey - uy * 9 * d + ux * 6 * d, p)
-                c.drawLine(ex, ey, ex - ux * 9 * d + uy * 6 * d, ey - uy * 9 * d - ux * 6 * d, p)
+            val pts = g.previewBallPts
+            for (i in 1 until g.previewBallPtN) c.drawLine(pts[i * 2 - 2], pts[i * 2 - 1], pts[i * 2], pts[i * 2 + 1], p)
+            if (g.previewBallPtN >= 2) {
+                val n0 = g.previewBallPtN - 2
+                arrow(c, pts[n0 * 2], pts[n0 * 2 + 1], pts[n0 * 2 + 2], pts[n0 * 2 + 3])
+            }
+            if (g.previewBallPtN == 3) {
+                // the bank: a little ring where the shell bounces
+                p.strokeWidth = 1.5f * d
+                c.drawCircle(pts[2], pts[3], g.shellR * 0.6f, p)
+                p.strokeWidth = 3 * d
+            }
+            if (g.previewBall2Hit) {
+                // the ricochet: the shell it knocks, and where that one goes
+                val in2 = g.previewB2In
+                p.strokeWidth = 2 * d
+                p.color = Color.argb(200, 255, 255, 255)
+                c.drawCircle(g.previewB2X, g.previewB2Y, g.shellR * 1.35f, p)
+                p.strokeWidth = 3 * d
+                p.color = if (in2) Color.argb(235, 118, 255, 3) else Color.argb(220, 128, 222, 234)
+                p.pathEffect = dash
+                c.drawLine(g.previewB2X, g.previewB2Y, g.previewB2EX, g.previewB2EY, p)
+                p.pathEffect = null
+                arrow(c, g.previewB2X, g.previewB2Y, g.previewB2EX, g.previewB2EY)
+                if (in2) {
+                    p.style = Paint.Style.FILL
+                    p.textAlign = Paint.Align.CENTER
+                    p.typeface = Typeface.DEFAULT_BOLD
+                    p.textSize = 11 * d
+                    p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                    p.color = Color.parseColor("#B2FF59")
+                    c.drawText("IN!", g.previewB2EX, g.previewB2EY - 16 * d, p)
+                    p.clearShadowLayer()
+                    p.style = Paint.Style.STROKE
+                }
             }
             if (g.previewTurnDX != 0f || g.previewTurnDY != 0f) {
                 p.strokeWidth = 2 * d

@@ -469,7 +469,7 @@ object Art {
                 p.style = Paint.Style.FILL
                 lock(c, p, x, y, rr * 0.55f)
             }
-            "star" -> {
+            "star", "power" -> {
                 c.save()
                 c.rotate((now % 6000L) / 6000f * 360f, x, y)
                 p.color = Color.WHITE
