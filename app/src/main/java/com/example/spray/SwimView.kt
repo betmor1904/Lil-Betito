@@ -46,6 +46,8 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     }
     private class Obj(val kind: Int, val x: Float, var y: Float, val r: Float, val baseY: Float, val amp: Float, val phase: Float) {
         var taken = false
+        var hp = 3                 // sharks take 3 smashes
+        var flashMs = 0f
         val hazard get() = kind == K_SHARK
     }
     private class Pop(val kind: Int, val wx: Float, val y: Float, val at: Long, val rot: Float, val size: Float = 90f)
@@ -138,7 +140,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
 
     private fun level(): Int = 1 + passedCount / PER_LEVEL
     private fun meters(): Int = max(0, ((worldX + (bx - baseX)) / (8f * d)).toInt())
-    private fun baseSpeed(): Float = (2.6f + min(1.6f, 0.3f * (level() - 1))) * d
+    private fun baseSpeed(): Float = (2.6f + min(3.2f, 0.4f * (level() - 1))) * d
     private fun speedNow(): Float = (baseSpeed() + extra) * (if (slowMs > 0f) 0.55f else 1f)
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
@@ -276,7 +278,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         var best: Obj? = null
         var bd = Float.MAX_VALUE
         for (o in objs) {
-            if (o.hazard || o.taken) continue
+            if (o.taken) continue
             val ox = sxOf(o.x)
             if (ox < bx - 30 * d || ox > width + 20 * d) continue
             if (hypot(ox - bx, o.y - by) > reachD) continue      // too far from the turtle: a tap is just a stroke
@@ -357,8 +359,10 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             if (t.taken || ox < bx - 90 * d || tetherMs > 2600f) {
                 tether = null
             } else {
-                ovx += dx / dist * pullAcc * dt
-                vy += dy / dist * pullAcc * 0.8f * dt
+                val dash = if (t.hazard) 1.4f else 1f          // curled up he dashes harder
+                ovx += dx / dist * pullAcc * dash * dt
+                vy += dy / dist * pullAcc * 0.8f * dash * dt
+                if (t.hazard) spin += 22f * dt
                 val damp = 0.94f.pow(dt)
                 ovx *= damp
                 vy *= damp
@@ -397,18 +401,23 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         while (it2.hasNext()) {
             val o = it2.next()
             if (sxOf(o.x) < -200 * d) it2.remove()
-            else if (o.kind == K_SHARK) o.y = o.baseY + sin(now * 0.0016 + o.phase).toFloat() * o.amp
+            else if (o.kind == K_SHARK) {
+                if (o.flashMs > 0f) o.flashMs -= dtMs
+                o.y = o.baseY + sin(now * 0.0016 + o.phase).toFloat() * o.amp
+            }
         }
 
         // friends and sharks
         val cur = camX
+        val tucking = tether?.hazard == true
         for (o in objs) {
             if (o.taken) continue
             val ox = o.x - cur
             if (abs(ox - bx) > 80 * d) continue
             val dist = hypot(ox - bx, o.y - by)
             if (o.hazard) {
-                if (dist < br + o.r * 0.8f && invulnMs <= 0f) squish(o, now)
+                if (tether === o && dist < br + o.r * 0.9f) hitShark(o, now)
+                else if (dist < br + o.r * 0.8f && invulnMs <= 0f && !tucking) squish(o, now)
             } else if (dist < br + o.r * 0.9f) {
                 collect(o, base, now)
             }
@@ -441,6 +450,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         bannerAt = now
         celebrate("LEVEL $lv!", Yarn.POP_BOOM, camX + bx + 70 * d, by - 20 * d, Color.parseColor("#FF80AB"), 36f, now, 40)
         words.add(Word("+${100 * lv}", camX + bx + 70 * d, by + 40 * d, now, Color.WHITE, 18f))
+        words.add(Word("FASTER!", camX + bx + 70 * d, by + 90 * d, now, Color.parseColor("#80DEEA"), 22f))
         sfx?.play("fanfare", 1f, 0L)
         shakeMs = 250f
     }
@@ -456,6 +466,33 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         celebrate(wordOf[o.kind], popOf[o.kind], o.x, o.y - 10 * d, Color.parseColor("#FFD54F"), sizeOf[o.kind], now, confOf[o.kind])
         words.add(Word("+$pts", o.x, o.y + 30 * d, now, Color.WHITE, 18f))
         sfx?.play(if (o.kind == K_DOLPHIN) "woo" else if (o.kind == K_STAR) "coin" else "ding", 0.9f, 0L)
+    }
+
+    /** Curled up in his shell, Betito smashes a shark. Three smashes beat it. */
+    private fun hitShark(o: Obj, now: Long) {
+        o.hp--
+        o.flashMs = 500f
+        tether = null
+        ovx = -6f * d
+        vy = -4f * d
+        invulnMs = 700f
+        shakeMs = 250f
+        val gold = Color.parseColor("#FFD54F")
+        if (o.hp <= 0) {
+            o.taken = true
+            val pts = 400 + 50 * level()
+            score += pts
+            extra = min(extra + baseSpeed(), baseSpeed() * 3f)
+            celebrate("SHARK DEFEATED!!", Yarn.POP_BOOM, o.x, o.y - 20 * d, gold, 36f, now, 44)
+            words.add(Word("+$pts", o.x, o.y + 40 * d, now, Color.WHITE, 20f))
+            sfx?.play("fanfare", 1f, 0L)
+        } else {
+            score += 50
+            pops.add(Pop(Yarn.POP_POW, o.x, o.y - 20 * d, now, 8f, 100f))
+            words.add(Word("SMASH ${3 - o.hp}/3", o.x, o.y - 80 * d, now, Color.parseColor("#FF8A65"), 26f))
+            words.add(Word("+50", o.x, o.y + 40 * d, now, Color.WHITE, 16f))
+            sfx?.play("bonk", 1f, 0L)
+        }
     }
 
     private fun squish(o: Obj, now: Long) {
@@ -662,9 +699,31 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
                 p.color = Color.argb(if (near) 40 else 12, 255, 244, 160)
                 c.drawCircle(ox, oy, o.r + 6 * d, p)
             }
+            if (o.hazard) {
+                val near = hypot(ox - bx, oy - by) < reachD
+                if (near) {
+                    // close enough to smash: press it to curl up and dash
+                    p.style = Paint.Style.STROKE
+                    p.strokeWidth = 2.5f * d
+                    p.color = Color.argb((60 + 70 * pulse).toInt(), 255, 90, 70)
+                    c.drawCircle(ox, oy, o.r * 2.4f, p)
+                }
+                // hit points
+                for (i in 0 until 3) {
+                    p.style = Paint.Style.FILL
+                    p.color = if (i < o.hp) Color.argb(230, 255, 82, 82) else Color.argb(90, 255, 255, 255)
+                    c.drawCircle(ox + (i - 1) * 14 * d, oy - o.r - 22 * d, 4.5f * d, p)
+                }
+                if (o.flashMs > 0f) {
+                    p.style = Paint.Style.FILL
+                    p.color = Color.argb(110, 255, 60, 40)
+                    c.drawCircle(ox, oy, o.r * 1.5f, p)
+                }
+            }
+            val shakeX = if (o.hazard && o.flashMs > 0f) sin(now / 25.0).toFloat() * 5 * d else 0f
             val ok = if (o.hazard) {
                 c.save()
-                c.translate(ox, oy)
+                c.translate(ox + shakeX, oy)
                 c.scale(-1f, 1f)          // it swims at you
                 val r = Yarn.drawShark(c, 110 * d)
                 c.restore()
@@ -693,12 +752,12 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         p.style = Paint.Style.FILL
         for (i in 0 until n) {
             val f = ((i + march) / n).coerceIn(0f, 1f)
-            p.color = Color.argb((120 + 120 * f).toInt(), 255, 241, 118)
+            p.color = Color.argb((120 + 120 * f).toInt(), 255, if (t.hazard) 110 else 241, if (t.hazard) 90 else 118)
             c.drawCircle(bx + dx * f, by + dy * f, (2 + 2.5f * f) * d, p)
         }
         p.style = Paint.Style.STROKE
         p.strokeWidth = 2 * d
-        p.color = Color.argb(150, 255, 241, 118)
+        p.color = Color.argb(150, 255, if (t.hazard) 110 else 241, if (t.hazard) 90 else 118)
         c.drawCircle(ox, oy, t.r + 12 * d, p)
         p.style = Paint.Style.FILL
     }
@@ -732,6 +791,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         val dive = ((vy - 2 * d) / (6 * d)).coerceIn(0f, 1f)
         val happy = (happyMs / 200f).coerceIn(0f, 1f)
         val hitActive = state == DEAD || hitMs > 0f
+        val tucking = state == RUN && tether?.hazard == true
         val hitT = if (state == DEAD) (now - diedAt).toFloat() else 1100f - hitMs   // ms since he was hit
         c.save()
         c.translate(bx, by + wob * 1.5f * d)
@@ -742,6 +802,8 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             } else {
                 Yarn.drawBet(c, Yarn.B_CURL, 0f, 0f, bw * 0.72f, spin, al)        // curled up, rolling
             }
+        } else if (tucking) {
+            ok = Yarn.drawBet(c, Yarn.B_CURL, 0f, 0f, bw * 0.72f, spin, al)           // tucked in, dashing at the shark
         } else {
             val rot = rotS * (1f - 0.6f * dive) + wob * (2f + 3f * stroke)
             val sx = 1f + 0.03f * wob
@@ -833,14 +895,15 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     private fun drawReadyCard(c: Canvas, w: Float, h: Float) {
         p.style = Paint.Style.FILL
         p.color = Color.argb(120, 0, 0, 0)
-        rect.set(w * 0.16f, h * 0.16f, w * 0.84f, h * 0.44f)
+        rect.set(w * 0.16f, h * 0.16f, w * 0.84f, h * 0.49f)
         c.drawRoundRect(rect, 18 * ui, 18 * ui, p)
         text(c, "SWIM RUN", w / 2f, h * 0.16f + 34 * ui, 28f, Color.WHITE)
         text(c, "TAP = SWIM UP.   SWIM THROUGH THE GAPS IN THE ROCKS.", w / 2f, h * 0.16f + 58 * ui, 13f, Color.parseColor("#B3E5FC"))
         text(c, "PRESS A CLOSE, GLOWING FRIEND = A LINE PULLS YOU TO IT!", w / 2f, h * 0.16f + 76 * ui, 13f, Color.parseColor("#FFE082"))
-        text(c, "PASS 8 ROCKS = NEXT LEVEL. GO AS FAR AS YOU CAN!", w / 2f, h * 0.16f + 94 * ui, 13f, Color.parseColor("#FFE082"))
+        text(c, "PASS 8 ROCKS = NEXT LEVEL (FASTER EACH TIME). GO FAR!", w / 2f, h * 0.16f + 94 * ui, 13f, Color.parseColor("#FFE082"))
+        text(c, "SHARK CLOSE? PRESS IT: CURL UP AND SMASH IT. 3 SMASHES = BIG POINTS!", w / 2f, h * 0.16f + 112 * ui, 13f, Color.parseColor("#FF8A65"))
         val pulse = 0.5f + 0.5f * sin(SystemClock.uptimeMillis() / 250.0).toFloat()
-        text(c, "TAP TO START", w / 2f, h * 0.62f, 18f + 2 * pulse, Color.WHITE)
+        text(c, "TAP TO START", w / 2f, h * 0.66f, 18f + 2 * pulse, Color.WHITE)
     }
 
     private fun drawDeadCard(c: Canvas, w: Float, h: Float, now: Long) {
