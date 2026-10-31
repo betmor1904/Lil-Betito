@@ -1810,6 +1810,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.style = Paint.Style.FILL
             p.color = Color.parseColor("#8D5524")
             c.drawCircle(rp.ax, rp.ay, 5 * d, p)
+            if (rp.cut) continue
             val pop = if (now - bob.hitAt < 160) 1.25f - (now - bob.hitAt) / 160f * 0.25f else 1f
             p.color = Color.argb(60, 0, 0, 0)
             c.drawCircle(bob.x + 2 * d, bob.y + 3 * d, g.shellR * pop, p)

@@ -32,9 +32,12 @@ class Target(val x: Float, val y: Float, val kind: Int, val zone: WaterZone? = n
 }
 
 /** A shell swinging on a rope from the ceiling or floor. Tap it to cut the rope: the shell flies off with its swing and kicks Betito. */
+const val ROPE_BOOST = 4.2f
+
 class Rope(val ax: Float, val ay: Float, val len: Float, val phase: Float, val period: Float, val amp: Float, val dir: Float) {
     val bob = ShellObj(ax, ay + dir * len, 0f, 0f, false, 0).also { it.rope = true; it.settled = true }
     var cut = false
+    var attached = false      // Betito is hanging on the shell
     var cutAt = 0L
     var cutDx = 0f
     var cutDy = 0f
@@ -96,6 +99,8 @@ class Shark(var x: Float, var y: Float, val ax: Float, val ay: Float, val bx: Fl
     var heading = 0f
     var bumpAt = 0L
     var stunUntil = 0L   // zapped by a lightning shell: frozen until then
+    var det = false      // level sharks: swim back and forth on a fixed clock that starts at launch
+    var segLen = 1f
 }
 
 /** A comic sound-effect patch (POW!, ZAP!...) that pops up where something happens. */
@@ -590,7 +595,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         say(when (level) {
             1 -> "Drag a paddle onto the water and tap it to turn it. Then pull back and let go. One shot = BIRDIE, two = PAR!"
             2 -> "Plan your paddles first! Put one at each corner, turn them with a tap, then shoot. Drag a paddle to the tray to take it back."
-            3 -> "EAGLE HOLE: par 3. The shell on the rope kicks Betito round the corner. Shoot, then TAP the rope at the right moment to cut it!"
+            3 -> "EAGLE HOLE: par 3. Shoot into the swinging shell to GRAB it. TAP when it swings toward the exit to let go and FLY!"
             else -> "Set up your paddles, then shoot. Birdie in 1, par in 2, a 3rd shot loses!"
         }, true)
     }
@@ -714,6 +719,21 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 val dir = if (top != flip) 1f else -1f      // hangs down from the ceiling (up from the floor when flipped)
                 ropes.add(Rope(rl[q] * d * sx, yy(rl[q + 1]), rl[q + 2] * d * min(sx, sy), rl[q + 3], rl[q + 4], rl[q + 5], dir).also { it.tcMs = rl[q + 6] })
                 q += 7
+            }
+        }
+        run {
+            val sl = lv.sharks
+            var q = 0
+            while (q + 4 < sl.size) {
+                val sax = sl[q] * d * sx
+                val say2 = yy(sl[q + 1])
+                val sbx = sl[q + 2] * d * sx
+                val sby = yy(sl[q + 3])
+                val s = Shark(sax, say2, sax, say2, sbx, sby, sl[q + 4] * d)
+                s.det = true
+                s.segLen = max(1f, hypot(sbx - sax, sby - say2))
+                sharks.add(s)
+                q += 5
             }
         }
         val gaps = ArrayList<Float>()
@@ -1017,6 +1037,20 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     private fun updateSharks(now: Long, dt: Float) {
         for (s in sharks) {
+            if (s.det) {
+                val frames = if (ready) 0f else (now - swingT0) / 16.67f
+                val m = (s.speed * frames) % (2f * s.segLen)
+                val pos = if (m < s.segLen) m else 2f * s.segLen - m
+                val sg = if (m < s.segLen) 1f else -1f
+                val ux = (s.bx - s.ax) / s.segLen
+                val uy = (s.by - s.ay) / s.segLen
+                s.x = s.ax + ux * pos
+                s.y = s.ay + uy * pos
+                s.vx = if (ready) 0f else ux * s.speed * sg
+                s.vy = if (ready) 0f else uy * s.speed * sg
+                if (!ready) s.heading = Math.toDegrees(atan2(s.vy.toDouble(), s.vx.toDouble())).toFloat()
+                continue
+            }
             if (now < s.stunUntil) { s.vx = 0f; s.vy = 0f; continue }
             val tx = if (s.toB) s.bx else s.ax
             val ty = if (s.toB) s.by else s.ay
@@ -1351,7 +1385,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         // he can shoot again once he has (nearly) stopped
         val wasMoving = !ready
-        ready = hypot(vx, vy) < readySpeed
+        ready = hypot(vx, vy) < readySpeed && ropes.none { it.attached }
         if (wasMoving && ready) endShot(now)
 
         // Octo's tips: a few when the hole starts, then one for anything new he's resting near
@@ -1428,7 +1462,16 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             for (w in blocks) if (w.alive) collideTurtle(w.l, w.t, w.r, w.b, now)
             collideSharks(now)
             for (sh in shells) collideShell(sh, now)
-            if (!ready) for (rp in ropes) collideShell(rp.bob, now)
+            if (!ready) for (rp in ropes) {
+                if (rp.cut) continue
+                val rb = rp.bob
+                if (!rp.attached && hypot(cx - rb.x, cy - rb.y) < r + shellR * 0.9f) {
+                    rp.attached = true       // Betito grabs the swinging shell
+                    sfx?.play("clink", 0.7f, 0L, 1.2f)
+                    pop(Yarn.POP_BING, rb.x, rb.y - 20 * d, now, 50f, true)
+                }
+                if (rp.attached) { cx = rb.x; cy = rb.y; vx = rb.vx; vy = rb.vy }
+            }
             checkTargets(now)
 
             val sp = hypot(vx, vy)
@@ -1851,9 +1894,26 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
     }
 
-    /** A tap on a rope (or its shell) cuts it. Returns true if something was cut. */
+    /** A tap cuts the rope: if Betito is hanging on it he is flung along the swing. Otherwise only a tap on the rope itself cuts it. */
     fun tryCutRope(x: Float, y: Float, now: Long): Boolean {
         if (over || paused) return false
+        val held = ropes.firstOrNull { it.attached }
+        if (held != null) {
+            val b = held.bob
+            held.attached = false
+            held.cut = true
+            held.cutAt = now
+            val ln = max(1f, hypot(b.x - held.ax, b.y - held.ay))
+            held.cutDx = (b.x - held.ax) / ln
+            held.cutDy = (b.y - held.ay) / ln
+            vx = b.vx * ROPE_BOOST
+            vy = b.vy * ROPE_BOOST
+            sfx?.play("clink", 0.9f, 0L, 1.6f)
+            pop(Yarn.POP_POW, cx, cy - 22 * d, now, 64f, true)
+            shake(6f, now)
+            for (k in 0 until 10) spawnParticle(cx, cy, (Random.nextFloat() - 0.5f) * 5 * d, (Random.nextFloat() - 0.5f) * 5 * d, 0xFFF4B183.toInt(), 2.5f * d, 22f)
+            return true
+        }
         for (rp in ropes) {
             if (rp.cut) continue
             val b = rp.bob
@@ -1862,17 +1922,12 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val l2 = sx * sx + sy * sy
             val t = if (l2 < 0.001f) 0f else (((x - rp.ax) * sx + (y - rp.ay) * sy) / l2).coerceIn(0f, 1f)
             if (hypot(x - (rp.ax + sx * t), y - (rp.ay + sy * t)) > 26 * d) continue
-            rp.cut = true
+            rp.cut = true      // cut early: the shell just falls away
             rp.cutAt = now
             val ln = max(1f, hypot(sx, sy))
             rp.cutDx = sx / ln
             rp.cutDy = sy / ln
-            b.settled = false
-            b.vx *= 1.7f
-            b.vy *= 1.7f
-            sfx?.play("clink", 0.8f, 0L, 1.4f)
-            pop(Yarn.POP_BING, x, y - 20 * d, now, 50f, true)
-            for (k in 0 until 8) spawnParticle(x, y, (Random.nextFloat() - 0.5f) * 4 * d, (Random.nextFloat() - 0.5f) * 4 * d, 0xFFF4B183.toInt(), 2.5f * d, 22f)
+            sfx?.play("clink", 0.5f, 0L, 1.4f)
             return true
         }
         return false
@@ -2054,7 +2109,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     private fun launch(now: Long) {
-        for (rp in ropes) rp.cut = false      // a fresh rope for every shot
+        for (rp in ropes) { rp.cut = false; rp.attached = false }      // a fresh rope for every shot
         swingT0 = now                          // and it starts swinging at launch
         val p = aimPower.coerceIn(0.12f, 1f)
         val sp = launchSpeed(now) * p

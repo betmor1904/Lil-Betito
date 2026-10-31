@@ -111,11 +111,18 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (Yarn.loaded) {
-            c.drawRect(0f, 0f, w, h, seaP)
-            c.drawRect(0f, 0f, w, h, bgTint)
+            if (Yarn.drawReef(c, w, h)) {
+                p.style = Paint.Style.FILL
+                p.color = Color.argb(110, 6, 40, 70)
+                c.drawRect(0f, 0f, w, h, p)
+            } else {
+                c.drawRect(0f, 0f, w, h, seaP)
+                c.drawRect(0f, 0f, w, h, bgTint)
+            }
         } else c.drawRect(0f, 0f, w, h, bg)
         drawScenery(c, w, h, now, dt)
         drawCruisers(c, w, h, now)
+        drawCrew(c, w, h, now)
         drawShellDecor(c, w, h, now)
         buttons.clear()
         drawMain(c, w, h, now)
@@ -126,6 +133,49 @@ class MenuView(ctx: Context, private val prefs: SharedPreferences) : View(ctx) {
             else -> {}
         }
         postInvalidateOnAnimation()
+    }
+
+    /** Every crochet friend and every shell floats around the home screen. */
+    private fun drawCrew(c: Canvas, w: Float, h: Float, now: Long) {
+        if (!Yarn.loaded) return
+        val t = (now - start) / 1000.0
+        // fx, fy = centre of the wander (0..1), ax, ay = how far it wanders, sp = speed, ph = phase, size in dp
+        val pals = arrayOf(
+            floatArrayOf(0f, 0.20f, 0.30f, 0.10f, 0.05f, 0.35f, 0.0f, 70f),   // octopus
+            floatArrayOf(1f, 0.85f, 0.45f, 0.04f, 0.10f, 0.50f, 1.3f, 62f),   // seahorse
+            floatArrayOf(6f, 0.55f, 0.22f, 0.20f, 0.06f, 0.30f, 2.1f, 66f),   // jellyfish
+            floatArrayOf(4f, 0.12f, 0.62f, 0.05f, 0.05f, 0.40f, 0.7f, 52f),   // starfish
+            floatArrayOf(2f, 0.5f, 0.55f, 0.40f, 0.08f, 0.28f, 3.0f, 40f),    // clownfish a
+            floatArrayOf(2f, 0.5f, 0.72f, 0.42f, 0.06f, 0.22f, 0.3f, 34f))    // clownfish b
+        for (a in pals) {
+            val x = w * (a[1] + a[3] * sin(t * a[5] + a[6]).toFloat())
+            val y = h * (a[2] + a[4] * sin(t * a[5] * 1.3 + a[6] * 2).toFloat())
+            val dirRight = cos(t * a[5] + a[6]) >= 0
+            val id = a[0].toInt()
+            val sway = sin(t * 1.6 + a[6]).toFloat() * 6f
+            Yarn.drawPal(c, id, x, y, a[7] * d, sway, id == 2 && !dirRight, 1f, 1f, 255)
+        }
+        // crab scuttles along the sand
+        val k = ((now - start) % 26000L) / 26000f
+        val tri = if (k < 0.5f) k * 2 else (1 - k) * 2
+        Yarn.drawPal(c, 3, w * (0.08f + 0.84f * tri), h - 34 * d, 44 * d, sin(now / 90.0).toFloat() * 3f, k >= 0.5f)
+        // dolphin leaps across now and then
+        val per = 15000L
+        val dk = ((now - start) % per) / per.toFloat()
+        if (dk < 0.25f) {
+            val u = dk / 0.25f
+            Yarn.drawPal(c, 5, w * (-0.1f + 1.2f * u), h * 0.62f - sin(u * Math.PI).toFloat() * h * 0.40f, 76 * d, (u - 0.5f) * 90f)
+        }
+        // all the shells drift too: lightning, rubber, flames, sponge, waves, and the bomb
+        val rad = min(w, h) * 0.05f
+        for (i in 0 until 6) {
+            val x = w * (0.12f + 0.15f * i + 0.05f * sin(t * 0.35 + i * 1.9).toFloat())
+            val y = h * (0.80f + 0.07f * sin(t * 0.5 + i * 2.3).toFloat() - (if (i % 2 == 0) 0.52f else 0f))
+            c.save()
+            c.rotate(sin(t * 0.8 + i).toFloat() * 14f, x, y)
+            if (i < 5) Yarn.drawShell(c, i, x, y, rad, 235) else Yarn.drawBomb(c, x, y, rad, 235)
+            c.restore()
+        }
     }
 
     /** A friendly crochet shark cruises behind the menu, with yarn current squiggles and a waving Betito in the sea. */

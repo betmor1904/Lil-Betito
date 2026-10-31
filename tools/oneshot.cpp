@@ -74,6 +74,7 @@ struct RopeSpec { bool on = false; F ax = 0, ay = 0, dir = 1, len = 70, phase = 
 static RopeSpec ROPE;
 static bool BOBHIT = false;
 static const F BOBR = 15;
+static const F ROPE_BOOST = 4.2f;
 
 // One shot from rest at (x,y); optionally records the path (one point per sub-step).
 static Res sim(const World& wd, F x, F y, F ang, F pw, vector<pair<F, F>>* pts = nullptr) {
@@ -83,7 +84,7 @@ static Res sim(const World& wd, F x, F y, F ang, F pw, vector<pair<F, F>>* pts =
     PADH = 0;
     BOBHIT = false;
     F bx = 0, by = 0, bvx = 0, bvy = 0;
-    bool cut = false, bset = false;
+    bool attached = false, gone = false;
     auto bobAt = [&](F tms) {
         double ph = ROPE.phase + 6.283185 * (double)tms / ROPE.period;
         F th = ROPE.amp * (F)sin(ph);
@@ -96,7 +97,8 @@ static Res sim(const World& wd, F x, F y, F ang, F pw, vector<pair<F, F>>* pts =
     if (ROPE.on) bobAt(0);
     for (int f = 0; f < 900; f++) {
         F sp = sqrtf(vx * vx + vy * vy);
-        if (settle < 0 && f > 0 && sp < READY) settle = 0;
+        if (attached) settle = -1;
+        if (settle < 0 && f > 0 && sp < READY && !attached) settle = 0;
         if (settle >= 0 && ++settle > 40) break;
         for (int s = 0; s < 3; s++) {
             F hdt = 1.f / 3.f, k = 1 - DRAG * hdt;
@@ -108,40 +110,19 @@ static Res sim(const World& wd, F x, F y, F ang, F pw, vector<pair<F, F>>* pts =
             for (const Rect& q : wd.w) collideRect(q, x, y, vx, vy, b);
             int before = PADH;
             for (const Pad& p : wd.pads) collidePad(p, x, y, vx, vy, b);
-            if (ROPE.on) {
-                F ddx = x - bx, ddy = y - by, dd = hypotf(ddx, ddy), mind = R + BOBR;
-                if (dd < mind && dd > 0.0001f) {
-                    F nx = ddx / dd, ny = ddy / dd;
-                    x += nx * (mind - dd); y += ny * (mind - dd);
-                    F ivx = vx - bvx, ivy = vy - bvy;
-                    F vn = ivx * nx + ivy * ny;
-                    if (vn < 0) {
-                        F vtx = ivx - vn * nx, vty = ivy - vn * ny;
-                        vx = -vn * 1.35f * nx + vtx + bvx;
-                        vy = -vn * 1.35f * ny + vty + bvy;
-                        if (-vn > 1.0f) { b++; BOBHIT = true; }
-                    }
-                }
+            if (ROPE.on && !gone) {
+                if (attached) { x = bx; y = by; vx = bvx; vy = bvy; }
+                else if (hypotf(x - bx, y - by) < R + BOBR * 0.9f) { attached = true; BOBHIT = true; x = bx; y = by; vx = bvx; vy = bvy; }
             }
             if (pts) { if (PADH > before) HITS.push_back((int)pts->size()); pts->push_back({x, y}); }
             if (x > EXITX + WT * 0.5f && y > wd.exitT && y < wd.exitB) return {true, x, y, b};
         }
         if (settle >= 0) { vx *= SETTLE; vy *= SETTLE; }
-        if (ROPE.on) {
-            if (!cut) {
-                bobAt(f * 16.67f);
-                if (f == ROPE.tc) { cut = true; bvx *= 1.7f; bvy *= 1.7f; bset = false; }
-            } else if (!bset) {
-                for (int s = 0; s < 3; s++) {
-                    F nx = bx + bvx / 3.f, ny = by + bvy / 3.f;
-                    bool hit = false;
-                    for (const Rect& q : wd.w) if (rectDist(q, nx, ny) < BOBR) { hit = true; break; }
-                    if (hit) { bvx = bvy = 0; bset = true; break; }
-                    bx = nx; by = ny;
-                    F k2 = 1 - DRAG / 3.f;
-                    bvx *= k2; bvy *= k2;
-                }
-                if (hypotf(bvx, bvy) < 0.15f) { bvx = bvy = 0; bset = true; }
+        if (ROPE.on && !gone) {
+            bobAt(f * 16.67f);
+            if (f == ROPE.tc) {
+                if (attached) { vx = bvx * ROPE_BOOST; vy = bvy * ROPE_BOOST; attached = false; }
+                gone = true;
             }
         }
     }
@@ -240,7 +221,7 @@ static bool refine(const World& w, F sx, F sy, F a0, F p0, int maxB, int needPad
 static long REJC[40];
 static bool REJ(int i) { REJC[i]++; return false; }
 
-struct Out { World wd; F sy; vector<Pad> pads; F ang, pw; int cols; bool rope = false; RopeSpec rs; int par = 2; };
+struct Out { World wd; F sy; vector<Pad> pads; F ang, pw; int cols; bool rope = false; RopeSpec rs; int par = 2; vector<array<F, 5>> sharks; };
 
 static bool buildLevel(int L, int K, Out& o) {
     const bool ropeLevel = (L % 3 == 0);
@@ -300,9 +281,9 @@ static bool buildLevel(int L, int K, Out& o) {
             int j = lastHit + 30 + (int)(rng() % (unsigned)(hiJ - (lastHit + 30)));
             bool ceil = (rng() % 2) == 0;
             RopeSpec rs;
-            rs.on = true; rs.len = rnd(55, 95); rs.dir = ceil ? 1.f : -1.f; rs.ay = ceil ? 0.f : PH;
+            rs.on = true; rs.len = rnd(70, 110); rs.dir = ceil ? 1.f : -1.f; rs.ay = ceil ? 0.f : PH;
             rs.ax = min(max(pts[j].first + rnd(-70, 70), 110.f), EXITX - 70);
-            rs.phase = rnd(0, 6.28f); rs.period = rnd(2200, 3200); rs.amp = 0.95f;
+            rs.phase = rnd(0, 6.28f); rs.period = rnd(1700, 2500); rs.amp = 0.95f;
             for (int tc = 0; tc <= 120 && !found; tc += 3) {
                 rs.tc = tc; ROPE = rs;
                 vector<pair<F, F>> p4;
@@ -413,6 +394,45 @@ static bool buildLevel(int L, int K, Out& o) {
         }
         ROPE.tc = o.rs.tc;
     }
+    // sharks: patrol a lane back and forth (clock starts at launch) and knock wrong shots off course.
+    // They never touch the winning shot: the whole lane stays well clear of its path, the rocks and the paddles.
+    o.sharks.clear();
+    {
+        vector<pair<F, F>> fp;
+        sim(w, sx, sy, ao * DEG, po, &fp);
+        int want = L >= 20 ? 3 : (L >= 12 ? 2 : (L >= 5 ? 1 : 0));
+        const F SR = 15;
+        for (int g = 0; g < 400 && (int)o.sharks.size() < want; g++) {
+            bool vert = (rng() % 2) == 0;
+            F len = rnd(80, 170), sp = rnd(1.5f, 2.4f);
+            F ax, ay, bx2, by2;
+            if (vert) { ax = bx2 = rnd(130, EXITX - 90); ay = rnd(SR + 8, PH - SR - 8 - len); by2 = ay + len; }
+            else { ay = by2 = rnd(SR + 8, PH - SR - 8); ax = rnd(110, EXITX - 100 - len); bx2 = ax + len; }
+            bool ok = true;
+            for (auto& q : o.sharks) if (hypotf(q[0] - ax, q[1] - ay) < 90 && hypotf(q[2] - bx2, q[3] - by2) < 90) ok = false;
+            for (int i = 0; i <= 12 && ok; i++) {
+                F px = ax + (bx2 - ax) * i / 12.f, py = ay + (by2 - ay) * i / 12.f;
+                for (int j = 0; j < (int)fp.size(); j += 2)
+                    if (hypotf(fp[j].first - px, fp[j].second - py) < R + SR + 14) { ok = false; break; }
+                if (!ok) break;
+                for (auto& q : w.w) { if (q.kind == 2) continue; if (rectDist(q, px, py) < SR + 6) { ok = false; break; } }
+                if (!ok) break;
+                for (auto& pd : w.pads)
+                    for (int k = -3; k <= 3; k++)
+                        if (hypotf(pd.x + cosf(pd.a) * PAD_HALF * k / 3.f - px, pd.y + sinf(pd.a) * PAD_HALF * k / 3.f - py) < SR + 14) ok = false;
+                if (o.rope) {
+                    // keep out of the rope's swing too
+                    for (int ai = -6; ai <= 6; ai++) {
+                        F th = o.rs.amp * ai / 6.f;
+                        for (int fr = 1; fr <= 4; fr++)
+                            if (hypotf(o.rs.ax + o.rs.len * fr / 4.f * sinf(th) - px, o.rs.ay + o.rs.dir * o.rs.len * fr / 4.f * cosf(th) - py) < SR + BOBR + 8) ok = false;
+                    }
+                }
+            }
+            if (!ok) continue;
+            o.sharks.push_back({ax, ay, bx2, by2, sp});
+        }
+    }
     return true;
 }
 
@@ -444,6 +464,9 @@ int main(int argc, char** argv) {
             for (auto& p : o.pads) printf("%.0ff, %.0ff, %.3ff, ", p.x, p.y, p.a);
             printf("%.2ff, %.2ff), floatArrayOf(", o.ang, o.pw);
             if (o.rope) printf("%.0ff, %.0ff, %.0ff, %.2ff, %.0ff, %.2ff, %.0ff", o.rs.ax, o.rs.ay, o.rs.len, o.rs.phase, o.rs.period, o.rs.amp, o.rs.tc * 16.67f);
+            printf("), floatArrayOf(");
+            for (size_t si = 0; si < o.sharks.size(); si++)
+                printf("%s%.0ff, %.0ff, %.0ff, %.0ff, %.2ff", si ? ", " : "", o.sharks[si][0], o.sharks[si][1], o.sharks[si][2], o.sharks[si][3], o.sharks[si][4]);
             printf(")),\n");
             fflush(stdout);
             break;
