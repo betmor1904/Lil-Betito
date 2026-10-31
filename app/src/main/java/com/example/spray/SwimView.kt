@@ -117,6 +117,13 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     private var hitMs = 0f          // after a shark hit: tumble, then curl up, then swim on
     private var happyMs = 0f        // a happy wave after grabbing a friend
     private var spin = 0f           // roll angle while tumbling / curled
+    // thumb slide: touch, then slide right = forward and faster, left = back and slower
+    private var steerId = -1
+    private var steerX0 = 0f
+    private var steerY0 = 0f
+    private var steerX = 0f
+    private var thumb = 0f          // -1..1 from the slide
+    private var thumbS = 0f         // smoothed
 
     private val pillars = ArrayList<Pillar>()
     private val objs = ArrayList<Obj>()
@@ -141,7 +148,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     private fun level(): Int = 1 + passedCount / PER_LEVEL
     private fun meters(): Int = max(0, ((worldX + (bx - baseX)) / (8f * d)).toInt())
     private fun baseSpeed(): Float = (2.6f + min(3.2f, 0.4f * (level() - 1))) * d
-    private fun speedNow(): Float = (baseSpeed() + extra) * (if (slowMs > 0f) 0.55f else 1f)
+    private fun speedNow(): Float = (baseSpeed() + extra) * (if (slowMs > 0f) 0.55f else 1f) * (1f + 0.55f * thumbS)
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         tintP.color = Color.argb(110, 3, 20, 40)
@@ -171,6 +178,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         hitMs = 0f
         happyMs = 0f
         spin = 0f
+        thumbS = 0f
         trailN = 0
         trailHead = 0
         pillars.clear()
@@ -238,9 +246,39 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     // input
     // ============================================================
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (e.actionMasked == MotionEvent.ACTION_DOWN || e.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
-            val i = e.actionIndex
-            onTap(e.getX(i), e.getY(i), SystemClock.uptimeMillis())
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val i = e.actionIndex
+                val x = e.getX(i)
+                val y = e.getY(i)
+                if (steerId == -1) {
+                    steerId = e.getPointerId(i)
+                    steerX0 = x
+                    steerY0 = y
+                    steerX = x
+                    thumb = 0f
+                }
+                onTap(x, y, SystemClock.uptimeMillis())
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val i = e.findPointerIndex(steerId)
+                if (i >= 0) {
+                    steerX = e.getX(i)
+                    val dx = steerX - steerX0
+                    val dz = 14 * ui
+                    thumb = if (abs(dx) < dz) 0f else ((if (dx > 0f) dx - dz else dx + dz) / (100 * ui)).coerceIn(-1f, 1f)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                if (e.getPointerId(e.actionIndex) == steerId) {
+                    steerId = -1
+                    thumb = 0f
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                steerId = -1
+                thumb = 0f
+            }
         }
         return true
     }
@@ -345,6 +383,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             hitMs -= dtMs
             spin += 14f * dt
         }
+        thumbS += (thumb - thumbS) * min(1f, 0.15f * dt)
         val speed = speedNow()
         worldX += speed * dt
 
@@ -379,7 +418,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
                 flapPush = 0f
             }
             vy = min(vy + grav * dt, maxFall)
-            ovx += (baseX - bx) * 0.02f * dt
+            ovx += ((baseX + thumbS * width * 0.18f) - bx) * 0.02f * dt
             ovx *= 0.9f.pow(dt)
         }
         bx = (bx + ovx * dt).coerceIn(width * 0.10f, width * 0.70f)
@@ -787,7 +826,6 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         val wob = sin(now / 160.0).toFloat() * amp
         val al = if (invulnMs > 0f && (now / 90L) % 2L == 0L) 130 else 255
         val bw = 100 * d
-        val stroke = if (flapAnimMs > 0f) sin(Math.PI * (1.0 - flapAnimMs / 380.0)).toFloat().coerceIn(0f, 1f) else 0f
         val dive = ((vy - 2 * d) / (6 * d)).coerceIn(0f, 1f)
         val happy = (happyMs / 200f).coerceIn(0f, 1f)
         val hitActive = state == DEAD || hitMs > 0f
@@ -805,13 +843,12 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         } else if (tucking) {
             ok = Yarn.drawBet(c, Yarn.B_CURL, 0f, 0f, bw * 0.72f, spin, al)           // tucked in, dashing at the shark
         } else {
-            val rot = rotS * (1f - 0.6f * dive) + wob * (2f + 3f * stroke)
+            val rot = rotS * (1f - 0.6f * dive) + wob * 2f
             val sx = 1f + 0.03f * wob
             val sy = 1f - 0.03f * wob
             ok = Yarn.drawBet(c, Yarn.B_SWIM, 0f, 0f, bw, rot, al, sx, sy)
             if (ok) {
-                // smooth swimming: the poses melt into each other
-                if (stroke > 0.02f) Yarn.drawBet(c, Yarn.B_STROKE, 0f, 0f, bw, rot, (al * stroke).toInt(), sx, sy)
+                // the poses melt into each other (the swim-up stroke stays the one swim picture)
                 if (dive > 0.02f) Yarn.drawBet(c, Yarn.B_DIVE, 0f, 0f, bw, rot, (al * dive).toInt(), sx, sy)
                 if (happy > 0.02f) Yarn.drawBet(c, Yarn.B_WAVE, 0f, 0f, bw, rot, (al * happy).toInt(), sx, sy)
             }
@@ -874,6 +911,17 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         text(c, "$score", 18 * ui, 36 * ui, 30f, Color.WHITE, Paint.Align.LEFT)
         text(c, "${meters()} m   BEST $bestScore", 18 * ui, 54 * ui, 12f, Color.argb(220, 255, 224, 130), Paint.Align.LEFT)
         if (state != RUN) return
+        if (steerId != -1 && abs(thumb) > 0.01f) {
+            // the slide: a line from where you touched to your thumb
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 3 * ui
+            p.strokeCap = Paint.Cap.ROUND
+            p.color = Color.argb(150, 255, 255, 255)
+            c.drawLine(steerX0, steerY0, steerX, steerY0, p)
+            p.style = Paint.Style.FILL
+            c.drawCircle(steerX, steerY0, 8 * ui, p)
+            text(c, if (thumb > 0f) "FASTER >>" else "<< SLOWER", (steerX0 + steerX) / 2f, steerY0 - 18 * ui, 13f, Color.WHITE)
+        }
         // level progress
         val k = (passedCount % PER_LEVEL) / PER_LEVEL.toFloat()
         val bw = 130 * ui
@@ -888,7 +936,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         c.drawRoundRect(rect, 6 * ui, 6 * ui, p)
         text(c, if (slowMs > 0f) "SQUISHED! SLOW" else "LEVEL ${level()}", bxl + bw / 2f, byt + 30 * ui, 11f, Color.WHITE)
         if (hintMs < 12000f) {
-            text(c, "WHEN A FRIEND GLOWS (CLOSE), PRESS IT: A LINE PULLS YOU TO IT!", w / 2f, h - 14 * ui, 12f, Color.argb(210, 255, 255, 255))
+            text(c, "SLIDE YOUR THUMB RIGHT = FASTER, LEFT = SLOWER. PRESS A GLOWING FRIEND TO SWIM TO IT!", w / 2f, h - 14 * ui, 12f, Color.argb(210, 255, 255, 255))
         }
     }
 
@@ -898,7 +946,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         rect.set(w * 0.16f, h * 0.16f, w * 0.84f, h * 0.49f)
         c.drawRoundRect(rect, 18 * ui, 18 * ui, p)
         text(c, "SWIM RUN", w / 2f, h * 0.16f + 34 * ui, 28f, Color.WHITE)
-        text(c, "TAP = SWIM UP.   SWIM THROUGH THE GAPS IN THE ROCKS.", w / 2f, h * 0.16f + 58 * ui, 13f, Color.parseColor("#B3E5FC"))
+        text(c, "TAP = SWIM UP. SLIDE THUMB RIGHT = FASTER + FORWARD, LEFT = SLOWER + BACK.", w / 2f, h * 0.16f + 58 * ui, 13f, Color.parseColor("#B3E5FC"))
         text(c, "PRESS A CLOSE, GLOWING FRIEND = A LINE PULLS YOU TO IT!", w / 2f, h * 0.16f + 76 * ui, 13f, Color.parseColor("#FFE082"))
         text(c, "PASS 8 ROCKS = NEXT LEVEL (FASTER EACH TIME). GO FAR!", w / 2f, h * 0.16f + 94 * ui, 13f, Color.parseColor("#FFE082"))
         text(c, "SHARK CLOSE? PRESS IT: CURL UP AND SMASH IT. 3 SMASHES = BIG POINTS!", w / 2f, h * 0.16f + 112 * ui, 13f, Color.parseColor("#FF8A65"))
