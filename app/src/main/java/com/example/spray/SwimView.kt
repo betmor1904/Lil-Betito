@@ -417,7 +417,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             }
             if (steerId != -1) {
                 // swim toward wherever the thumb is
-                val ty = steerY0.coerceIn(br, floorY - br)
+                val ty = steerY0.coerceIn(br, height - floorH - br * 2f)
                 vy += grav * 0.2f * dt                                   // water holds him up while steering
                 vy += (ty - by) * 0.010f * dt
                 vy *= 0.88f.pow(dt)
