@@ -16,15 +16,18 @@ for fn in sys.argv[2:]:
 kt = '''package com.example.spray
 
 /**
- * Hand-checked bank-shot holes, made by tools/levelgen.cpp. Every hole was found by a solver that
- * uses the game's own bounce physics: it is solvable, needs at least one bank shot, and (for most
- * holes) a well-placed shell saves a shot. Par is the solver's best plus one.
+ * One-shot holes, made by tools/oneshot.cpp. Every hole was built around a solution: a shot that goes
+ * from the start to the exit using flat PADDLES placed (and turned in 15 degree steps) by the player.
+ * The solver checked the shot still wins with small aim/power errors, and that the hole can NOT be
+ * solved in two shots without paddles. `shells` is how many paddles the tray holds; `hint` is the
+ * solution (x, y, angle per paddle in design units, then the aim in degrees and the power 0..1).
+ * Par is always 2 (1 shot = birdie).
  *
  * Coordinates are design units (1 unit = 1dp on a 840 x 300 play area); walls are
  * [left, top, right, bottom, kind] with kind 0 = column wall, 1 = rock.
  * After the last hole the list repeats, mirrored top to bottom.
  */
-class Lvl(val startY: Float, val exitT: Float, val exitB: Float, val par: Int, val shells: Int, val walls: FloatArray)
+class Lvl(val startY: Float, val exitT: Float, val exitB: Float, val par: Int, val shells: Int, val walls: FloatArray, val hint: FloatArray = floatArrayOf())
 
 object Levels {
     const val PLAY_H = 300f

@@ -16,8 +16,8 @@ object Guide {
         Entry("shoot", "SHOOTING", "When Betito stops (green ring), touch anywhere, pull back and let go. Pull further for more power.", Color.parseColor("#76FF03")),
         Entry("bank", "BANK SHOTS", "Rocks and shells are bouncy! The red dots trace your whole path, with a ring at each bounce (up to 3). Line up the ricochets to get around corners. Pull back into the X, or tap a 2nd finger, to cancel without spending a shot.", Color.parseColor("#80DEEA")),
         Entry("goal", "THE HOLE", "Get Betito through the glowing gap in the right wall.", Color.parseColor("#76FF03")),
-        Entry("shell", "SHELLS", "Tap a shell in the tray (bottom right), pull and let go to place it. BOUNCY (orange) kicks you out faster, RUBBER (green) is a clean mirror, MEGA (pink) is a huge kick, SPONGE (gray) soaks the hit, TWIST (blue) bends your bounce. Shells cost no shot. Tap a placed shell to take it back.", Color.parseColor("#FFB74D")),
-        Entry("score", "PAR & SCORING", "Par is the shots a hole should take. Finish OVER par and you must REPLAY it! 1 under = BIRDIE, 2 under = EAGLE.", Color.parseColor("#FF5252")),
+        Entry("shell", "SHELLS", "Plan BEFORE you shoot: drag a flat PADDLE from the tray (bottom right) onto the water. Tap a placed paddle to turn it, drag it to move it, drop it on the tray to take it back, RESET to start over. Betito bounces off a paddle like a pool cushion. BOUNCY (orange) kicks you out faster, RUBBER (green) is a clean mirror, MEGA (pink) is a huge kick, SPONGE (gray) soaks the hit, TWIST (blue) bends your bounce. Shells cost no shot.", Color.parseColor("#FFB74D")),
+        Entry("score", "PAR & SCORING", "One shot = BIRDIE. Two shots = PAR. Miss twice and you lose the hole and must REPLAY it. After a miss you can keep your shells and shoot again, or hit RESET to rethink the setup.", Color.parseColor("#FF5252")),
     )
 
     fun find(key: String): Entry? = entries.firstOrNull { it.key == key }

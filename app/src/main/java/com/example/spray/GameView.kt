@@ -150,11 +150,55 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             g.toggleBombMode(g.clock)
             return true
         }
-        // the SHELL button
+        // a shell is being dragged (from the tray, or one that was already placed)
+        if (dragPtr != -1) {
+            val i = e.findPointerIndex(dragPtr).let { if (it >= 0) it else 0 }
+            val fx = e.getX(i)
+            val fy = e.getY(i)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> dragMove(fx, fy)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> dragEnd(fx, fy, e.actionMasked == MotionEvent.ACTION_CANCEL)
+                MotionEvent.ACTION_POINTER_UP -> if (e.getPointerId(e.actionIndex) == dragPtr) dragEnd(fx, fy, false)
+            }
+            return true
+        }
+        // setup buttons and shell drag start
         if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over) {
+            if (resetR.contains(x0, y0) && g.canSetUp(g.clock)) {
+                g.sfxClick()
+                g.resetSetup(g.clock)
+                return true
+            }
             val ti = trayR.indexOfFirst { it.contains(x0, y0) }
             if (ti >= 0) {
-                g.toggleShellMode(ti, g.clock)
+                if (g.pouch[ti] > 0 && g.canSetUp(g.clock)) {
+                    dragPtr = e.getPointerId(0)
+                    dragKind = ti
+                    dragShell = null
+                    dragX = x0
+                    dragY = y0 - dragLift
+                    dragFromX = x0
+                    dragFromY = y0
+                    dragMoved = false
+                    g.sfxClick()
+                } else {
+                    g.popup = "NO ${ShellKinds.names[ti]} SHELLS LEFT"
+                    g.popupAt = g.clock
+                }
+                return true
+            }
+            val grab = if (g.canSetUp(g.clock)) g.shellAt(x0, y0) else null
+            if (grab != null) {
+                dragPtr = e.getPointerId(0)
+                dragKind = grab.kind
+                dragShell = grab
+                dragOffX = grab.x - x0
+                dragOffY = grab.y - y0
+                dragX = grab.x
+                dragY = grab.y
+                dragFromX = x0
+                dragFromY = y0
+                dragMoved = false
                 return true
             }
         }
@@ -222,6 +266,55 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             }
         }
         return true
+    }
+
+    // ---------- shell drag and drop ----------
+    private var dragPtr = -1
+    private var dragKind = -1
+    private var dragShell: ShellObj? = null
+    private var dragX = 0f
+    private var dragY = 0f
+    private var dragOffX = 0f
+    private var dragOffY = 0f
+    private var dragFromX = 0f
+    private var dragFromY = 0f
+    private var dragMoved = false
+    private var dragValid = true
+    private val dragLift get() = 44 * d          // the shell rides above your thumb so you can see it
+    private val resetR = RectF()
+
+    private fun overTray(x: Float, y: Float) = trayR.any { !it.isEmpty && it.contains(x, y) }
+
+    private fun dragMove(fx: Float, fy: Float) {
+        if (hypot(fx - dragFromX, fy - dragFromY) > 10 * d) dragMoved = true
+        val sh = dragShell
+        if (sh == null) {
+            dragX = fx
+            dragY = fy - dragLift
+            dragValid = g.shellSpotFree(dragX, dragY, null, dragKind, g.lastPadAng) && !overTray(fx, fy)
+        } else {
+            dragX = fx + dragOffX
+            dragY = fy + dragOffY
+            dragValid = g.moveShell(sh, dragX, dragY)   // the shell stays at the last free spot
+        }
+    }
+
+    private fun dragEnd(fx: Float, fy: Float, cancel: Boolean) {
+        val sh = dragShell
+        if (!cancel) {
+            if (sh == null) {
+                // new shell from the tray: drop it if the spot is free (dragging back onto the tray cancels)
+                if (dragMoved && !overTray(fx, fy)) g.placeShell(dragKind, dragX, dragY, g.clock)
+            } else if (overTray(fx, fy)) {
+                g.takeBackShell(sh)   // dropped on the tray: back in the pouch
+            } else if (!dragMoved) {
+                if (sh.paddle) g.rotateShell(sh, g.clock) else g.takeBackShell(sh)   // tap: turn a paddle
+            }
+        }
+        dragPtr = -1
+        dragKind = -1
+        dragShell = null
+        dragMoved = false
     }
 
     private fun announceCancel() {
@@ -1110,7 +1203,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.typeface = Typeface.DEFAULT_BOLD
         p.textSize = 11 * d
         p.color = Color.argb((220 * a).toInt(), 255, 255, 255)
-        c.drawText("SHELLS ${g.shellsLeft}   BIRDIE = ${g.par - 1}   EAGLE = ${g.par - 2}", w / 2, cy + 40 * d, p)
+        c.drawText("SHELLS ${g.shellsLeft}   1 SHOT = BIRDIE   2 SHOTS = PAR   3 = LOSE", w / 2, cy + 40 * d, p)
         p.textSize = 10 * d
         p.color = Color.argb((160 * a).toInt(), 255, 255, 255)
         c.drawText("TAP TO START", w / 2, cy + 62 * d, p)
@@ -1617,8 +1710,40 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.style = Paint.Style.FILL
     }
 
+    /** A flat paddle: a rounded bar with a teal knit look and a little turn arrow in the middle. */
+    private fun drawPaddle(c: Canvas, x: Float, y: Float, ang: Float, a: Int, hit: Boolean) {
+        val half = g.padHalf * (if (hit) 1.08f else 1f)
+        val th = g.padR * (if (hit) 1.3f else 1f)
+        val deg = Math.toDegrees(ang.toDouble()).toFloat()
+        c.save()
+        c.translate(x, y)
+        c.rotate(deg)
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(a / 4, 0, 0, 0)
+        rect.set(-half + 2 * d, -th + 3 * d, half + 2 * d, th + 3 * d)
+        c.drawRoundRect(rect, th, th, p)
+        p.color = Color.argb(a, 38, 198, 218)
+        rect.set(-half, -th, half, th)
+        c.drawRoundRect(rect, th, th, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 1.6f * d
+        p.color = Color.argb(a, 0, 96, 110)
+        c.drawRoundRect(rect, th, th, p)
+        // stitches along the bar
+        p.strokeWidth = 1.2f * d
+        p.color = Color.argb(a, 224, 247, 250)
+        var sx0 = -half + th * 1.3f
+        while (sx0 < half - th) {
+            c.drawLine(sx0, -th * 0.45f, sx0 + th * 0.5f, th * 0.45f, p)
+            sx0 += th * 1.2f
+        }
+        p.style = Paint.Style.FILL
+        c.restore()
+    }
+
     private fun drawShells(c: Canvas, now: Long) {
         for (sh in g.shells) {
+            if (sh.paddle) { drawPaddle(c, sh.x, sh.y, sh.ang, 255, now - sh.hitAt < 160); continue }
             val pop = if (now - sh.hitAt < 160) 1.25f - (now - sh.hitAt) / 160f * 0.25f else 1f
             p.color = Color.argb(60, 0, 0, 0)
             c.drawCircle(sh.x + 2 * d, sh.y + 3 * d, g.shellR * pop, p)
@@ -1743,7 +1868,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         for (k in 0 until ShellKinds.COUNT) {
             if (g.pouchStart[k] <= 0) continue
             trayR[k].set(bx - rad - 6 * d, by - rad - 4 * d, bx + rad + 6 * d, by + rad + 4 * d)
-            val armed = g.shellMode && g.shellKind == k
+            val armed = dragKind == k
             val have = g.pouch[k]
             val col = ShellKinds.colors[k]
             p.style = Paint.Style.FILL
@@ -1753,7 +1878,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             p.strokeWidth = 2.5f * d
             p.color = if (armed) Color.WHITE else Color.argb(if (have > 0) 220 else 90, Color.red(col), Color.green(col), Color.blue(col))
             c.drawCircle(bx, by, rad - d, p)
-            drawShellBody(c, bx, by - 3 * d, 9 * d, if (have > 0) 255 else 80, k)
+            if (k == ShellKinds.PADDLE) { c.save(); c.scale(0.55f, 0.55f, bx, by - 3 * d); drawPaddle(c, bx, by - 3 * d, -0.6f, if (have > 0) 255 else 80, false); c.restore() }
+            else drawShellBody(c, bx, by - 3 * d, 9 * d, if (have > 0) 255 else 80, k)
             p.style = Paint.Style.FILL
             p.color = Color.WHITE
             p.textSize = 10 * d
@@ -1762,11 +1888,64 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             if (armed) {
                 p.textAlign = Paint.Align.RIGHT
                 p.textSize = 11 * d
-                c.drawText("${ShellKinds.names[k]}: PULL TO FIRE", bx - rad - 10 * d, by + 4 * d, p)
+                c.drawText("${ShellKinds.names[k]}: DRAG TO THE WATER", bx - rad - 10 * d, by + 4 * d, p)
                 p.textAlign = Paint.Align.CENTER
             }
             p.clearShadowLayer()
             by -= rad * 2 + 8 * d
+        }
+        drawSetupExtras(c, now, bx, rad)
+    }
+
+    /** RESET button, the "drag me" hint, and the ghost shell that follows your thumb. */
+    private fun drawSetupExtras(c: Canvas, now: Long, bx: Float, rad: Float) {
+        resetR.setEmpty()
+        val canSet = g.canSetUp(now)
+        if (canSet && (g.shells.any { !it.bomb } || g.shots > 0)) {
+            val bw = 66 * d
+            val bh = 30 * d
+            val rx = bx - rad - 6 * d - 14 * d - bw
+            val ry = height - 14 * d - bh
+            resetR.set(rx, ry, rx + bw, ry + bh)
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(200, 20, 30, 50)
+            c.drawRoundRect(resetR, 8 * d, 8 * d, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.color = Color.argb(220, 255, 193, 7)
+            c.drawRoundRect(resetR, 8 * d, 8 * d, p)
+            p.style = Paint.Style.FILL
+            p.color = Color.WHITE
+            p.textAlign = Paint.Align.CENTER
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = 11 * d
+            c.drawText("RESET", resetR.centerX(), resetR.centerY() + 4 * d, p)
+        }
+        // a nudge the first time: shells are placed BEFORE the shot
+        if (canSet && g.shots == 0 && g.shellsLeft > 0 && g.shells.none { !it.bomb } && dragPtr == -1) {
+            p.textAlign = Paint.Align.CENTER
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = 12 * d
+            p.color = Color.argb(200 - (90 * Math.abs(Math.sin(now / 350.0))).toInt(), 255, 241, 118)
+            p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            c.drawText("1. DRAG A PADDLE OUT, TAP IT TO TURN   2. PULL BACK + LET GO", width / 2f, height - 18 * d, p)
+            p.clearShadowLayer()
+        }
+        // ghost shell under the thumb (green = it fits, red = blocked)
+        if (dragPtr != -1 && dragShell == null && dragKind >= 0) {
+            if (dragKind == ShellKinds.PADDLE) drawPaddle(c, dragX, dragY, g.lastPadAng, if (dragValid) 230 else 120, false)
+            else drawShellBody(c, dragX, dragY, g.shellR, if (dragValid) 230 else 120, dragKind)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = if (dragValid) Color.argb(220, 118, 255, 3) else Color.argb(220, 255, 82, 82)
+            c.drawCircle(dragX, dragY, (if (dragKind == ShellKinds.PADDLE) g.padHalf + 6 * d else g.shellR + 4 * d), p)
+            p.style = Paint.Style.FILL
+        } else if (dragPtr != -1 && dragShell != null) {
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = if (dragValid) Color.argb(220, 118, 255, 3) else Color.argb(220, 255, 82, 82)
+            c.drawCircle(dragShell!!.x, dragShell!!.y, (if (dragShell!!.paddle) g.padHalf + 6 * d else g.shellR + 5 * d), p)
+            p.style = Paint.Style.FILL
         }
     }
 

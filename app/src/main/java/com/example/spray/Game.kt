@@ -36,26 +36,30 @@ class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float, val bom
     var explodeAt = 0L   // bombs only: when it goes off
     var settled = false
     var hitAt = 0L
+    var ang = 0f   // paddles only: direction the flat side runs (radians)
+    val paddle get() = kind == ShellKinds.PADDLE
     val seed = Random.nextFloat() * 6f
 }
 
-/** The five shell types. Each one rebounds Betito differently, so planning which to place where is the strategy. */
+/** The shell types. Each one rebounds Betito differently, so planning which to place where is the strategy. */
 object ShellKinds {
-    const val COUNT = 5
-    val names = arrayOf("BOUNCY", "RUBBER", "MEGA", "SPONGE", "TWIST")
-    val colors = intArrayOf(0xFFFFC107.toInt(), 0xFF43A047.toInt(), 0xFFE53935.toInt(), 0xFF90A4AE.toInt(), 0xFF2196F3.toInt())
+    const val COUNT = 6
+    const val PADDLE = 5
+    val names = arrayOf("BOUNCY", "RUBBER", "MEGA", "SPONGE", "TWIST", "PADDLE")
+    val colors = intArrayOf(0xFFFFC107.toInt(), 0xFF43A047.toInt(), 0xFFE53935.toInt(), 0xFF90A4AE.toInt(), 0xFF2196F3.toInt(), 0xFF26C6DA.toInt())
     val tips = arrayOf(
         "ZAP: springy kick, and it freezes every shark for 4 seconds",
         "SLICK: clean bounce, then you glide with no water drag for 2 seconds",
         "BURN: huge kick, and it burns away coral plugs nearby",
         "STOP: soaks the hit and parks you dead still",
-        "WAVE: bounces you, then bends the path 40 degrees clockwise")
+        "WAVE: bounces you, then bends the path 40 degrees clockwise",
+        "PADDLE: a flat mirror. Tap it to turn it, and Betito bounces off like a pool cushion")
     /** How much of the speed INTO the shell comes back out (1 = mirror bounce). */
-    val bounce = floatArrayOf(1.35f, 1.0f, 1.9f, 0f, 1.0f)
+    val bounce = floatArrayOf(1.35f, 1.0f, 1.9f, 0f, 1.0f, 1.0f)
     /** How much of the speed ALONG the shell is kept. */
-    val slide = floatArrayOf(1.0f, 1.0f, 1.0f, 0f, 1.0f)
+    val slide = floatArrayOf(1.0f, 1.0f, 1.0f, 0f, 1.0f, 1.0f)
     /** Extra clockwise turn (radians) applied to the speed that leaves the shell. */
-    val twist = floatArrayOf(0f, 0f, 0f, 0f, 0.7f)
+    val twist = floatArrayOf(0f, 0f, 0f, 0f, 0.7f, 0f)
 }
 
 /** A kelp slide: shoot into either end and it carries you around a corner. */
@@ -204,7 +208,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     // ---------- shot rules ----------
     val readySpeed get() = 0.9f * d     // he can only shoot again once he has (nearly) stopped
-    private val waterDrag = 0.02f
+    private val waterDrag = 0.016f   // one-shot golf: a full shot has to carry across the room
     private val rideDrag = 0.006f       // riding a current barely slows you
     private val weedDrag = 0.16f
     private val bounceK = 0.92f         // bank shots: a rock keeps 92% of the speed it is hit with
@@ -235,7 +239,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     val previewY = FloatArray(pvMax)
     val previewSeg = IntArray(pvMax)       // which leg of the path each dot is on (0 = before the first bounce)
     var previewN = 0
-    val previewMaxBounces = 3
+    val previewMaxBounces = 6
     val previewBX = FloatArray(previewMaxBounces)
     val previewBY = FloatArray(previewMaxBounces)
     var previewBounceN = 0
@@ -556,8 +560,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         turnUsed = false
 
         buildMaze()
-        par = levelPar
-        maxShots = par   // go over par and the hole must be replayed
+        // one-shot golf: 1 shot = birdie, 2 shots = par, a 3rd shot never happens (you lose and replay)
+        par = 2
+        maxShots = 2
         banner = null
         sfx?.play("letsgo", 0.8f, 0L)
 
@@ -570,9 +575,9 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         heading = 0f
 
         say(when (level) {
-            1 -> "Pull back and let go! Bounce off the rocks to get around corners. Par or better to advance!"
-            2 -> "Tap a shell (bottom right), then pull to place it. Bank Betito off it! Tap a placed shell to take it back."
-            else -> "Par $par. Place your shells first, then bank your way through!"
+            1 -> "Drag a paddle onto the water and tap it to turn it. Then pull back and let go. One shot = BIRDIE, two = PAR!"
+            2 -> "Plan your paddles first! Put one at each corner, turn them with a tap, then shoot. Drag a paddle to the tray to take it back."
+            else -> "Set up your paddles, then shoot. Birdie in 1, par in 2, a 3rd shot loses!"
         }, true)
     }
 
@@ -701,17 +706,12 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     private var startCy = 0f
 
-    /** Holes 1-8 give you the classic bouncy shells; new types arrive a few at a time so each one gets learned. */
-    private fun setPouch(classic: Int, lvl: Int) {
+    /** Every hole gives you a few flat paddles: place them, turn them, then take your shot. */
+    private fun setPouch(count: Int, lvl: Int) {
         pouch.fill(0)
-        pouch[0] = classic
-        if (lvl >= 2) pouch[1] = 1
-        if (lvl >= 4) pouch[3] = 1
-        if (lvl >= 6) pouch[2] = 1
-        if (lvl >= 9) pouch[4] = 1
-        if (lvl >= 16) { pouch[1]++; pouch[4]++ }
+        pouch[ShellKinds.PADDLE] = count
         for (k in pouch.indices) pouchStart[k] = pouch[k]
-        shellKind = 0
+        shellKind = ShellKinds.PADDLE
     }
 
     /** Where a current's flip icon sits (the view draws it here, taps near it flip while Betito is flying). */
@@ -1514,6 +1514,183 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         return true
     }
 
+    // ---------- setup: drag shells from the tray, move them, take them back ----------
+
+    /** You can arrange shells before the shot and between shots, never while Betito is moving. */
+    fun canSetUp(now: Long): Boolean = ready && !over && !paused && started && now >= introUntil && riding == null && tip == null
+
+    val padHalf get() = 30f * d      // half the length of a paddle
+    val padR get() = 5f * d          // its thickness (rounded ends)
+    var lastPadAng = -0.785f         // the angle the next paddle from the tray starts at
+    private val padTmp = FloatArray(2)
+
+    /** Closest point to (px, py) on a paddle centered at (x, y) turned by `ang`. Result goes in padTmp. */
+    private fun padClosestRaw(x: Float, y: Float, ang: Float, px: Float, py: Float) {
+        val ax = cos(ang) * padHalf
+        val ay = sin(ang) * padHalf
+        val bx = x - ax
+        val by = y - ay
+        val ex = ax * 2f
+        val ey = ay * 2f
+        val t = (((px - bx) * ex + (py - by) * ey) / (ex * ex + ey * ey)).coerceIn(0f, 1f)
+        padTmp[0] = bx + ex * t
+        padTmp[1] = by + ey * t
+    }
+
+    private fun pointHitsWall(x: Float, y: Float, rad: Float): Boolean {
+        if (x < rad || y < playT + rad || y > playB - rad) return true
+        for (w in blocks) {
+            if (!w.alive) continue
+            val qx = x.coerceIn(w.l, w.r)
+            val qy = y.coerceIn(w.t, w.b)
+            if ((x - qx) * (x - qx) + (y - qy) * (y - qy) < rad * rad) return true
+        }
+        return false
+    }
+
+    /** Is there room for this shell here? Paddles need their whole length clear. */
+    fun shellSpotFree(x: Float, y: Float, ignore: ShellObj?, kind: Int = 0, ang: Float = 0f): Boolean {
+        if (kind == ShellKinds.PADDLE) {
+            for (i in -3..3) {
+                val px = x + cos(ang) * padHalf * i / 3f
+                val py = y + sin(ang) * padHalf * i / 3f
+                if (pointHitsWall(px, py, padR + 2 * d)) return false
+                if (px > exitX - 14 * d) return false
+                for (o in shells) {
+                    if (o === ignore || o.bomb) continue
+                    if (o.paddle) {
+                        padClosestRaw(o.x, o.y, o.ang, px, py)
+                        if (hypot(px - padTmp[0], py - padTmp[1]) < padR * 2 + 4 * d) return false
+                    } else if (hypot(px - o.x, py - o.y) < shellR + padR + 2 * d) return false
+                }
+            }
+            padClosestRaw(x, y, ang, cx, cy)
+            return hypot(cx - padTmp[0], cy - padTmp[1]) >= r + padR + 3 * d
+        }
+        if (shellHitsWall(x, y)) return false
+        if (hypot(x - cx, y - cy) < r + shellR + 2 * d) return false
+        for (o in shells) {
+            if (o === ignore || o.bomb) continue
+            if (o.paddle) {
+                padClosestRaw(o.x, o.y, o.ang, x, y)
+                if (hypot(x - padTmp[0], y - padTmp[1]) < shellR + padR + 2 * d) return false
+            } else if (hypot(x - o.x, y - o.y) < shellR * 2 + 2 * d) return false
+        }
+        return true
+    }
+
+    /** A paddle turns a notch each time you tap it (15 degrees), skipping angles that don't fit. */
+    fun rotateShell(sh: ShellObj, now: Long): Boolean {
+        if (!sh.paddle || !canSetUp(now)) return false
+        var a = sh.ang
+        for (i in 0 until 12) {
+            a += 0.2618f
+            if (shellSpotFree(sh.x, sh.y, sh, sh.kind, a)) {
+                sh.ang = a
+                lastPadAng = a
+                sfx?.play("tick", 0.5f, 40L, 1.3f)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun collidePaddle(sh: ShellObj, now: Long) {
+        padClosestRaw(sh.x, sh.y, sh.ang, cx, cy)
+        val dx = cx - padTmp[0]
+        val dy = cy - padTmp[1]
+        val dist = hypot(dx, dy)
+        val minD = r + padR
+        if (dist >= minD || dist < 0.0001f) return
+        val nx = dx / dist
+        val ny = dy / dist
+        cx += nx * (minD - dist)
+        cy += ny * (minD - dist)
+        val vn = vx * nx + vy * ny
+        if (vn < 0f) {
+            // a flat mirror: the part of the speed going into it flips, the rest is untouched
+            vx -= 2f * vn * nx
+            vy -= 2f * vn * ny
+            if (-vn > 1.0f * d) {
+                bumpAt = now
+                sh.hitAt = now
+                bouncesThisShot++
+                sfx?.play("clink", 0.4f + min(0.5f, -vn / (12 * d)), 60L, 1.8f)
+                pop(Yarn.POP_BING, padTmp[0] + nx * padR * 2f, padTmp[1] + ny * padR * 2f - 18 * d, now, 54f)
+                if (!shellHitThisShot && shots > 0) {
+                    shellHitThisShot = true
+                    celebrate("SHELL BANK!")
+                }
+                for (k in 0 until 5) spawnParticle(padTmp[0], padTmp[1], nx * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d,
+                    ny * 1.5f * d + (Random.nextFloat() - 0.5f) * 2 * d, 0xFF80DEEA.toInt(), 2.5f * d, 20f)
+            }
+        }
+    }
+
+    /** Drops a shell from the tray at (x, y). Returns false (and says why) if the spot is blocked. */
+    fun placeShell(kind: Int, x: Float, y: Float, now: Long): Boolean {
+        if (!canSetUp(now) || pouch[kind] <= 0) return false
+        val a0 = if (kind == ShellKinds.PADDLE) lastPadAng else 0f
+        if (!shellSpotFree(x, y, null, kind, a0)) {
+            sfx?.play("tick", 0.3f, 150L)
+            popup = "NO ROOM HERE"
+            popupAt = now
+            return false
+        }
+        val sh = ShellObj(x, y, 0f, 0f, false, kind)
+        sh.ang = a0
+        sh.settled = true
+        shells.add(sh)
+        pouch[kind]--
+        sfx?.play("pop", 0.6f, 60L, 0.8f + 0.15f * kind)
+        return true
+    }
+
+    /** The placed shell under a finger, if any. */
+    fun shellAt(x: Float, y: Float): ShellObj? {
+        var best: ShellObj? = null
+        var bd = shellR + 14 * d
+        for (sh in shells) {
+            if (sh.bomb || !sh.settled) continue
+            val dd = hypot(x - sh.x, y - sh.y)
+            if (dd < bd) { bd = dd; best = sh }
+        }
+        return best
+    }
+
+    /** Moves a placed shell while the finger drags it. Returns true if the new spot is allowed. */
+    fun moveShell(sh: ShellObj, x: Float, y: Float): Boolean {
+        if (!shellSpotFree(x, y, sh, sh.kind, sh.ang)) return false
+        sh.x = x
+        sh.y = y
+        return true
+    }
+
+    /** Puts a placed shell back in the tray. */
+    fun takeBackShell(sh: ShellObj) {
+        if (!shells.remove(sh)) return
+        pouch[sh.kind]++
+        sfx?.play("pop", 0.5f, 60L, 0.8f)
+    }
+
+    /** RESET: every shell goes back to the tray and Betito returns to the start. The shot you already used stays used. */
+    fun resetSetup(now: Long) {
+        if (!canSetUp(now)) return
+        shells.removeAll { !it.bomb }
+        for (k in pouch.indices) pouch[k] = pouchStart[k]
+        cx = 48 * d
+        cy = freeStartY(startCy)
+        vx = 0f
+        vy = 0f
+        faceX = 1f
+        faceY = 0f
+        heading = 0f
+        previewN = 0
+        sfx?.play("tick", 0.5f, 80L)
+        popup = "SETUP RESET"
+        popupAt = now
+    }
+
     private fun shellHitsWall(x: Float, y: Float): Boolean {
         val sr = shellR
         if (x < sr || y < playT + sr || y > playB - sr) return true
@@ -1661,6 +1838,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     /** Betito bounces off a shell like off a round rock. It costs no shot and keeps combos going. */
     private fun collideShell(sh: ShellObj, now: Long) {
+        if (sh.paddle) { collidePaddle(sh, now); return }
         val dx = cx - sh.x
         val dy = cy - sh.y
         val dist = hypot(dx, dy)
@@ -1771,7 +1949,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun inWeed(x: Float, y: Float): Boolean =
         weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
 
-    private fun launchSpeed(now: Long): Float = 12f * d
+    private fun launchSpeed(now: Long): Float = 15f * d
 
     /** How far a shot of this power glides in still water (for the distance ring). */
     fun stillDistance(now: Long): Float {
@@ -1880,6 +2058,25 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 }
             }
             for (sh in shells) {
+                if (sh.paddle) {
+                    padClosestRaw(sh.x, sh.y, sh.ang, sx, sy)
+                    val pdx = sx - padTmp[0]
+                    val pdy = sy - padTmp[1]
+                    val pdist = hypot(pdx, pdy)
+                    val pMin = r + padR
+                    if (pdist >= pMin || pdist < 0.0001f) continue
+                    val pnx = pdx / pdist
+                    val pny = pdy / pdist
+                    sx += pnx * (pMin - pdist)
+                    sy += pny * (pMin - pdist)
+                    val pvn = svx * pnx + svy * pny
+                    if (pvn < 0f) {
+                        if (-pvn > 1.0f * d) hitNow = true
+                        svx -= 2f * pvn * pnx
+                        svy -= 2f * pvn * pny
+                    }
+                    continue
+                }
                 val dx = sx - sh.x
                 val dy = sy - sh.y
                 val dist = hypot(dx, dy)
@@ -2118,7 +2315,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     fun golfName(shotsTaken: Int, parN: Int): String {
         val under = parN - shotsTaken
         return when {
-            shotsTaken == 1 -> "HOLE IN ONE!!"
+            shotsTaken == 1 && parN > 2 -> "HOLE IN ONE!!"
             under >= 3 -> "ALBATROSS!!!"
             under == 2 -> "EAGLE!!"
             under == 1 -> "BIRDIE!"
@@ -2153,7 +2350,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val under = par - shots
         val name = golfName(shots, par)
         val parPts = when {
-            shots == 1 -> 3000 * b
+            shots == 1 && par > 2 -> 3000 * b
             under >= 0 -> (300 + 400 * under) * b
             else -> 0
         }
@@ -2188,7 +2385,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         for (k in 0 until (if (under >= 1) 7 else 3)) confetti(W * (0.15f + 0.7f * Random.nextFloat()), H * (0.25f + 0.4f * Random.nextFloat()))
         val lines = ArrayList<String>()
         lines.add("$shots SHOTS · PAR $par")
-        if (parPts > 0) lines.add("${if (shots == 1) "ACE" else name.trimEnd('!')} +$parPts")
+        if (parPts > 0) lines.add("${if (shots == 1 && par > 2) "ACE" else name.trimEnd('!')} +$parPts")
         if (speed > 0) lines.add("SPEED +$speed")
         if (explorer > 0) lines.add("EXPLORER +$explorer")
         if (bestCombo >= 2) lines.add("BEST COMBO x$bestCombo")
@@ -2198,7 +2395,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         banner = lines.joinToString("  ")
         bannerUntil = now + 3200L
         say(when {
-            shots == 1 -> "A HOLE IN ONE?! You're the KING OF THE SEA!"
+            shots == 1 && par > 2 -> "A HOLE IN ONE?! You're the KING OF THE SEA!"
             under >= 2 -> "Incredible! You banked it like a pro!"
             under == 1 -> "Birdie! Beautiful bank shots!"
             under == 0 -> "Right on par. Place shells to bank around the corners for a birdie!"
@@ -2214,10 +2411,10 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         levelEndMs = now
         saveBest()
         sfx?.play("lose", 1f, 0L)
-        message = "OUT OF SHOTS"
-        banner = "NEED PAR OR BETTER  ·  REPLAY HOLE $level"
+        message = "THIRD SHOT = YOU LOSE"
+        banner = "BIRDIE IN 1 · PAR IN 2  ·  REPLAY HOLE $level"
         bannerUntil = now + 2500L
-        say("Place shells first: they bounce you around corners. Then bank your way through!", true)
+        say("Plan your paddles so ONE shot bounces you through. Try again!", true)
         resumeAt = now + 2700L
     }
 
