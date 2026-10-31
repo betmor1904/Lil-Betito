@@ -366,6 +366,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     /** After a hole is cleared Betito zooms across the whole screen in front of everything, big, with a spin in the middle. */
     private fun drawFlyBy(c: Canvas, w: Float, h: Float, now: Long) {
         if (!Yarn.loaded || g.cheerAt == 0L) return
+        Yarn.drawParty(c, w, h, now, g.cheerAt)
         val age = now - g.cheerAt
         val dur = 3000L
         if (age < 0 || age > dur) return

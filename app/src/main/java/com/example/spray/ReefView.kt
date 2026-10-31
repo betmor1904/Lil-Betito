@@ -365,8 +365,14 @@ class ReefView(ctx: Context, private val prefs: SharedPreferences, private val s
         slot = min(h * 0.125f, w * 0.88f / nLedges * 0.78f)
         baseY = h * 0.86f
         if (Yarn.loaded) {
-            c.drawRect(0f, 0f, w, h, seaP)
-            c.drawRect(0f, 0f, w, h, tintP)
+            if (Yarn.drawReef(c, w, h)) {
+                p.style = Paint.Style.FILL
+                p.color = Color.argb(150, 6, 40, 70)
+                c.drawRect(0f, 0f, w, h, p)
+            } else {
+                c.drawRect(0f, 0f, w, h, seaP)
+                c.drawRect(0f, 0f, w, h, tintP)
+            }
             for (i in 0 until 4) Yarn.drawDecal(c, intArrayOf(0, 3, 5, 4)[i], w * (0.2f + 0.2f * i), h * (0.4f + 0.12f * (i % 2)), 100 * d, 36)
         } else {
             p.color = Color.parseColor("#0A3D62")
@@ -536,6 +542,7 @@ class ReefView(ctx: Context, private val prefs: SharedPreferences, private val s
         p.color = Color.argb(110, 0, 10, 30)
         c.drawRect(0f, 0f, w, h, p)
         if (state == 1) {
+            Yarn.drawParty(c, w, h, now, stateAt, 3400L)
             // Betito zooms across the screen
             val t = ((age % 3200L) / 3200f)
             val size = h * 0.55f

@@ -211,4 +211,31 @@ object Yarn {
         c.drawBitmap(b, null, rect, paint)
         return true
     }
+
+    /** Reef friends pop up and dance for `dur` ms after `startAt`; the whole crew cheers when a level is won. */
+    fun drawParty(c: Canvas, w: Float, h: Float, now: Long, startAt: Long, dur: Long = 3400L) {
+        if (!loaded || startAt == 0L) return
+        val age = now - startAt
+        if (age < 0 || age > dur) return
+        val t = age / 1000f
+        val xs = floatArrayOf(0.10f, 0.26f, 0.42f, 0.58f, 0.74f, 0.90f)
+        val ids = intArrayOf(3, 1, 4, 0, 6, 2)
+        val hs = floatArrayOf(0.13f, 0.20f, 0.14f, 0.18f, 0.20f, 0.12f)
+        for (k in xs.indices) {
+            val delay = 0.15f * k
+            val up = ((t - delay) / 0.45f).coerceIn(0f, 1f)
+            val down = ((dur / 1000f - 0.4f - t) / 0.4f).coerceIn(0f, 1f)
+            val e = minOf(up, down)
+            if (e <= 0f) continue
+            val hh = h * hs[k]
+            val jump = Math.abs(Math.sin((t - delay) * 6.0)).toFloat() * hh * 0.35f
+            val y = h + hh * 0.5f - (hh * 0.9f + h * 0.04f) * e - jump * e
+            val sway = Math.sin((t - delay) * 6.0).toFloat() * 10f
+            drawPal(c, ids[k], w * xs[k], y, hh, sway, false, 1f, 1f, 255)
+        }
+        // dolphin leaps across
+        val u = (t / (dur / 1000f)).coerceIn(0f, 1f)
+        drawPal(c, 5, w * (-0.1f + 1.2f * u), h * 0.5f - Math.sin(u * Math.PI).toFloat() * h * 0.32f, h * 0.2f,
+            (u - 0.5f) * 80f, false, 1f, 1f, 255)
+    }
 }

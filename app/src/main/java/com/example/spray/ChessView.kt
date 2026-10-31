@@ -322,8 +322,14 @@ class ChessView(ctx: Context, private val prefs: SharedPreferences, private val 
         x0 = (w - cell * cols) / 2f
         y0 = h * 0.17f
         if (Yarn.loaded) {
-            c.drawRect(0f, 0f, w, h, seaP)
-            c.drawRect(0f, 0f, w, h, tintP)
+            if (Yarn.drawReef(c, w, h)) {
+                p.style = Paint.Style.FILL
+                p.color = Color.argb(150, 6, 40, 70)
+                c.drawRect(0f, 0f, w, h, p)
+            } else {
+                c.drawRect(0f, 0f, w, h, seaP)
+                c.drawRect(0f, 0f, w, h, tintP)
+            }
         } else {
             p.style = Paint.Style.FILL
             p.color = Color.parseColor("#0A3D62")
@@ -530,6 +536,7 @@ class ChessView(ctx: Context, private val prefs: SharedPreferences, private val 
         p.color = Color.argb(120, 0, 10, 30)
         c.drawRect(0f, 0f, w, h, p)
         if (state == 1) {
+            Yarn.drawParty(c, w, h, now, stateAt, 3400L)
             val t = ((age % 3200L) / 3200f)
             val size = h * 0.55f
             val x = -size * 0.6f + (w + size * 1.2f) * t
