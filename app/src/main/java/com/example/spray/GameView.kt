@@ -177,6 +177,11 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
         // setup buttons and shell drag start
         if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over) {
+            if (!undoR.isEmpty && undoR.contains(x0, y0) && g.canUndo(g.clock)) {
+                g.sfxClick()
+                g.undoShot(g.clock)
+                return true
+            }
             if (resetR.contains(x0, y0) && g.canSetUp(g.clock)) {
                 g.sfxClick()
                 g.resetSetup(g.clock)
@@ -339,6 +344,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private var dragValid = true
     private val dragLift get() = 44 * d          // the shell rides above your thumb so you can see it
     private val resetR = RectF()
+    private val undoR = RectF()
 
     private fun overTray(x: Float, y: Float) = trayR.any { !it.isEmpty && it.contains(x, y) }
 
@@ -1774,6 +1780,25 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.color = if (g.shots >= g.maxShots - 2) Color.parseColor("#FF5252") else Color.argb(150, 255, 255, 255)
         p.textSize = 10 * d
         c.drawText("MAX ${g.maxShots}", 14 * d + p.measureText(sc) + 30 * d, top + 32 * d, p)
+        var bx2 = 14 * d + p.measureText(sc) + 30 * d + p.measureText("MAX ${g.maxShots}") + 16 * d
+        if (g.hot) {
+            p.textSize = 13 * d
+            p.color = if (((now / 120) % 2).toInt() == 0) Color.parseColor("#FF6D00") else Color.parseColor("#FFEA00")
+            val ht = "HOT x${g.hotStreak}  SHOTS ARE FREE!"
+            c.drawText(ht, bx2, top + 32 * d, p)
+            bx2 += p.measureText(ht) + 12 * d
+        } else if (g.hotStreak == 1) {
+            p.textSize = 11 * d
+            p.color = Color.parseColor("#FFAB40")
+            val ht = "1 IN A ROW: SINK ONE MORE TO GET HOT"
+            c.drawText(ht, bx2, top + 32 * d, p)
+            bx2 += p.measureText(ht) + 12 * d
+        }
+        if (g.resetCharges > 0) {
+            p.textSize = 11 * d
+            p.color = Color.parseColor("#80DEEA")
+            c.drawText("UNDO x${g.resetCharges}", bx2, top + 32 * d, p)
+        }
         p.clearShadowLayer()
 
     }
@@ -2302,7 +2327,27 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     /** RESET button, the "drag me" hint, and the ghost shell that follows your thumb. */
     private fun drawSetupExtras(c: Canvas, now: Long, bx: Float, rad: Float) {
         resetR.setEmpty()
+        undoR.setEmpty()
         val canSet = g.canSetUp(now)
+        if (g.canUndo(now)) {
+            // RESET SHOT special: take the last shot over
+            val bw = 96 * d
+            val bh = 34 * d
+            undoR.set(14 * d, height - 14 * d - bh, 14 * d + bw, height - 14 * d)
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(225, 0, 96, 110)
+            c.drawRoundRect(undoR, 10 * d, 10 * d, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2.5f * d
+            p.color = Color.argb(160 + (80 * Math.abs(Math.sin(now / 300.0))).toInt(), 128, 222, 234)
+            c.drawRoundRect(undoR, 10 * d, 10 * d, p)
+            p.style = Paint.Style.FILL
+            p.color = Color.WHITE
+            p.textAlign = Paint.Align.CENTER
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = 12 * d
+            c.drawText("UNDO SHOT x${g.resetCharges}", undoR.centerX(), undoR.centerY() + 4 * d, p)
+        }
         if (canSet && g.pouchStart.sum() > 0 && (g.shells.any { !it.bomb } || g.shots > 0)) {
             val bw = 66 * d
             val bh = 30 * d

@@ -116,7 +116,8 @@ class Ball(var x: Float, var y: Float, val kind: Int) {
     var sinkX = 0f
     var sinkY = 0f
     var hitAt = 0L
-    var cushions = 0      // walls it bounced off since the last shot (for BANK SHOT!)
+    var cushions = 0      // walls and paddles it bounced off since the last shot (for BANK SHOT!)
+    var pads = 0          // paddles among those
 }
 
 /** A hole in the sea floor. Shells that roll in are sunk; if Betito falls in it's a scratch. */
@@ -135,10 +136,13 @@ object Powers {
     const val BIGHOLES = 3   // crab: the holes get bigger for this shot and the next
     const val SCARE = 4      // clownfish: the sharks freeze
     const val MAGNET = 5     // seahorse: the holes pull shells in for this shot and the next
-    const val COUNT = 6
-    val pal = intArrayOf(6, 5, 4, 3, 2, 1)      // which crochet friend wears each power
-    val names = arrayOf("BLAST", "SPEED", "FREE SHOT", "BIG HOLES", "SHARK SCARE", "MAGNET")
-    val colors = intArrayOf(0xFFE040FB.toInt(), 0xFF40C4FF.toInt(), 0xFFFFD740.toInt(), 0xFFFF7043.toInt(), 0xFFFF9100.toInt(), 0xFF69F0AE.toInt())
+    const val RESET = 6      // clownfish: take your last shot over
+    const val COUNT = 7
+    /** The only three specials on the table: explosion, extra shot, shot reset. */
+    val active = intArrayOf(BLAST, FREE, RESET)
+    val pal = intArrayOf(6, 5, 4, 3, 2, 1, 2)      // which crochet friend wears each power
+    val names = arrayOf("EXPLOSION", "SPEED", "EXTRA SHOT", "BIG HOLES", "SHARK SCARE", "MAGNET", "RESET SHOT")
+    val colors = intArrayOf(0xFFE040FB.toInt(), 0xFF40C4FF.toInt(), 0xFFFFD740.toInt(), 0xFFFF7043.toInt(), 0xFFFF9100.toInt(), 0xFF69F0AE.toInt(), 0xFF26C6DA.toInt())
 }
 
 class Fish(var x: Float, var y: Float, var vx: Float, val size: Float, val color: Int)
@@ -244,6 +248,17 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     var bigHoleShots = 0         // crab: shots left with big holes
     var magnetShots = 0          // seahorse: shots left with magnet holes
     var blastAt = 0L
+    // HOT streak: sink a shell two shots in a row and you're hot. Shots that sink a shell while hot are free.
+    var hot = false
+    var hotStreak = 0
+    private var hotAtLaunch = false
+    private var padsThisShot = 0
+    // RESET SHOT special: take the last shot over
+    var resetCharges = 0
+    private class Snap(val bx: FloatArray, val by: FloatArray, val sunk: BooleanArray, val cx: Float, val cy: Float,
+                       val shots: Int, val score: Int, val hot: Boolean, val streak: Int)
+    private var snap: Snap? = null
+    fun canUndo(now: Long): Boolean = resetCharges > 0 && snap != null && shots > 0 && canSetUp(now)
     var blastX = 0f
     var blastY = 0f
     val blastRad get() = 170f * d
@@ -667,6 +682,12 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         bigHoleShots = 0
         magnetShots = 0
         blastAt = 0L
+        hot = false
+        hotStreak = 0
+        hotAtLaunch = false
+        padsThisShot = 0
+        resetCharges = 0
+        snap = null
 
         buildTable()
         // pool golf: one shot per shell plus the shot out the door is a BIRDIE; par gives you one spare
@@ -786,7 +807,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         suckFromX = Float.MAX_VALUE
         doorOpen = false
         doorOpenAt = 0L
-        setPouch(0, level)
+        setPouch(min(4, 1 + level / 3), level)
         levelPar = 3
         val lv = level
         val rnd = Random(lv * 7919 + 1234)
@@ -889,8 +910,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         // reef friends with powers (from hole 2)
         powers.clear()
-        val nPowers = when { lv < 2 -> 0; lv < 6 -> 1; else -> 2 }
-        val kinds = (0 until Powers.COUNT).filter { it != Powers.SCARE || sharks.isNotEmpty() }.shuffled(rnd)
+        val nPowers = when { lv < 2 -> 0; lv < 4 -> 1; else -> 2 }
+        val kinds = Powers.active.toList().shuffled(rnd)
         tries = 0
         var ki = 0
         while (powers.size < nPowers && tries < 300 && ki < kinds.size) {
@@ -924,15 +945,22 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 blastX = pw.x
                 blastY = pw.y
                 var flung = 0
+                // the explosion shoves EVERY shell on the table: close ones fly hard, far ones still scoot
                 for (b in balls) {
                     if (b.sunk) continue
-                    val dx = b.x - pw.x
-                    val dy = b.y - pw.y
-                    val dd = hypot(dx, dy)
-                    if (dd > blastRad || dd < 0.01f) continue
-                    val sp = (5f + 11f * (1f - dd / blastRad)) * d
-                    b.vx += dx / dd * sp
-                    b.vy += dy / dd * sp
+                    var dx = b.x - pw.x
+                    var dy = b.y - pw.y
+                    var dd = hypot(dx, dy)
+                    if (dd < 1f) { val ra = Random.nextFloat() * 6.283f; dx = cos(ra); dy = sin(ra); dd = 1f }
+                    val far = (dd / hypot(W, H)).coerceIn(0f, 1f)
+                    val sp = (7f + 9f * (1f - far)) * d
+                    val tw = (Random.nextFloat() - 0.5f) * 0.9f           // a little sideways scatter
+                    val ca = cos(tw)
+                    val sa = sin(tw)
+                    val ux = dx / dd * ca - dy / dd * sa
+                    val uy = dx / dd * sa + dy / dd * ca
+                    b.vx += ux * sp
+                    b.vy += uy * sp
                     b.hitAt = now
                     flung++
                 }
@@ -943,16 +971,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 flash = 0.35f
                 flashColor = 0xFFE1BEE7.toInt()
                 shake(11f, now)
-                celebrate(if (flung >= 2) "JELLY BLAST!!" else "ZAP!", true)
-                say(if (flung > 0) "KABOOM! The jellyfish zapped the shells everywhere!" else "Zap! Swim through it near the shells next time.", true)
-            }
-            Powers.DASH -> {
-                superUntil = now + 5000L
-                vx *= 1.6f
-                vy *= 1.6f
-                pop(Yarn.POP_POW, cx, cy - 26 * d, now, 66f, true)
-                celebrate("SUPER SPEED!!", true)
-                say("Dolphin dash! Faster, bouncier, and you hit shells harder!", true)
+                celebrate(if (flung >= 2) "EXPLOSION!!" else "ZAP!", true)
+                say("KABOOM! The jellyfish blew every shell around the table!", true)
             }
             Powers.FREE -> {
                 shots = max(0, shots - 1)
@@ -961,21 +981,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 celebrate("FREE SHOT!", true)
                 say("The starfish gave you a shot back!", true)
             }
-            Powers.BIGHOLES -> {
-                bigHoleShots = 2
-                celebrate("BIG HOLES!!", true)
-                say("Snip snip! The crab made every hole bigger for this shot and the next.", true)
-            }
-            Powers.SCARE -> {
-                for (s in sharks) s.stunUntil = now + 20000L
-                pop(Yarn.POP_ZAP, cx, cy - 26 * d, now, 60f, true)
-                celebrate("SHARK SCARE!", true)
-                say("The clownfish scared the sharks stiff!", true)
-            }
-            Powers.MAGNET -> {
-                magnetShots = 2
-                celebrate("MAGNET HOLES!!", true)
-                say("The seahorse turned the holes into magnets for this shot and the next!", true)
+            Powers.RESET -> {
+                resetCharges = min(3, resetCharges + 1)
+                pop(Yarn.POP_BING, cx, cy - 26 * d, now, 60f, true)
+                celebrate("RESET SHOT!!", true)
+                say("The clownfish gave you a RESET. After a shot, tap UNDO to take it over!", true)
             }
         }
     }
@@ -1919,6 +1929,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 if (b.vx < 0f) { if (-b.vx > 1f * d) b.cushions++; b.vx = -b.vx * cushionK }
             }
             for (w in blocks) if (w.alive) ballWall(b, w, now)
+            for (sh in shells) if (sh.paddle) ballPaddle(b, sh, now)
             if (hypot(b.vx, b.vy) < ballStop) { b.vx = 0f; b.vy = 0f }
         }
         // shell on shell
@@ -1990,6 +2001,33 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
     }
 
+    /** Shells bounce off a placed paddle like off a flat mirror. */
+    private fun ballPaddle(b: Ball, sh: ShellObj, now: Long) {
+        padClosestRaw(sh.x, sh.y, sh.ang, b.x, b.y)
+        val dx = b.x - padTmp[0]
+        val dy = b.y - padTmp[1]
+        val dist = hypot(dx, dy)
+        val minD = shellR + padR
+        if (dist >= minD || dist < 0.0001f) return
+        val nx = dx / dist
+        val ny = dy / dist
+        b.x += nx * (minD - dist)
+        b.y += ny * (minD - dist)
+        val vn = b.vx * nx + b.vy * ny
+        if (vn < 0f) {
+            b.vx -= (1f + 0.95f) * vn * nx
+            b.vy -= (1f + 0.95f) * vn * ny
+            if (-vn > 1f * d) {
+                b.cushions++
+                b.pads++
+                padsThisShot++
+                sh.hitAt = now
+                sfx?.play("clink", 0.3f + min(0.5f, -vn / (12 * d)), 50L, 1.8f)
+                pop(Yarn.POP_BING, padTmp[0] + nx * padR * 2f, padTmp[1] + ny * padR * 2f - 18 * d, now, 46f)
+            }
+        }
+    }
+
     private fun ballWall(b: Ball, w: Block, now: Long) {
         val qx = b.x.coerceIn(w.l, w.r)
         val qy = b.y.coerceIn(w.t, w.b)
@@ -2039,6 +2077,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             val a = Random.nextFloat() * 6.283f
             spawnParticle(pk.x, pk.y, cos(a) * 3 * d, sin(a) * 3 * d, 0xCCE1F5FE.toInt(), 2.5f * d, 26f)
         }
+        val chain = b.cushions + bouncesThisShot          // every bounce off a wall or paddle on the way
         when {
             sunkThisShot >= 3 -> {
                 score += 600 * bd
@@ -2048,11 +2087,37 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 flashColor = 0xFFFFF59D.toInt()
                 shake(10f, now)
             }
+            sunkThisShot == 2 && chain >= 3 -> {
+                score += 800 * bd
+                celebrate("SUPER COMBO!!", true)
+                sfx?.play("jackpot", 1f, 0L)
+                flash = 0.4f
+                flashColor = 0xFFFF80AB.toInt()
+                shake(9f, now)
+            }
             sunkThisShot == 2 -> {
                 score += 300 * bd
                 celebrate("DEADLY COMBO!!", true)
                 sfx?.play("coins", 1f, 0L)
                 shake(7f, now)
+            }
+            chain >= 5 -> {
+                score += 800 * bd
+                celebrate("CRAZY BANKS!!!", true)
+                sfx?.play("jackpot", 1f, 0L)
+                flash = 0.35f
+                flashColor = 0xFF80D8FF.toInt()
+                shake(9f, now)
+            }
+            chain >= 3 -> {
+                score += 400 * bd
+                celebrate("TRICK SHOT!!", true)
+                sfx?.play("coins", 1f, 0L)
+                shake(6f, now)
+            }
+            b.pads > 0 || padsThisShot > 0 -> {
+                score += 200 * bd
+                celebrate("PADDLE BANK!!", true)
             }
             b.cushions > 0 -> {
                 score += 150 * bd
@@ -2314,6 +2379,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 bumpAt = now
                 sh.hitAt = now
                 bouncesThisShot++
+                padsThisShot++
                 sfx?.play("clink", 0.4f + min(0.5f, -vn / (12 * d)), 60L, 1.8f)
                 pop(Yarn.POP_BING, padTmp[0] + nx * padR * 2f, padTmp[1] + ny * padR * 2f - 18 * d, now, 54f)
                 if (!shellHitThisShot && shots > 0) {
@@ -2735,6 +2801,12 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         swingT0 = now                          // and it starts swinging at launch
         val p = aimPower.coerceIn(0.12f, 1f)
         val sp = launchSpeed(now) * p
+        // remember how the table looked, in case a RESET SHOT is used
+        snap = Snap(FloatArray(balls.size) { balls[it].x }, FloatArray(balls.size) { balls[it].y },
+            BooleanArray(balls.size) { balls[it].sunk }, cx, cy, shots, score, hot, hotStreak)
+        hotAtLaunch = hot
+        padsThisShot = 0
+        for (b in balls) b.pads = 0
         vx = aimDX * sp
         vy = aimDY * sp
         ready = false
@@ -2764,11 +2836,73 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
     }
 
+    /** RESET SHOT special: put everything back the way it was before the last shot. */
+    fun undoShot(now: Long) {
+        val sn = snap ?: return
+        if (!canUndo(now)) return
+        for (i in balls.indices) {
+            val b = balls[i]
+            if (i >= sn.bx.size) break
+            b.x = sn.bx[i]
+            b.y = sn.by[i]
+            b.sunk = sn.sunk[i]
+            b.vx = 0f
+            b.vy = 0f
+            b.cushions = 0
+            b.pads = 0
+        }
+        if (doorOpen && balls.any { !it.sunk }) {
+            doorOpen = false
+            suckFromX = Float.MAX_VALUE
+            doorBlock?.alive = true
+        }
+        cx = sn.cx
+        cy = sn.cy
+        vx = 0f
+        vy = 0f
+        shots = sn.shots
+        score = sn.score
+        hot = sn.hot
+        hotStreak = sn.streak
+        resetCharges--
+        snap = null
+        previewN = 0
+        sfx?.play("woo", 0.8f, 0L)
+        popup = "SHOT UNDONE!"
+        popupAt = now
+        celebrate("RESET!")
+    }
+
     /** A shot has come to rest: the big combo-plus-buoy shots get the top praise. */
     private fun endShot(now: Long) {
         if (shots == 0) return
         if (bigHoleShots > 0) bigHoleShots--
         if (magnetShots > 0) magnetShots--
+        // HOT: two shots in a row that sink a shell and you're hot. Hot shots that sink a shell are free.
+        // Miss and you cool off.
+        if (!over && sunkThisShot > 0 && !scratchThisShot) {
+            hotStreak++
+            if (hotAtLaunch) {
+                shots = max(0, shots - 1)
+                score += 250 * hotStreak * band()
+                celebrate("HOT SHOT! FREE! x$hotStreak", true)
+                sfx?.play("jackpot", 0.8f, 0L)
+                say("You're HOT! That shot didn't count. Keep sinking shells!", true)
+            } else if (hotStreak >= 2) {
+                hot = true
+                score += 300 * band()
+                celebrate("YOU'RE HOT!!", true)
+                sfx?.play("fanfare", 0.8f, 0L)
+                say("HOT STREAK! Every shot that sinks a shell is free until you miss!", true)
+            }
+        } else if (!over && ballsLeft > 0) {
+            if (hot) {
+                celebrate("COOLED OFF...")
+                say("You missed, so the HOT streak is over.", true)
+            }
+            hot = false
+            hotStreak = 0
+        }
         if (!over && ballsLeft > 0 && sunkThisShot == 0 && !scratchThisShot) {
             say(if (!touchedBallThisShot) arrayOf("Missed the shells! Line up the red dots with a shell.",
                     "So close! Aim the white line at a hole.").random()
