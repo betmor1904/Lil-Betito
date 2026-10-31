@@ -19,7 +19,7 @@ kt = '''package com.example.spray
  * One-shot holes, made by tools/oneshot.cpp. Every hole was built around a solution: a shot that goes
  * from the start to the exit using flat PADDLES placed (and turned in 15 degree steps) by the player.
  * The solver checked the shot still wins with small aim/power errors, and that the hole can NOT be
- * solved in two shots without paddles. `shells` is how many paddles the tray holds; `hint` is the
+ * solved in two shots without paddles. `shells` is how many paddles the tray holds; `ropes` are swinging shells you can cut (anchor x, y, length, phase, period ms, swing in radians); `hint` is the
  * solution (x, y, angle per paddle in design units, then the aim in degrees and the power 0..1).
  * Par is always 2 (1 shot = birdie).
  *
@@ -27,7 +27,7 @@ kt = '''package com.example.spray
  * [left, top, right, bottom, kind] with kind 0 = column wall, 1 = rock.
  * After the last hole the list repeats, mirrored top to bottom.
  */
-class Lvl(val startY: Float, val exitT: Float, val exitB: Float, val par: Int, val shells: Int, val walls: FloatArray, val hint: FloatArray = floatArrayOf())
+class Lvl(val startY: Float, val exitT: Float, val exitB: Float, val par: Int, val shells: Int, val walls: FloatArray, val hint: FloatArray = floatArrayOf(), val ropes: FloatArray = floatArrayOf())
 
 object Levels {
     const val PLAY_H = 300f

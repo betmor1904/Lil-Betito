@@ -31,12 +31,22 @@ class Target(val x: Float, val y: Float, val kind: Int, val zone: WaterZone? = n
     var done = false
 }
 
+/** A shell swinging on a rope from the ceiling or floor. Tap it to cut the rope: the shell flies off with its swing and kicks Betito. */
+class Rope(val ax: Float, val ay: Float, val len: Float, val phase: Float, val period: Float, val amp: Float, val dir: Float) {
+    val bob = ShellObj(ax, ay + dir * len, 0f, 0f, false, 0).also { it.rope = true; it.settled = true }
+    var cut = false
+    var cutAt = 0L
+    var cutDx = 0f
+    var cutDy = 0f
+}
+
 /** A bounce shell the player has shot out: it settles and Betito can bank off it. */
 class ShellObj(var x: Float, var y: Float, var vx: Float, var vy: Float, val bomb: Boolean = false, val kind: Int = 0) {
     var explodeAt = 0L   // bombs only: when it goes off
     var settled = false
     var hitAt = 0L
     var ang = 0f   // paddles only: direction the flat side runs (radians)
+    var rope = false   // the swinging shell on a rope (moves; the kick adds its own speed)
     val paddle get() = kind == ShellKinds.PADDLE
     val seed = Random.nextFloat() * 6f
 }
@@ -182,6 +192,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     // ---------- bounce shells: free, they don't cost a shot ----------
     val shells = ArrayList<ShellObj>()
+    val ropes = ArrayList<Rope>()
     val pouch = IntArray(ShellKinds.COUNT)       // shells you still hold, per type
     val pouchStart = IntArray(ShellKinds.COUNT)  // what this hole started with
     var shellKind = 0                             // the type armed when shellMode is on
@@ -577,6 +588,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         say(when (level) {
             1 -> "Drag a paddle onto the water and tap it to turn it. Then pull back and let go. One shot = BIRDIE, two = PAR!"
             2 -> "Plan your paddles first! Put one at each corner, turn them with a tap, then shoot. Drag a paddle to the tray to take it back."
+            3 -> "A shell on a rope! While Betito swims, TAP the rope to cut it. The shell flies off and kicks him!"
             else -> "Set up your paddles, then shoot. Birdie in 1, par in 2, a 3rd shot loses!"
         }, true)
     }
@@ -690,6 +702,17 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
                 if (top <= playT + 1f) upB[gi] = bot else lowT[gi] = top
             }
             k += 5
+        }
+        ropes.clear()
+        run {
+            val rl = lv.ropes
+            var q = 0
+            while (q + 5 < rl.size) {
+                val top = rl[q + 1] < Levels.PLAY_H / 2f
+                val dir = if (top != flip) 1f else -1f      // hangs down from the ceiling (up from the floor when flipped)
+                ropes.add(Rope(rl[q] * d * sx, yy(rl[q + 1]), rl[q + 2] * d * min(sx, sy), rl[q + 3], rl[q + 4], rl[q + 5], dir))
+                q += 6
+            }
         }
         val gaps = ArrayList<Float>()
         for (i in cols.indices) gaps.add((upB[i] + lowT[i]) / 2f)
@@ -1396,6 +1419,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             for (w in blocks) if (w.alive) collideTurtle(w.l, w.t, w.r, w.b, now)
             collideSharks(now)
             for (sh in shells) collideShell(sh, now)
+            if (!ready) for (rp in ropes) collideShell(rp.bob, now)
             checkTargets(now)
 
             val sp = hypot(vx, vy)
@@ -1418,6 +1442,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         }
         heading = Math.toDegrees(atan2(faceY.toDouble(), faceX.toDouble())).toFloat()
         updateShells(dt, now)
+        updateRopes(now, dt)
         if ((shellMode || bombMode) && aiming && ready) computeShellPreview(now)
         else if (aiming) computePreview(now) else previewN = 0
 
@@ -1787,6 +1812,62 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         blown?.forEach { explodeBomb(it, now) }
     }
 
+    /** Swings the rope shells, and flies the ones that were cut. */
+    private fun updateRopes(now: Long, dt: Float) {
+        for (rp in ropes) {
+            val b = rp.bob
+            if (!rp.cut) {
+                val ph = rp.phase + 6.283185 * (now.toDouble() / rp.period)
+                val th = rp.amp * sin(ph).toFloat()
+                val thd = (rp.amp * cos(ph) * 6.283185 / rp.period).toFloat()   // radians per ms
+                b.x = rp.ax + rp.len * sin(th)
+                b.y = rp.ay + rp.dir * rp.len * cos(th)
+                b.vx = rp.len * cos(th) * thd * 16.67f
+                b.vy = -rp.dir * rp.len * sin(th) * thd * 16.67f
+                b.settled = true
+            } else if (!b.settled) {
+                for (i in 0 until 3) {
+                    val nx = b.x + b.vx * dt / 3f
+                    val ny = b.y + b.vy * dt / 3f
+                    if (shellHitsWall(nx, ny)) { b.vx = 0f; b.vy = 0f; b.settled = true; break }
+                    b.x = nx
+                    b.y = ny
+                    val k = 1f - min(1f, waterDrag * dt / 3f)
+                    b.vx *= k
+                    b.vy *= k
+                }
+                if (hypot(b.vx, b.vy) < 0.15f * d) { b.vx = 0f; b.vy = 0f; b.settled = true }
+            }
+        }
+    }
+
+    /** A tap on a rope (or its shell) cuts it. Returns true if something was cut. */
+    fun tryCutRope(x: Float, y: Float, now: Long): Boolean {
+        if (over || paused) return false
+        for (rp in ropes) {
+            if (rp.cut) continue
+            val b = rp.bob
+            val sx = b.x - rp.ax
+            val sy = b.y - rp.ay
+            val l2 = sx * sx + sy * sy
+            val t = if (l2 < 0.001f) 0f else (((x - rp.ax) * sx + (y - rp.ay) * sy) / l2).coerceIn(0f, 1f)
+            if (hypot(x - (rp.ax + sx * t), y - (rp.ay + sy * t)) > 26 * d) continue
+            rp.cut = true
+            rp.cutAt = now
+            val ln = max(1f, hypot(sx, sy))
+            rp.cutDx = sx / ln
+            rp.cutDy = sy / ln
+            b.settled = false
+            b.vx *= 1.7f
+            b.vy *= 1.7f
+            sfx?.play("clink", 0.8f, 0L, 1.4f)
+            pop(Yarn.POP_BING, x, y - 20 * d, now, 50f, true)
+            for (k in 0 until 8) spawnParticle(x, y, (Random.nextFloat() - 0.5f) * 4 * d, (Random.nextFloat() - 0.5f) * 4 * d, 0xFFF4B183.toInt(), 2.5f * d, 22f)
+            return true
+        }
+        return false
+    }
+
     /** Blows a hole in the walls around a bomb: each wall piece in the blast keeps only the parts above and below it. */
     private fun explodeBomb(sh: ShellObj, now: Long) {
         shells.remove(sh)
@@ -1848,11 +1929,15 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         val ny = dy / dist
         cx += nx * (minD - dist)
         cy += ny * (minD - dist)
-        val vn = vx * nx + vy * ny
+        val svx = if (sh.rope) sh.vx else 0f      // a moving rope shell kicks with its own speed
+        val svy = if (sh.rope) sh.vy else 0f
+        val ivx = vx - svx
+        val ivy = vy - svy
+        val vn = ivx * nx + ivy * ny
         if (vn < 0f) {
-            shellRebound(sh.kind, vx, vy, nx, ny)
-            vx = shellOut[0]
-            vy = shellOut[1]
+            shellRebound(sh.kind, ivx, ivy, nx, ny)
+            vx = shellOut[0] + svx
+            vy = shellOut[1] + svy
             if (-vn > 1.0f * d) {
                 bumpAt = now
                 sh.hitAt = now
@@ -1959,6 +2044,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     private fun launch(now: Long) {
+        for (rp in ropes) rp.cut = false      // a fresh rope for every shot
         val p = aimPower.coerceIn(0.12f, 1f)
         val sp = launchSpeed(now) * p
         vx = aimDX * sp

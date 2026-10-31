@@ -8,6 +8,7 @@
 //
 // Build: g++ -O2 -o oneshot oneshot.cpp      Run: ./oneshot <firstLevel> <lastLevel> <seed> > out.txt
 // Keep the constants in sync with Game.kt.
+#include <array>
 #include <bits/stdc++.h>
 using namespace std;
 typedef float F;
@@ -185,7 +186,7 @@ static bool refine(const World& w, F sx, F sy, F a0, F p0, int maxB, int needPad
 static long REJC[40];
 static bool REJ(int i) { REJC[i]++; return false; }
 
-struct Out { World wd; F sy; vector<Pad> pads; F ang, pw; int cols; };
+struct Out { World wd; F sy; vector<Pad> pads; F ang, pw; int cols; vector<array<F, 6>> ropes; };
 
 static bool buildLevel(int L, int K, Out& o) {
     const F sx = 48;
@@ -313,6 +314,42 @@ static bool buildLevel(int L, int K, Out& o) {
         if (solveNoPads(ns, sx, sy, 2, 3) <= 2) return REJ(11);
     }
     o.wd = w; o.sy = sy; o.pads = w.pads; o.ang = ao; o.pw = po;
+    // swinging shells on ropes: hang from the ceiling or floor, stay well clear of the solution line, rocks and paddles.
+    // The player can cut one (tap) to launch the shell at Betito. [anchorX, anchorY, length, phase, period ms, amplitude rad]
+    o.ropes.clear();
+    if (L >= 3) {
+        vector<pair<F, F>> fp;
+        sim(w, sx, sy, ao * DEG, po, &fp);
+        int want = L >= 14 ? 2 : 1;
+        const F BOB = 15, AMP = 0.95f;
+        for (int g = 0; g < 400 && (int)o.ropes.size() < want; g++) {
+            F ax = rnd(110, EXITX - 70), len = rnd(55, 95);
+            bool ceil = (rng() % 2) == 0;
+            F ay = ceil ? 0 : PH;
+            F dir = ceil ? 1.f : -1.f;
+            bool ok = true;
+            for (auto& rr : o.ropes) if (fabsf(rr[0] - ax) < 120) ok = false;
+            for (int ai = -5; ai <= 5 && ok; ai++) {
+                F th = AMP * ai / 5.f;
+                for (int fr = 1; fr <= 4 && ok; fr++) {
+                    F bx = ax + len * fr / 4.f * sinf(th), by = ay + dir * len * fr / 4.f * cosf(th);
+                    for (int j = 0; j < (int)fp.size(); j += 2)
+                        if (hypotf(fp[j].first - bx, fp[j].second - by) < R + BOB + 16) { ok = false; break; }
+                    if (!ok) break;
+                    for (auto& q : w.w) {
+                        if (q.kind == 2) continue;
+                        if (rectDist(q, bx, by) < BOB + 8) { ok = false; break; }
+                    }
+                    if (!ok) break;
+                    for (auto& p : w.pads)
+                        for (int i = -3; i <= 3; i++)
+                            if (hypotf(p.x + cosf(p.a) * PAD_HALF * i / 3.f - bx, p.y + sinf(p.a) * PAD_HALF * i / 3.f - by) < BOB + 14) ok = false;
+                }
+            }
+            if (!ok) continue;
+            o.ropes.push_back({ax, ay, len, rnd(0, 6.28f), rnd(2200, 3200), AMP});
+        }
+    }
     return true;
 }
 
@@ -342,7 +379,10 @@ int main(int argc, char** argv) {
             }
             printf("), floatArrayOf(");
             for (auto& p : o.pads) printf("%.0ff, %.0ff, %.3ff, ", p.x, p.y, p.a);
-            printf("%.2ff, %.2ff)),\n", o.ang, o.pw);
+            printf("%.2ff, %.2ff), floatArrayOf(", o.ang, o.pw);
+            for (size_t ri = 0; ri < o.ropes.size(); ri++)
+                printf("%s%.0ff, %.0ff, %.0ff, %.2ff, %.0ff, %.2ff", ri ? ", " : "", o.ropes[ri][0], o.ropes[ri][1], o.ropes[ri][2], o.ropes[ri][3], o.ropes[ri][4], o.ropes[ri][5]);
+            printf(")),\n");
             fflush(stdout);
             break;
         }

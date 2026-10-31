@@ -150,6 +150,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             g.toggleBombMode(g.clock)
             return true
         }
+        // cut a swinging rope
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && !g.over && g.tryCutRope(x0, y0, g.clock)) return true
         // a shell is being dragged (from the tray, or one that was already placed)
         if (dragPtr != -1) {
             val i = e.findPointerIndex(dragPtr).let { if (it >= 0) it else 0 }
@@ -1782,6 +1784,36 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     }
 
     private fun drawShells(c: Canvas, now: Long) {
+        for (rp in g.ropes) {
+            val bob = rp.bob
+            if (!rp.cut) {
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3.5f * d
+                p.color = Color.parseColor("#F4B183")
+                c.drawLine(rp.ax, rp.ay, bob.x, bob.y, p)
+                p.strokeWidth = 1.2f * d
+                p.color = Color.argb(150, 150, 85, 45)
+                c.drawLine(rp.ax, rp.ay, bob.x, bob.y, p)
+                if (g.ready) {
+                    p.strokeWidth = 2 * d
+                    p.color = Color.argb((90 + 70 * sin(now / 250.0)).toInt(), 255, 255, 255)
+                    c.drawCircle(bob.x, bob.y, g.shellR * (1.45f + 0.1f * sin(now / 250.0).toFloat()), p)
+                }
+            } else if (now - rp.cutAt < 1600L) {
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3.5f * d
+                p.color = Color.argb((255 * (1f - (now - rp.cutAt) / 1600f)).toInt(), 244, 177, 131)
+                val sag = min(1f, (now - rp.cutAt) / 400f) * 10 * d
+                c.drawLine(rp.ax, rp.ay, rp.ax + rp.cutDx * rp.len * 0.35f, rp.ay + rp.cutDy * rp.len * 0.35f + sag, p)
+            }
+            p.style = Paint.Style.FILL
+            p.color = Color.parseColor("#8D5524")
+            c.drawCircle(rp.ax, rp.ay, 5 * d, p)
+            val pop = if (now - bob.hitAt < 160) 1.25f - (now - bob.hitAt) / 160f * 0.25f else 1f
+            p.color = Color.argb(60, 0, 0, 0)
+            c.drawCircle(bob.x + 2 * d, bob.y + 3 * d, g.shellR * pop, p)
+            drawShellBody(c, bob.x, bob.y, g.shellR * pop, 255, 0)
+        }
         for (sh in g.shells) {
             if (sh.paddle) { drawPaddle(c, sh.x, sh.y, sh.ang, 255, now - sh.hitAt < 160); continue }
             val pop = if (now - sh.hitAt < 160) 1.25f - (now - sh.hitAt) / 160f * 0.25f else 1f
