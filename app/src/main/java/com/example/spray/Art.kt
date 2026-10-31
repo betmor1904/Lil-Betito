@@ -297,7 +297,7 @@ object Art {
         p.strokeCap = Paint.Cap.ROUND
         p.pathEffect = null
         when (key) {
-            "goal" -> {
+            "goal", "door" -> {
                 // a wall with the glowing hole and an arrow flying in
                 p.color = Color.parseColor("#4A3B5C")
                 c.drawRect(x + s * 0.45f, y - s, x + s * 0.8f, y - s * 0.38f, p)
@@ -420,7 +420,7 @@ object Art {
                 if (k < 0.5f) c.drawCircle(x - s * 0.85f + (bx - (x - s * 0.85f)) * t, y - s * 0.7f + (s * 1.2f) * t, s * 0.18f, p)
                 else c.drawCircle(bx + (x + s * 0.85f - bx) * t, y + s * 0.5f - (s * 1.2f) * t, s * 0.18f, p)
             }
-            "shell" -> {
+            "shell", "pocket" -> {
                 val rr = s * 0.7f
                 p.color = Color.rgb(255, 183, 77)
                 c.drawCircle(x, y, rr, p)
@@ -553,7 +553,7 @@ object Art {
                 star(c, p, x - s * 0.75f, y - s * 0.55f, s * 0.2f)
                 star(c, p, x + s * 0.75f, y - s * 0.5f, s * 0.16f)
             }
-            "score" -> {
+            "score", "par" -> {
                 // a golf flag in the hole
                 p.color = Color.parseColor("#1B5E20")
                 c.drawOval(x - s * 0.8f, y + s * 0.45f, x + s * 0.8f, y + s * 0.85f, p)

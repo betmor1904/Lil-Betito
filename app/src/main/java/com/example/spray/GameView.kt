@@ -438,12 +438,14 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         drawWater(c, now)
         drawWeeds(c, now)
         drawRails(c, now)
+        drawPockets(c, now)
         drawWalls(c, now)
         drawPickups(c, now)
         drawTargets(c, now)
         drawFlipIcons(c, now)
         for (s in g.sharks) drawShark(c, s, now)
         drawShells(c, now)
+        drawBalls(c, now)
         drawAimPreview(c, now)
         drawTracer(c)
         drawTurtle(c, now)
@@ -452,6 +454,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         if (shaking) c.restore()
         drawHud(c, w, now)
         drawTracker(c, w, now)
+        drawBallCount(c, w)
         drawOcto(c, w, now)
         drawControls(c, now)
         drawShellButton(c, now)
@@ -913,12 +916,14 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 c.restore()
             }
         }
-        // the exit: a glowing door in the right wall
+        // the exit: a glowing door in the right wall (dim red while it's locked)
         val pulse = 0.6f + 0.4f * sin(now / 220.0).toFloat()
         for (i in 0 until 4) {
-            p.color = Color.argb(((90 * pulse).toInt() - i * 18).coerceIn(0, 255), 118, 255, 3)
+            val al = ((90 * pulse).toInt() - i * 18).coerceIn(0, 255)
+            p.color = if (g.doorOpen) Color.argb(al, 118, 255, 3) else Color.argb(al / 2, 255, 82, 82)
             c.drawRect(g.exitX - (i + 1) * 14 * d, g.exitGapT, g.exitX + 30 * d, g.exitGapB, p)
         }
+        if (!g.doorOpen) return
         if (Yarn.loaded) c.drawRect(g.exitX, g.exitGapT, g.exitX + 12 * d, g.exitGapB, holeP)   // lime yarn in the hole
         p.color = Color.parseColor("#76FF03")
         val my = (g.exitGapT + g.exitGapB) / 2f
@@ -1144,7 +1149,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         val bw = 13 * d
         val gap = 3 * d
         val total = n * bw + (n - 1) * gap
-        val x0 = w / 2f - total / 2f + 22 * d
+        // sits between the top-left and top-middle pockets
+        val x0 = (g.exitX * 0.27f).coerceAtLeast(total / 2f + 62 * d) - total / 2f + 22 * d
         val y0 = g.playT + 5 * d
         rect.set(x0 - 52 * d, y0 - 3 * d, x0 + total + 6 * d, y0 + bw + 3 * d)
         p.style = Paint.Style.FILL
@@ -1205,6 +1211,110 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.style = Paint.Style.FILL
     }
 
+    /** Holes in the sea floor, and the pull of the door once it's open. */
+    private fun drawPockets(c: Canvas, now: Long) {
+        val pr = g.pocketR
+        for (pk in g.pockets) {
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(70, 0, 0, 0)
+            c.drawCircle(pk.x + 2 * d, pk.y + 3 * d, pr + 5 * d, p)
+            p.color = Color.parseColor("#C49A6C")          // sandy rim
+            c.drawCircle(pk.x, pk.y, pr + 4 * d, p)
+            p.color = Color.parseColor("#0B1A2E")
+            c.drawCircle(pk.x, pk.y, pr, p)
+            p.color = Color.parseColor("#050B14")
+            c.drawCircle(pk.x, pk.y, pr * 0.65f, p)
+            // a slow swirl going down
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1.5f * d
+            p.color = Color.argb(90, 128, 222, 234)
+            val spin = (now % 3000L) / 3000f * 360f
+            rect.set(pk.x - pr * 0.75f, pk.y - pr * 0.75f, pk.x + pr * 0.75f, pk.y + pr * 0.75f)
+            c.drawArc(rect, spin, 120f, false, p)
+            c.drawArc(rect, spin + 180f, 120f, false, p)
+            // stitched rim
+            p.color = Color.argb(160, 120, 80, 40)
+            p.pathEffect = dash
+            c.drawCircle(pk.x, pk.y, pr + 2 * d, p)
+            p.pathEffect = null
+        }
+        p.style = Paint.Style.FILL
+        if (g.doorOpen) {
+            val hx = g.holeX
+            val hy = g.holeY
+            c.save()
+            c.clipRect(g.exitX - g.suckR, g.playT, g.exitX, g.playB)
+            p.style = Paint.Style.STROKE
+            p.strokeCap = Paint.Cap.ROUND
+            p.strokeWidth = 2.5f * d
+            for (i in 0 until 4) {
+                val f = 1f - (((now % 1600L) / 1600f) + i / 4f) % 1f
+                val rr = g.suckR * f
+                p.color = Color.argb((150 * (1f - f)).toInt().coerceIn(0, 255), 178, 255, 89)
+                rect.set(hx - rr, hy - rr, hx + rr, hy + rr)
+                c.drawArc(rect, 100f + f * 90f, 160f, false, p)
+            }
+            c.restore()
+            p.style = Paint.Style.FILL
+        }
+    }
+
+    /** The shells on the table; sunk ones shrink and spin down into their hole. */
+    private fun drawBalls(c: Canvas, now: Long) {
+        val sr = g.shellR
+        for (b in g.balls) {
+            if (b.sunk) {
+                val age = now - b.sinkAt
+                if (age > 450L) continue
+                val k = age / 450f
+                val x = b.x + (b.sinkX - b.x) * k
+                val y = b.y + (b.sinkY - b.y) * k
+                c.save()
+                c.rotate(k * 360f, x, y)
+                drawShellBody(c, x, y, sr * (1f - 0.8f * k), (255 * (1f - k)).toInt(), b.kind)
+                c.restore()
+                continue
+            }
+            val pop = if (now - b.hitAt < 160) 1.2f - (now - b.hitAt) / 160f * 0.2f else 1f
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(60, 0, 0, 0)
+            c.drawCircle(b.x + 2 * d, b.y + 3 * d, sr * pop, p)
+            drawShellBody(c, b.x, b.y, sr * pop, 255, b.kind)
+        }
+    }
+
+    /** Shells still to sink, shown next to the scorecard. */
+    private fun drawBallCount(c: Canvas, w: Float) {
+        if (g.balls.isEmpty()) return
+        val n = g.balls.size
+        val step = 17 * d
+        val pw = n * step + 48 * d
+        val x0 = (g.exitX * 0.75f - pw / 2f).coerceAtMost(g.exitX - pw - 50 * d)
+        val x1 = x0 + pw
+        val y = g.playT + 11 * d
+        rect.set(x0, y - 10 * d, x1, y + 10 * d)
+        p.style = Paint.Style.FILL
+        p.color = Color.argb(150, 2, 10, 30)
+        c.drawRoundRect(rect, 8 * d, 8 * d, p)
+        p.textAlign = Paint.Align.LEFT
+        p.typeface = Typeface.DEFAULT_BOLD
+        p.textSize = 9 * d
+        p.color = if (g.doorOpen) Color.parseColor("#B2FF59") else Color.WHITE
+        c.drawText(if (g.doorOpen) "OPEN!" else "SINK", x0 + 7 * d, y + 3 * d, p)
+        for ((i, b) in g.balls.withIndex()) {
+            drawShellBody(c, x0 + 46 * d + i * step, y, 7 * d, if (b.sunk) 70 else 255, b.kind)
+            if (b.sunk) {
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2 * d
+                p.color = Color.parseColor("#B2FF59")
+                val cx0 = x0 + 46 * d + i * step
+                c.drawLine(cx0 - 5 * d, y, cx0 - 1 * d, y + 4 * d, p)
+                c.drawLine(cx0 - 1 * d, y + 4 * d, cx0 + 6 * d, y - 5 * d, p)
+                p.style = Paint.Style.FILL
+            }
+        }
+    }
+
     /** Before each hole: a big card with the hole number and its par. */
     private fun drawIntro(c: Canvas, w: Float, h: Float, now: Long) {
         val left = g.introUntil - now
@@ -1243,8 +1353,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.typeface = Typeface.DEFAULT_BOLD
         p.textSize = 11 * d
         p.color = Color.argb((220 * a).toInt(), 255, 255, 255)
-        c.drawText(if (g.par >= 3) "SHELLS ${g.shellsLeft}   1 = EAGLE   2 = BIRDIE   3 = PAR   ${g.par + 1} = LOSE   ★ ${g.totalStars()}"
-            else "SHELLS ${g.shellsLeft}   1 SHOT = BIRDIE   2 SHOTS = PAR   3 = LOSE   ★ ${g.totalStars()}", w / 2, cy + 40 * d, p)
+        c.drawText("SINK ${g.ballsLeft} SHELL${if (g.ballsLeft == 1) "" else "S"}, THEN SWIM OUT   BIRDIE = ${g.par - 1}   MAX ${g.maxShots}   ★ ${g.totalStars()}", w / 2, cy + 40 * d, p)
         p.textSize = 10 * d
         p.color = Color.argb((160 * a).toInt(), 255, 255, 255)
         c.drawText("TAP TO START", w / 2, cy + 62 * d, p)
@@ -1657,8 +1766,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             c.drawArc(rect, 135f + i * 22.5f + 1.5f, 19.5f, false, p)
         }
         p.style = Paint.Style.FILL
-        drawCue(c)
-        if (g.previewN == 0 && g.previewBounceN == 0) return
+        if (g.previewN == 0 && g.previewBounceN == 0 && !g.previewBallHit && !g.previewScratch) return
         drawPoolLine(c, now)
     }
 
@@ -1693,7 +1801,66 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             c.drawText("${b + 1}", bx, by - g.r * 1.2f, p)
             p.clearShadowLayer()
         }
-        if (g.previewStops) {
+        if (g.previewBallHit) {
+            // ghost Betito where he touches the shell, then where the shell goes (green if it drops in a hole)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2 * d
+            p.color = Color.argb(220, 255, 255, 255)
+            c.drawCircle(g.previewGhostX, g.previewGhostY, g.r, p)
+            val inHole = g.previewBallIn
+            p.strokeCap = Paint.Cap.ROUND
+            p.strokeWidth = 3 * d
+            p.color = if (inHole) Color.argb(235, 118, 255, 3) else Color.argb(220, 255, 255, 255)
+            c.drawLine(g.previewBallX, g.previewBallY, g.previewBallEX, g.previewBallEY, p)
+            val ddx = g.previewBallEX - g.previewBallX
+            val ddy = g.previewBallEY - g.previewBallY
+            val dl = hypot(ddx, ddy)
+            if (dl > 8 * d) {
+                val ux = ddx / dl
+                val uy = ddy / dl
+                val ex = g.previewBallEX
+                val ey = g.previewBallEY
+                c.drawLine(ex, ey, ex - ux * 9 * d - uy * 6 * d, ey - uy * 9 * d + ux * 6 * d, p)
+                c.drawLine(ex, ey, ex - ux * 9 * d + uy * 6 * d, ey - uy * 9 * d - ux * 6 * d, p)
+            }
+            if (g.previewTurnDX != 0f || g.previewTurnDY != 0f) {
+                p.strokeWidth = 2 * d
+                p.pathEffect = dash
+                p.color = Color.argb(140, 255, 120, 120)
+                c.drawLine(g.previewGhostX, g.previewGhostY, g.previewGhostX + g.previewTurnDX * 45 * d, g.previewGhostY + g.previewTurnDY * 45 * d, p)
+                p.pathEffect = null
+            }
+            if (inHole) {
+                p.style = Paint.Style.FILL
+                p.textAlign = Paint.Align.CENTER
+                p.typeface = Typeface.DEFAULT_BOLD
+                p.textSize = 11 * d
+                p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                p.color = Color.parseColor("#B2FF59")
+                c.drawText("IN!", g.previewBallEX, g.previewBallEY - 16 * d, p)
+                p.clearShadowLayer()
+            }
+            p.style = Paint.Style.FILL
+        }
+        if (g.previewScratch) {
+            // this path drops Betito in a hole
+            p.style = Paint.Style.STROKE
+            p.strokeCap = Paint.Cap.ROUND
+            p.strokeWidth = 3 * d
+            p.color = Color.argb(230, 255, 61, 0)
+            val xx = g.previewEndX
+            val yy = g.previewEndY
+            c.drawLine(xx - 8 * d, yy - 8 * d, xx + 8 * d, yy + 8 * d, p)
+            c.drawLine(xx - 8 * d, yy + 8 * d, xx + 8 * d, yy - 8 * d, p)
+            p.style = Paint.Style.FILL
+            p.textAlign = Paint.Align.CENTER
+            p.typeface = Typeface.DEFAULT_BOLD
+            p.textSize = 11 * d
+            p.setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            c.drawText("SCRATCH!", xx, yy - 14 * d, p)
+            p.clearShadowLayer()
+        }
+        if (g.previewStops && !g.previewBallHit && !g.previewScratch) {
             // where he would come to rest
             p.style = Paint.Style.STROKE
             p.strokeWidth = 1.5f * d
@@ -1702,31 +1869,6 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             c.drawCircle(g.previewEndX, g.previewEndY, g.r, p)
             p.pathEffect = null
         }
-        p.style = Paint.Style.FILL
-    }
-
-    /** A pool cue behind Betito: it slides back as you pull, so the shot feels like lining up on a table. */
-    private fun drawCue(c: Canvas) {
-        if (!g.aiming || !g.ready || g.shellMode || g.bombMode) return
-        val gap = g.r * 1.7f + 30 * d * g.aimPower
-        val len = 110 * d
-        val ux = -g.aimDX
-        val uy = -g.aimDY
-        val x0 = g.cx + ux * gap
-        val y0 = g.cy + uy * gap
-        val x1 = x0 + ux * len
-        val y1 = y0 + uy * len
-        p.style = Paint.Style.STROKE
-        p.strokeCap = Paint.Cap.ROUND
-        p.strokeWidth = 5.5f * d
-        p.color = Color.argb(230, 215, 178, 122)
-        c.drawLine(x0 + ux * 8 * d, y0 + uy * 8 * d, x1, y1, p)
-        p.strokeWidth = 4.2f * d
-        p.color = Color.argb(240, 78, 52, 46)
-        c.drawLine(x0 + ux * 8 * d, y0 + uy * 8 * d, x0 + ux * 30 * d, y0 + uy * 30 * d, p)
-        p.strokeWidth = 5.5f * d
-        p.color = Color.argb(240, 100, 181, 246)
-        c.drawLine(x0, y0, x0 + ux * 6 * d, y0 + uy * 6 * d, p)
         p.style = Paint.Style.FILL
     }
 
@@ -1975,7 +2117,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
     private fun drawSetupExtras(c: Canvas, now: Long, bx: Float, rad: Float) {
         resetR.setEmpty()
         val canSet = g.canSetUp(now)
-        if (canSet && (g.shells.any { !it.bomb } || g.shots > 0)) {
+        if (canSet && g.pouchStart.sum() > 0 && (g.shells.any { !it.bomb } || g.shots > 0)) {
             val bw = 66 * d
             val bh = 30 * d
             val rx = bx - rad - 6 * d - 14 * d - bw

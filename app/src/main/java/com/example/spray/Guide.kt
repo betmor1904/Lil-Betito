@@ -13,11 +13,12 @@ object Guide {
     class Entry(val key: String, val title: String, val text: String, val color: Int)
 
     val entries = listOf(
-        Entry("shoot", "SHOOTING", "When Betito stops (green ring), touch anywhere, pull back and let go. Pull further for more power.", Color.parseColor("#76FF03")),
-        Entry("bank", "BANK SHOTS", "Rocks and shells are bouncy! The red dots trace your whole path, with a ring at each bounce (up to 3). Line up the ricochets to get around corners. Pull back into the X, or tap a 2nd finger, to cancel without spending a shot.", Color.parseColor("#80DEEA")),
-        Entry("goal", "THE HOLE", "Get Betito through the glowing gap in the right wall.", Color.parseColor("#76FF03")),
-        Entry("shell", "SHELLS", "Plan BEFORE you shoot: drag a flat PADDLE from the tray (bottom right) onto the water. Tap a placed paddle to turn it, drag it to move it, drop it on the tray to take it back, RESET to start over. Betito bounces off a paddle like a pool cushion. BOUNCY (orange) kicks you out faster, RUBBER (green) is a clean mirror, MEGA (pink) is a huge kick, SPONGE (gray) soaks the hit, TWIST (blue) bends your bounce. Shells cost no shot.", Color.parseColor("#FFB74D")),
-        Entry("score", "PAR & SCORING", "One shot = BIRDIE. Two shots = PAR. Miss twice and you lose the hole and must REPLAY it. After a miss you can keep your shells and shoot again, or hit RESET to rethink the setup.", Color.parseColor("#FF5252")),
+        Entry("shoot", "SHOOTING", "When everything stops (green ring), touch anywhere, pull back and let go. Pull further for more power. Pull back into the X to cancel without spending a shot.", Color.parseColor("#76FF03")),
+        Entry("pocket", "SINK THE SHELLS", "Betito is the cue ball. Hit the shells so they roll into the dark holes. The white line shows where a shell will go, and turns green with IN! when it's headed for a hole. Don't fall in a hole yourself: that's a SCRATCH and costs a shot.", Color.parseColor("#FFC107")),
+        Entry("door", "THE DOOR", "The door in the right wall is locked until every shell is sunk. Then it opens and pulls Betito in. Swim out to finish the hole.", Color.parseColor("#76FF03")),
+        Entry("bank", "BANK SHOTS", "Walls and rocks are bouncy. The red dots trace Betito's path with a ring at each bounce. Sink a shell off a wall for BANK SHOT!!, hit a shell after a bounce for KICK SHOT!", Color.parseColor("#80DEEA")),
+        Entry("shark", "SHARKS", "Sharks swim back and forth while anything is moving. They bump Betito and shells off course, so time your shots around them.", Color.parseColor("#90A4AE")),
+        Entry("par", "PAR & STARS", "The boxes at the top tick off every shot. One shot per shell plus the shot out the door is a BIRDIE (3 stars). Par gives 2 stars, more shots 1 star. Two shells in one shot = DEADLY COMBO!!, three = KING OF THE SEA!!. Use them all up and you replay the hole.", Color.parseColor("#FF5252")),
     )
 
     fun find(key: String): Entry? = entries.firstOrNull { it.key == key }
