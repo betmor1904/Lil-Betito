@@ -38,6 +38,7 @@ class Rope(val ax: Float, val ay: Float, val len: Float, val phase: Float, val p
     var cutAt = 0L
     var cutDx = 0f
     var cutDy = 0f
+    var tcMs = 0f      // the cut time the level was built around (ms after launch)
 }
 
 /** A bounce shell the player has shot out: it settles and Betito can bank off it. */
@@ -193,6 +194,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     // ---------- bounce shells: free, they don't cost a shot ----------
     val shells = ArrayList<ShellObj>()
     val ropes = ArrayList<Rope>()
+    private var swingT0 = 0L
     val pouch = IntArray(ShellKinds.COUNT)       // shells you still hold, per type
     val pouchStart = IntArray(ShellKinds.COUNT)  // what this hole started with
     var shellKind = 0                             // the type armed when shellMode is on
@@ -572,8 +574,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
         buildMaze()
         // one-shot golf: 1 shot = birdie, 2 shots = par, a 3rd shot never happens (you lose and replay)
-        par = 2
-        maxShots = 2
+        par = levelPar.coerceIn(2, 4)
+        maxShots = par
         banner = null
         sfx?.play("letsgo", 0.8f, 0L)
 
@@ -588,7 +590,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         say(when (level) {
             1 -> "Drag a paddle onto the water and tap it to turn it. Then pull back and let go. One shot = BIRDIE, two = PAR!"
             2 -> "Plan your paddles first! Put one at each corner, turn them with a tap, then shoot. Drag a paddle to the tray to take it back."
-            3 -> "A shell on a rope! While Betito swims, TAP the rope to cut it. The shell flies off and kicks him!"
+            3 -> "EAGLE HOLE: par 3. The shell on the rope kicks Betito round the corner. Shoot, then TAP the rope at the right moment to cut it!"
             else -> "Set up your paddles, then shoot. Birdie in 1, par in 2, a 3rd shot loses!"
         }, true)
     }
@@ -707,11 +709,11 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         run {
             val rl = lv.ropes
             var q = 0
-            while (q + 5 < rl.size) {
+            while (q + 6 < rl.size) {
                 val top = rl[q + 1] < Levels.PLAY_H / 2f
                 val dir = if (top != flip) 1f else -1f      // hangs down from the ceiling (up from the floor when flipped)
-                ropes.add(Rope(rl[q] * d * sx, yy(rl[q + 1]), rl[q + 2] * d * min(sx, sy), rl[q + 3], rl[q + 4], rl[q + 5], dir))
-                q += 6
+                ropes.add(Rope(rl[q] * d * sx, yy(rl[q + 1]), rl[q + 2] * d * min(sx, sy), rl[q + 3], rl[q + 4], rl[q + 5], dir).also { it.tcMs = rl[q + 6] })
+                q += 7
             }
         }
         val gaps = ArrayList<Float>()
@@ -728,6 +730,13 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     }
 
     private var startCy = 0f
+
+    /** Stars earned over all holes (best result per hole). */
+    fun totalStars(): Int {
+        var t = 0
+        for (l in 1..200) t += prefs.getInt("stars_$l", 0)
+        return t
+    }
 
     /** Every hole gives you a few flat paddles: place them, turn them, then take your shot. */
     private fun setPouch(count: Int, lvl: Int) {
@@ -1817,7 +1826,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         for (rp in ropes) {
             val b = rp.bob
             if (!rp.cut) {
-                val ph = rp.phase + 6.283185 * (now.toDouble() / rp.period)
+                val tt = if (ready) 0.0 else (now - swingT0).toDouble()     // hangs still until launch
+                val ph = rp.phase + 6.283185 * (tt / rp.period)
                 val th = rp.amp * sin(ph).toFloat()
                 val thd = (rp.amp * cos(ph) * 6.283185 / rp.period).toFloat()   // radians per ms
                 b.x = rp.ax + rp.len * sin(th)
@@ -2045,6 +2055,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
 
     private fun launch(now: Long) {
         for (rp in ropes) rp.cut = false      // a fresh rope for every shot
+        swingT0 = now                          // and it starts swinging at launch
         val p = aimPower.coerceIn(0.12f, 1f)
         val sp = launchSpeed(now) * p
         vx = aimDX * sp
@@ -2456,6 +2467,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
             under == 0 -> 2
             else -> 1
         }
+        // keep the best stars for every hole; they will unlock new worlds
+        if (stars > prefs.getInt("stars_$level", 0)) prefs.edit().putInt("stars_$level", stars).apply()
         starsAt = now
         if (under >= 1) {
             sfx?.play("jackpot", 1f, 0L)
@@ -2497,8 +2510,8 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
         levelEndMs = now
         saveBest()
         sfx?.play("lose", 1f, 0L)
-        message = "THIRD SHOT = YOU LOSE"
-        banner = "BIRDIE IN 1 · PAR IN 2  ·  REPLAY HOLE $level"
+        message = "OUT OF SHOTS = YOU LOSE"
+        banner = "PAR IS $par  ·  REPLAY HOLE $level"
         bannerUntil = now + 2500L
         say("Plan your paddles so ONE shot bounces you through. Try again!", true)
         resumeAt = now + 2700L

@@ -67,12 +67,33 @@ static inline void collidePad(const Pad& p, F& x, F& y, F& vx, F& vy, int& b) {
     }
 }
 
+// The rope shell. It hangs still until launch, swings from then on, and is cut at frame `tc` (the player taps).
+// A cut shell flies off at 1.7x its swing speed and kicks Betito like a bouncy shell (relative velocity, 1.35 bounce).
+static F rectDist(const Rect& q, F x, F y);
+struct RopeSpec { bool on = false; F ax = 0, ay = 0, dir = 1, len = 70, phase = 0, period = 2600, amp = 0.95f; int tc = 0; };
+static RopeSpec ROPE;
+static bool BOBHIT = false;
+static const F BOBR = 15;
+
 // One shot from rest at (x,y); optionally records the path (one point per sub-step).
 static Res sim(const World& wd, F x, F y, F ang, F pw, vector<pair<F, F>>* pts = nullptr) {
     F vx = cosf(ang) * LAUNCH * pw, vy = sinf(ang) * LAUNCH * pw;
     int b = 0, settle = -1;
     if (pts) { pts->clear(); HITS.clear(); }
     PADH = 0;
+    BOBHIT = false;
+    F bx = 0, by = 0, bvx = 0, bvy = 0;
+    bool cut = false, bset = false;
+    auto bobAt = [&](F tms) {
+        double ph = ROPE.phase + 6.283185 * (double)tms / ROPE.period;
+        F th = ROPE.amp * (F)sin(ph);
+        F thd = (F)(ROPE.amp * cos(ph) * 6.283185 / ROPE.period);
+        bx = ROPE.ax + ROPE.len * sinf(th);
+        by = ROPE.ay + ROPE.dir * ROPE.len * cosf(th);
+        bvx = ROPE.len * cosf(th) * thd * 16.67f;
+        bvy = -ROPE.dir * ROPE.len * sinf(th) * thd * 16.67f;
+    };
+    if (ROPE.on) bobAt(0);
     for (int f = 0; f < 900; f++) {
         F sp = sqrtf(vx * vx + vy * vy);
         if (settle < 0 && f > 0 && sp < READY) settle = 0;
@@ -87,10 +108,42 @@ static Res sim(const World& wd, F x, F y, F ang, F pw, vector<pair<F, F>>* pts =
             for (const Rect& q : wd.w) collideRect(q, x, y, vx, vy, b);
             int before = PADH;
             for (const Pad& p : wd.pads) collidePad(p, x, y, vx, vy, b);
+            if (ROPE.on) {
+                F ddx = x - bx, ddy = y - by, dd = hypotf(ddx, ddy), mind = R + BOBR;
+                if (dd < mind && dd > 0.0001f) {
+                    F nx = ddx / dd, ny = ddy / dd;
+                    x += nx * (mind - dd); y += ny * (mind - dd);
+                    F ivx = vx - bvx, ivy = vy - bvy;
+                    F vn = ivx * nx + ivy * ny;
+                    if (vn < 0) {
+                        F vtx = ivx - vn * nx, vty = ivy - vn * ny;
+                        vx = -vn * 1.35f * nx + vtx + bvx;
+                        vy = -vn * 1.35f * ny + vty + bvy;
+                        if (-vn > 1.0f) { b++; BOBHIT = true; }
+                    }
+                }
+            }
             if (pts) { if (PADH > before) HITS.push_back((int)pts->size()); pts->push_back({x, y}); }
             if (x > EXITX + WT * 0.5f && y > wd.exitT && y < wd.exitB) return {true, x, y, b};
         }
         if (settle >= 0) { vx *= SETTLE; vy *= SETTLE; }
+        if (ROPE.on) {
+            if (!cut) {
+                bobAt(f * 16.67f);
+                if (f == ROPE.tc) { cut = true; bvx *= 1.7f; bvy *= 1.7f; bset = false; }
+            } else if (!bset) {
+                for (int s = 0; s < 3; s++) {
+                    F nx = bx + bvx / 3.f, ny = by + bvy / 3.f;
+                    bool hit = false;
+                    for (const Rect& q : wd.w) if (rectDist(q, nx, ny) < BOBR) { hit = true; break; }
+                    if (hit) { bvx = bvy = 0; bset = true; break; }
+                    bx = nx; by = ny;
+                    F k2 = 1 - DRAG / 3.f;
+                    bvx *= k2; bvy *= k2;
+                }
+                if (hypotf(bvx, bvy) < 0.15f) { bvx = bvy = 0; bset = true; }
+            }
+        }
     }
     return {false, x, y, b};
 }
@@ -167,16 +220,17 @@ static bool refine(const World& w, F sx, F sy, F a0, F p0, int maxB, int needPad
             if (pw < 0.25f) continue;
             if (!winsAt(w, sx, sy, a, pw, maxB, needPad)) continue;
             int ok = 0, tot = 0;
-            for (F ea : {-0.7f, 0.7f, 0.f})
-                for (F ep : {-0.02f, 0.02f, 0.f}) { tot++; if (winsAt(w, sx, sy, a + ea, min(1.0f, pw * (1 + ep)), maxB, needPad)) ok++; }
+            const F esc = ROPE.on ? 0.45f : 1.f;
+            for (F ea0 : {-0.7f, 0.7f, 0.f})
+                for (F ep0 : {-0.02f, 0.02f, 0.f}) { F ea = ea0 * esc, ep = ep0 * esc; tot++; if (winsAt(w, sx, sy, a + ea, min(1.0f, pw * (1 + ep)), maxB, needPad)) ok++; }
             if (ok == tot && ok > bestScore) { bestScore = ok; ao = a; po = pw; }
         }
     if (bestScore < 0) return false;
     World w2 = w;
     for (int t = 0; t < 10; t++) {
         for (size_t i = 0; i < w.pads.size(); i++) {
-            w2.pads[i].x = w.pads[i].x + rnd(-4, 4);
-            w2.pads[i].y = w.pads[i].y + rnd(-4, 4);
+            w2.pads[i].x = w.pads[i].x + rnd(-4, 4) * (ROPE.on ? 0.4f : 1.f);
+            w2.pads[i].y = w.pads[i].y + rnd(-4, 4) * (ROPE.on ? 0.4f : 1.f);
         }
         if (!winsAt(w2, sx, sy, ao, po, maxB + 1, 0)) return false;
     }
@@ -186,9 +240,11 @@ static bool refine(const World& w, F sx, F sy, F a0, F p0, int maxB, int needPad
 static long REJC[40];
 static bool REJ(int i) { REJC[i]++; return false; }
 
-struct Out { World wd; F sy; vector<Pad> pads; F ang, pw; int cols; vector<array<F, 6>> ropes; };
+struct Out { World wd; F sy; vector<Pad> pads; F ang, pw; int cols; bool rope = false; RopeSpec rs; int par = 2; };
 
 static bool buildLevel(int L, int K, Out& o) {
+    const bool ropeLevel = (L % 3 == 0);
+    ROPE = RopeSpec();
     const F sx = 48;
     F sy = rnd(50, PH - 50);
     World base;
@@ -223,8 +279,8 @@ static bool buildLevel(int L, int K, Out& o) {
             base.pads.push_back(cand);
             Res r2 = sim(base, sx, sy, A * DEG, pw, &p2);
             bool good = (int)HITS.size() >= k + 1;
-            if (good && last) good = r2.win && r2.bounces <= 8 && (int)HITS.size() == K;
-            if (good && !last) {
+            if (good && last && !ropeLevel) good = r2.win && r2.bounces <= 8 && (int)HITS.size() == K;
+            if (good && (!last || ropeLevel)) {
                 // keep the path alive and make the pad actually turn it
                 int after = (int)p2.size() - HITS[k];
                 good = after > 120;
@@ -234,8 +290,41 @@ static bool buildLevel(int L, int K, Out& o) {
         }
         if (!placed) return REJ(4 + (last ? 1 : 0));
     }
+    if (ropeLevel) {
+        // find a rope (anchor, swing) and a cut time that kicks Betito from the last paddle's line into the exit
+        int lastHit = HITS.empty() ? 0 : HITS.back();
+        bool found = false;
+        for (int g = 0; g < 60 && !found; g++) {
+            int hiJ = (int)pts.size() - 10;
+            if (hiJ - (lastHit + 30) < 10) break;
+            int j = lastHit + 30 + (int)(rng() % (unsigned)(hiJ - (lastHit + 30)));
+            bool ceil = (rng() % 2) == 0;
+            RopeSpec rs;
+            rs.on = true; rs.len = rnd(55, 95); rs.dir = ceil ? 1.f : -1.f; rs.ay = ceil ? 0.f : PH;
+            rs.ax = min(max(pts[j].first + rnd(-70, 70), 110.f), EXITX - 70);
+            rs.phase = rnd(0, 6.28f); rs.period = rnd(2200, 3200); rs.amp = 0.95f;
+            for (int tc = 0; tc <= 120 && !found; tc += 3) {
+                rs.tc = tc; ROPE = rs;
+                vector<pair<F, F>> p4;
+                Res r4 = sim(base, sx, sy, A * DEG, pw, &p4);
+                if (!r4.win || !BOBHIT || r4.bounces > 10) continue;
+                bool ok = true;
+                for (int dt : {-6, -3, 3, 6}) {
+                    ROPE.tc = tc + dt; if (ROPE.tc < 0) { ok = false; break; }
+                    Res r5 = sim(base, sx, sy, A * DEG, pw, nullptr);
+                    if (!r5.win) { ok = false; break; }
+                }
+                if (!ok) continue;
+                ROPE.tc = tc;
+                found = true; pts = p4; r = r4; o.rs = rs;
+            }
+        }
+        if (!found) { ROPE = RopeSpec(); return REJ(12); }
+        o.rope = true; o.par = 3;
+    } else { o.rope = false; o.par = 2; }
     // power slack: still reaches the exit with 6% less power
-    { vector<pair<F, F>> p3; Res r3 = sim(base, sx, sy, A * DEG, pw * 0.97f, &p3); if (!r3.win || (int)HITS.size() != K) return REJ(6); }
+    if (!ropeLevel) { vector<pair<F, F>> p3; Res r3 = sim(base, sx, sy, A * DEG, pw * 0.97f, &p3); if (!r3.win || (int)HITS.size() != K) return REJ(6); }
+    ROPE.tc = o.rope ? o.rs.tc : 0;
     r = sim(base, sx, sy, A * DEG, pw, &pts);
     F exitH = lerpc(104, 72, (L - 1) / 24.f);
     F ec = r.y + rnd(-0.3f, 0.3f) * (exitH / 2 - R - 8);
@@ -314,41 +403,15 @@ static bool buildLevel(int L, int K, Out& o) {
         if (solveNoPads(ns, sx, sy, 2, 3) <= 2) return REJ(11);
     }
     o.wd = w; o.sy = sy; o.pads = w.pads; o.ang = ao; o.pw = po;
-    // swinging shells on ropes: hang from the ceiling or floor, stay well clear of the solution line, rocks and paddles.
-    // The player can cut one (tap) to launch the shell at Betito. [anchorX, anchorY, length, phase, period ms, amplitude rad]
-    o.ropes.clear();
-    if (L >= 3) {
-        vector<pair<F, F>> fp;
-        sim(w, sx, sy, ao * DEG, po, &fp);
-        int want = L >= 14 ? 2 : 1;
-        const F BOB = 15, AMP = 0.95f;
-        for (int g = 0; g < 400 && (int)o.ropes.size() < want; g++) {
-            F ax = rnd(110, EXITX - 70), len = rnd(55, 95);
-            bool ceil = (rng() % 2) == 0;
-            F ay = ceil ? 0 : PH;
-            F dir = ceil ? 1.f : -1.f;
-            bool ok = true;
-            for (auto& rr : o.ropes) if (fabsf(rr[0] - ax) < 120) ok = false;
-            for (int ai = -5; ai <= 5 && ok; ai++) {
-                F th = AMP * ai / 5.f;
-                for (int fr = 1; fr <= 4 && ok; fr++) {
-                    F bx = ax + len * fr / 4.f * sinf(th), by = ay + dir * len * fr / 4.f * cosf(th);
-                    for (int j = 0; j < (int)fp.size(); j += 2)
-                        if (hypotf(fp[j].first - bx, fp[j].second - by) < R + BOB + 16) { ok = false; break; }
-                    if (!ok) break;
-                    for (auto& q : w.w) {
-                        if (q.kind == 2) continue;
-                        if (rectDist(q, bx, by) < BOB + 8) { ok = false; break; }
-                    }
-                    if (!ok) break;
-                    for (auto& p : w.pads)
-                        for (int i = -3; i <= 3; i++)
-                            if (hypotf(p.x + cosf(p.a) * PAD_HALF * i / 3.f - bx, p.y + sinf(p.a) * PAD_HALF * i / 3.f - by) < BOB + 14) ok = false;
-                }
-            }
-            if (!ok) continue;
-            o.ropes.push_back({ax, ay, len, rnd(0, 6.28f), rnd(2200, 3200), AMP});
+    // the rope shell must still work with the columns and rocks in place, and with the cut a little early or late
+    if (o.rope) {
+        ROPE = o.rs;
+        for (int dt : {-6, -3, 0, 3, 6}) {
+            ROPE.tc = o.rs.tc + dt;
+            Res rv = sim(w, sx, sy, ao * DEG, po, nullptr);
+            if (!rv.win || !BOBHIT) return REJ(13);
         }
+        ROPE.tc = o.rs.tc;
     }
     return true;
 }
@@ -358,19 +421,19 @@ int main(int argc, char** argv) {
     int seedBase = argc > 3 ? atoi(argv[3]) : 1;
     for (int L = L0; L <= L1; L++) {
         rng.seed(seedBase * 1000 + L);
-        int K = L <= 12 ? 2 : 3;
+        int K = (L % 3 == 0) ? 1 : (L <= 12 ? 2 : 3);
         if (getenv("K")) K = atoi(getenv("K"));
         long tries = 0;
         Out o;
         while (true) {
             tries++;
             if (!buildLevel(L, K, o)) {
-                if (tries % 20000 == 0) { fprintf(stderr, "L%d tries=%ld rej:", L, tries); for (int i = 1; i < 30; i++) if (REJC[i]) fprintf(stderr, " %d:%ld", i, REJC[i]); fprintf(stderr, "\n"); }
+                if (tries % 2000 == 0) { fprintf(stderr, "L%d tries=%ld rej:", L, tries); for (int i = 1; i < 30; i++) if (REJC[i]) fprintf(stderr, " %d:%ld", i, REJC[i]); fprintf(stderr, "\n"); }
                 continue;
             }
             int give = min(5, K + (L >= 3 ? 1 : 0));
             fprintf(stderr, "L%d tries=%ld paddles=%d give=%d cols=%d aim=%.2f pw=%.2f\n", L, tries, K, give, o.cols, o.ang, o.pw);
-            printf("    Lvl(%.1ff, %.1ff, %.1ff, 2, %d, floatArrayOf(", o.sy, o.wd.exitT, o.wd.exitB, give);
+            printf("    Lvl(%.1ff, %.1ff, %.1ff, %d, %d, floatArrayOf(", o.sy, o.wd.exitT, o.wd.exitB, o.par, give);
             bool first = true;
             for (auto& q : o.wd.w) {
                 if (q.kind == 2) continue;
@@ -380,8 +443,7 @@ int main(int argc, char** argv) {
             printf("), floatArrayOf(");
             for (auto& p : o.pads) printf("%.0ff, %.0ff, %.3ff, ", p.x, p.y, p.a);
             printf("%.2ff, %.2ff), floatArrayOf(", o.ang, o.pw);
-            for (size_t ri = 0; ri < o.ropes.size(); ri++)
-                printf("%s%.0ff, %.0ff, %.0ff, %.2ff, %.0ff, %.2ff", ri ? ", " : "", o.ropes[ri][0], o.ropes[ri][1], o.ropes[ri][2], o.ropes[ri][3], o.ropes[ri][4], o.ropes[ri][5]);
+            if (o.rope) printf("%.0ff, %.0ff, %.0ff, %.2ff, %.0ff, %.2ff, %.0ff", o.rs.ax, o.rs.ay, o.rs.len, o.rs.phase, o.rs.period, o.rs.amp, o.rs.tc * 16.67f);
             printf(")),\n");
             fflush(stdout);
             break;

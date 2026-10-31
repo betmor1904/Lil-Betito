@@ -1243,7 +1243,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         p.typeface = Typeface.DEFAULT_BOLD
         p.textSize = 11 * d
         p.color = Color.argb((220 * a).toInt(), 255, 255, 255)
-        c.drawText("SHELLS ${g.shellsLeft}   1 SHOT = BIRDIE   2 SHOTS = PAR   3 = LOSE", w / 2, cy + 40 * d, p)
+        c.drawText(if (g.par >= 3) "SHELLS ${g.shellsLeft}   1 = EAGLE   2 = BIRDIE   3 = PAR   ${g.par + 1} = LOSE   ★ ${g.totalStars()}"
+            else "SHELLS ${g.shellsLeft}   1 SHOT = BIRDIE   2 SHOTS = PAR   3 = LOSE   ★ ${g.totalStars()}", w / 2, cy + 40 * d, p)
         p.textSize = 10 * d
         p.color = Color.argb((160 * a).toInt(), 255, 255, 255)
         c.drawText("TAP TO START", w / 2, cy + 62 * d, p)
@@ -1794,7 +1795,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
                 p.strokeWidth = 1.2f * d
                 p.color = Color.argb(150, 150, 85, 45)
                 c.drawLine(rp.ax, rp.ay, bob.x, bob.y, p)
-                if (g.ready) {
+                run {
                     p.strokeWidth = 2 * d
                     p.color = Color.argb((90 + 70 * sin(now / 250.0)).toInt(), 255, 255, 255)
                     c.drawCircle(bob.x, bob.y, g.shellR * (1.45f + 0.1f * sin(now / 250.0).toFloat()), p)
