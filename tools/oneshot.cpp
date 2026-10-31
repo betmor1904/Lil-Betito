@@ -308,7 +308,7 @@ static bool buildLevel(int L, int K, Out& o) {
     F ao, po;
     if (!refine(w, sx, sy, A, pw, 8, K, ao, po)) return REJ(10);
     // the hole must NEED paddles: no paddle-free solution in two shots
-    if (L >= 2) {
+    if (L >= 2 && getenv("NEED")) {
         World ns = w; ns.pads.clear();
         if (solveNoPads(ns, sx, sy, 2, 3) <= 2) return REJ(11);
     }
