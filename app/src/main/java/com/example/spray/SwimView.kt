@@ -111,6 +111,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
     private var chain = 0                 // landings in a row without a squish: more height and more points
     private var stars = 0
     private var inSky = false
+    private var skyCombo = 0             // sky stars grabbed in this flight: each one is worth more
     private var skyAcc = 0f
     private var sparkleMs = 0f
     private var flapPush = 0f
@@ -154,7 +155,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         state = READY
         worldX = 0f
         bx = baseX
-        by = height * 0.38f
+        by = height * 0.5f
         ovx = 0f
         vy = 0f
         extra = 0f
@@ -179,6 +180,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         chain = 0
         stars = 0
         inSky = false
+        skyCombo = 0
         skyAcc = 0f
         flapPush = 0f
         flapAnimMs = 0f
@@ -188,8 +190,8 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             bubs.add(Bub(Random.nextFloat() * width, Random.nextFloat() * height, (2 + Random.nextFloat() * 4) * d, 0.3f + Random.nextFloat() * 0.5f))
         }
         // a jellyfish pad waiting on the floor so the "dive at it" idea is obvious
-        val fy = height - floorH - 28 * d * 0.6f
-        objs.add(Obj(K_JELLY, width * 0.50f, fy, 28 * d, fy, 0f, 0f))
+        val fy = height - floorH - 34 * d * 0.6f
+        objs.add(Obj(K_JELLY, width * 0.50f, fy, 34 * d, fy, 0f, 0f))
         genX = width * 0.95f
         lastGap = 0f
         genAhead()
@@ -212,7 +214,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
                 r < dolphinChance + 0.65f -> K_SEAHORSE
                 else -> K_CLOWN
             }
-            val pr = 28 * d
+            val pr = 34 * d
             val py = floorY - pr * 0.6f
             objs.add(Obj(kind, genX, py, pr, py, 0f, 0f))
             // a rock rising from the floor (jump it)
@@ -229,9 +231,16 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
                 val sy = floorY * (0.35f + 0.25f * Random.nextFloat())
                 objs.add(Obj(K_STAR, genX + seg * 0.3f, sy, 24 * d, sy, 0f, 0f))
             }
-            if (Random.nextFloat() < min(0.55f, 0.25f + m / 1500f)) {
-                val sy = 24 * d + Random.nextFloat() * max(1f, floorY * 0.28f - 48 * d)
-                objs.add(Obj(K_STAR, genX + seg * 0.45f, sy, 28 * d, sy, 0f, 0f))
+            // a trail of stars up in the SKY ZONE: only a bounce off the ground gets you there
+            if (Random.nextFloat() < min(0.8f, 0.45f + m / 1200f)) {
+                val n = 3 + Random.nextInt(3)
+                val top = 22 * d
+                val bottom = max(top + 1f, floorY * 0.28f - 8 * d)
+                val sy0 = top + Random.nextFloat() * (bottom - top)
+                for (i in 0 until n) {
+                    val sy = (sy0 + sin(i * 0.9f) * 22 * d).coerceIn(top, bottom)
+                    objs.add(Obj(K_STAR, genX + seg * (0.2f + 0.14f * i), sy, 26 * d, sy, 0f, 0f))
+                }
             }
             // trouble: crabs by the pads, sharks in the air
             if (m > 120f && Random.nextFloat() < 0.30f) {
@@ -304,7 +313,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             val ox = sxOf(o.x)
             if (ox < bx - 30 * d || ox > width + 20 * d) continue
             val dd = hypot(ox - x, o.y - y)
-            if (dd < o.r * 1.7f && dd < bd) {       // you have to really press the friend
+            if (dd < o.r * 2.4f && dd < bd) {       // press on or near a friend
                 bd = dd
                 best = o
             }
@@ -312,10 +321,14 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         return best
     }
 
+    private fun flapLimitY(): Float = (height - floorH) * 0.42f
+
     private fun flap() {
+        flapAnimMs = 380f
+        // up high the water won't hold a stroke: only a bounce off a floor friend lifts you there
+        if (by < flapLimitY()) return
         vy = min(vy, -flapV * 0.55f)
         flapPush = 1f
-        flapAnimMs = 380f
     }
 
     private fun fireBoost(now: Long) {
@@ -346,7 +359,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             if (b.y < -10 * d) b.y = height + 10 * d
         }
         if (state == READY) {
-            by = height * 0.38f + sin(now / 380.0).toFloat() * 9 * d
+            by = height * 0.5f + sin(now / 380.0).toFloat() * 9 * d
             return
         }
         if (state == DEAD) return
@@ -377,12 +390,12 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
                 // diving from high up builds a LOT more speed than diving from just above the floor
                 val hFrac = ((height - floorH - by) / (height - floorH)).coerceIn(0f, 1f)
                 val acc = pullAcc * (1f + 1.4f * hFrac)
-                ovx += dx / dist * acc * dt
+                ovx += dx / dist * acc * 1.4f * dt
                 vy += dy / dist * acc * dt
                 val damp = 0.94f.pow(dt)
                 ovx *= damp
                 vy *= damp
-                ovx = ovx.coerceIn(-10 * d, 12 * d)
+                ovx = ovx.coerceIn(-12 * d, 16 * d)
                 vy = vy.coerceIn(-14 * d, (14f + 12f * hFrac) * d)
                 if (dx > 0f) extra = min(extra + 0.012f * base * dt, base * 4.5f)   // being reeled in feels fast
                 if (vy > 0f) extra = min(extra + 0.004f * base * (vy / d) * dt, base * 4.5f)   // and a dive is fast
@@ -390,7 +403,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         }
         if (tether == null) {
             if (flapPush > 0.03f) {
-                if (vy > -flapV * 1.15f) vy -= flapPush * 0.45f * d * dt
+                if (vy > -flapV * 1.15f && by > flapLimitY()) vy -= flapPush * 0.45f * d * dt
                 flapPush *= 0.86f.pow(dt)
             } else {
                 flapPush = 0f
@@ -446,22 +459,14 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
                 }
             }
         }
-        // the SKY ZONE: the top of the ocean pays points every second you stay up there
+        // the SKY ZONE: the top of the ocean. Only a bounce gets you here, and its stars are where the points are.
         val skyY = (height - floorH) * 0.28f
         if (by < skyY) {
             if (!inSky) {
                 inSky = true
-                val pts = (200 * (1f + 0.5f * chain)).toInt()
-                score += pts
-                celebrate("HIGH FLYER!!", Yarn.POP_POW, camX + bx, by + 60 * d, Color.parseColor("#FFD54F"), 34f, now, 30)
-                words.add(Word("+$pts", camX + bx, by + 100 * d, now, Color.WHITE, 20f))
+                skyCombo = 0
+                celebrate("HIGH FLYER!!", Yarn.POP_POW, camX + bx, by + 60 * d, Color.parseColor("#FFD54F"), 34f, now, 24)
                 sfx?.play("jackpot", 0.9f, 0L)
-            }
-            skyAcc += 15f * (1f + 0.2f * chain) * dtMs / 1000f
-            val whole = skyAcc.toInt()
-            if (whole > 0) {
-                score += whole
-                skyAcc -= whole
             }
             sparkleMs -= dtMs
             if (sparkleMs <= 0f) {
@@ -470,6 +475,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             }
         } else if (by > skyY + 40 * d) {
             inSky = false
+            skyCombo = 0
         }
         upkeepFx(dt, now)
     }
@@ -510,11 +516,12 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         val gold = Color.parseColor("#FFD54F")
         if (o.kind == K_STAR) {
             val high = o.y < floorY * 0.28f
-            val pts = ((if (high) 250 else 60) * (1f + 0.35f * chain)).toInt()
+            if (high) skyCombo++
+            val pts = (if (high) 150f * (1f + 0.5f * (skyCombo - 1)) * (1f + 0.35f * chain) else 60f * (1f + 0.35f * chain)).toInt()
             stars++
             score += pts
             extra = min(extra + base * 0.15f, base * 4.5f)
-            celebrate(if (high) "SKY STAR!!" else "STAR!", if (high) Yarn.POP_ZAP else Yarn.POP_BING, o.x, o.y, gold, if (high) 30f else 22f, now, if (high) 26 else 8)
+            celebrate(if (high) (if (skyCombo >= 2) "SKY STAR x$skyCombo!!" else "SKY STAR!!") else "STAR!", if (high) Yarn.POP_ZAP else Yarn.POP_BING, o.x, o.y, gold, if (high) 30f else 22f, now, if (high) 26 else 8)
             words.add(Word("+$pts", o.x, o.y + 6 * d, now, Color.WHITE, 18f))
             sfx?.play(if (high) "fanfare" else "coin", 0.9f, 0L)
             return
@@ -710,6 +717,13 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             if (ox < -80 * d || ox > width + 80 * d) continue
             val bob = sin(now / 500.0 + o.x * 0.01).toFloat() * 4 * d
             val oy = o.y + (if (o.kind == K_SHARK || o.kind == K_CRAB) 0f else bob)
+            if (!o.hazard && o.kind != K_STAR) {
+                // the press area: tap anywhere inside this ring to dive at it
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 2 * d
+                p.color = Color.argb((40 + 40 * pulse).toInt(), 255, 255, 255)
+                c.drawCircle(ox, oy, o.r * 2.4f, p)
+            }
             if (!o.hazard) {
                 // soft halo: this one can be pressed
                 p.style = Paint.Style.STROKE
@@ -822,7 +836,16 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             c.drawCircle(x, skyY, 2 * d, p)
             x += 18 * d
         }
-        text(c, "SKY ZONE: BONUS POINTS", w / 2f, skyY - 8 * d, 12f, Color.argb(if (inSky) 255 else 190, 255, 224, 130))
+        text(c, "SKY ZONE: GRAB THE STARS!", w / 2f, skyY - 8 * d, 12f, Color.argb(if (inSky) 255 else 190, 255, 224, 130))
+        // swim limit: above this line strokes do nothing, only a bounce lifts you
+        val ly = flapLimitY()
+        p.color = Color.argb(70, 255, 255, 255)
+        var lx = -((camX * 0.5f).mod(26 * d))
+        while (lx < w) {
+            c.drawRect(lx, ly - d, lx + 10 * d, ly + d, p)
+            lx += 26 * d
+        }
+        text(c, "SWIM LIMIT - BOUNCE TO GO HIGHER", w * 0.78f, ly - 6 * d, 10f, Color.argb(120, 255, 255, 255))
     }
 
     /** Praise words and confetti, drawn at normal size over the zoomed world. */
@@ -892,7 +915,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
             val nm = if (storedFrom in names.indices) names[storedFrom] else "BOOST"
             text(c, "$nm BOOST x${"%.1f".format(stored)}   DOUBLE TAP!", w / 2f, h - 14 * ui, (14 + 2 * pulse), Color.parseColor("#FFD54F"))
         } else if (hintMs < 12000f) {
-            text(c, "PRESS A FRIEND ON THE FLOOR: DIVE FROM HIGH UP, BOUNCE HIGHER", w / 2f, h - 14 * ui, 12f, Color.argb(210, 255, 255, 255))
+            text(c, "PRESS A FLOOR FRIEND TO DIVE. ONLY A BOUNCE REACHES THE SKY STARS!", w / 2f, h - 14 * ui, 12f, Color.argb(210, 255, 255, 255))
         }
     }
 
@@ -904,7 +927,7 @@ class SwimView(ctx: Context, private val prefs: SharedPreferences, private val s
         text(c, "SWIM RUN", w / 2f, h * 0.16f + 34 * ui, 28f, Color.WHITE)
         text(c, "TAP = SWIM UP.   PRESS A FLOOR FRIEND = DIVE AT IT.", w / 2f, h * 0.16f + 58 * ui, 13f, Color.parseColor("#B3E5FC"))
         text(c, "DIVE FROM HIGHER = MORE SPEED, BOUNCE, POINTS. CHAIN LANDINGS!", w / 2f, h * 0.16f + 76 * ui, 13f, Color.parseColor("#FFE082"))
-        text(c, "FLY UP INTO THE SKY ZONE FOR BIG POINTS. THE FLOOR SPLASHES YOU!", w / 2f, h * 0.16f + 94 * ui, 13f, Color.parseColor("#FFE082"))
+        text(c, "ONLY BOUNCES REACH THE SKY ZONE. GRAB ITS STARS FOR BIG POINTS!", w / 2f, h * 0.16f + 94 * ui, 13f, Color.parseColor("#FFE082"))
         val pulse = 0.5f + 0.5f * sin(SystemClock.uptimeMillis() / 250.0).toFloat()
         text(c, "TAP TO START", w / 2f, h * 0.64f, 18f + 2 * pulse, Color.WHITE)
     }
