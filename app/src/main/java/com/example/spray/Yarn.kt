@@ -38,6 +38,11 @@ object Yarn {
     private val poses = arrayOfNulls<Bitmap>(POSE_COUNT)
     private val decals = arrayOfNulls<Bitmap>(DECAL_COUNT)
     private val pops = arrayOfNulls<Bitmap>(8)
+    // crochet critters: 0 octopus, 1 seahorse, 2 clownfish, 3 crab, 4 starfish, 5 dolphin, 6 jellyfish
+    const val PAL_COUNT = 7
+    private val pals = arrayOfNulls<Bitmap>(PAL_COUNT)
+    var reef: Bitmap? = null
+        private set
     var sea: BitmapShader? = null
         private set
     var wall: BitmapShader? = null
@@ -84,6 +89,13 @@ object Yarn {
             val popIds = intArrayOf(R.drawable.pop_cloud, R.drawable.pop_burst, R.drawable.pop_bing, R.drawable.pop_pow,
                 R.drawable.pop_zap, R.drawable.pop_boom, R.drawable.pop_wham, R.drawable.pop_bam)
             for (i in popIds.indices) pops[i] = bmp(popIds[i])
+            try {
+                val palIds = intArrayOf(R.drawable.pal_octopus, R.drawable.pal_seahorse, R.drawable.pal_clownfish,
+                    R.drawable.pal_crab, R.drawable.pal_starfish, R.drawable.pal_dolphin, R.drawable.pal_jellyfish)
+                for (i in palIds.indices) pals[i] = bmp(palIds[i])
+                reef = bmp(R.drawable.bg_reef)
+            } catch (e: Exception) {
+            }
             sea = shader(R.drawable.yarn_sea)
             wall = shader(R.drawable.yarn_wall)
             rock = shader(R.drawable.yarn_rock)
@@ -170,5 +182,33 @@ object Yarn {
         paint.alpha = a
         c.drawBitmap(b, null, rect, paint)
         c.restore()
+    }
+
+    /** Draws a crochet critter centered on (x, y), `h` tall. Returns false if it has no picture. */
+    fun drawPal(c: Canvas, i: Int, x: Float, y: Float, h: Float, rot: Float = 0f, flip: Boolean = false,
+                sx: Float = 1f, sy: Float = 1f, a: Int = 255): Boolean {
+        val b = pals.getOrNull(i) ?: return false
+        val w = h * b.width / b.height
+        c.save()
+        c.translate(x, y)
+        c.rotate(rot)
+        c.scale(if (flip) -sx else sx, sy)
+        rect.set(-w / 2f, -h / 2f, w / 2f, h / 2f)
+        paint.alpha = a
+        c.drawBitmap(b, null, rect, paint)
+        c.restore()
+        return true
+    }
+
+    /** Draws the reef picture to cover the whole w x h area (center-crop). */
+    fun drawReef(c: Canvas, w: Float, h: Float): Boolean {
+        val b = reef ?: return false
+        val k = maxOf(w / b.width, h / b.height)
+        val bw = b.width * k
+        val bh = b.height * k
+        rect.set((w - bw) / 2f, (h - bh) / 2f, (w + bw) / 2f, (h + bh) / 2f)
+        paint.alpha = 255
+        c.drawBitmap(b, null, rect, paint)
+        return true
     }
 }

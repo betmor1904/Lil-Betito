@@ -13,8 +13,8 @@ using namespace std;
 typedef float F;
 
 static const F R = 13, WT = 14, PAD_HALF = 30, PAD_R = 5;
-static const F LAUNCH = 15.0f, DRAG = 0.016f, BK = 0.92f, SK = 0.95f;
-static const F MAXV = 17.5f, READY = 0.9f, SETTLE = 0.82f;
+static const F LAUNCH = 18.0f, DRAG = 0.016f, BK = 0.92f, SK = 0.95f;
+static const F MAXV = 21.0f, READY = 0.9f, SETTLE = 0.82f;
 static const F DW = 840, PH = 300, EXITX = 822;
 static const F DEG = 3.14159265f / 180.f;
 static const F SHELL_MAXX = EXITX - 30;
@@ -234,7 +234,7 @@ static bool buildLevel(int L, int K, Out& o) {
         if (!placed) return REJ(4 + (last ? 1 : 0));
     }
     // power slack: still reaches the exit with 6% less power
-    { vector<pair<F, F>> p3; Res r3 = sim(base, sx, sy, A * DEG, pw * 0.94f, &p3); if (!r3.win || (int)HITS.size() != K) return REJ(6); }
+    { vector<pair<F, F>> p3; Res r3 = sim(base, sx, sy, A * DEG, pw * 0.97f, &p3); if (!r3.win || (int)HITS.size() != K) return REJ(6); }
     r = sim(base, sx, sy, A * DEG, pw, &pts);
     F exitH = lerpc(104, 72, (L - 1) / 24.f);
     F ec = r.y + rnd(-0.3f, 0.3f) * (exitH / 2 - R - 8);

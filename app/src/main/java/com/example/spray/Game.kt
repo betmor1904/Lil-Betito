@@ -213,7 +213,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private val weedDrag = 0.16f
     private val bounceK = 0.92f         // bank shots: a rock keeps 92% of the speed it is hit with
     private val slideK = 0.95f          // how much speed is kept sliding along the wall
-    private val maxSpeed get() = 17.5f * d
+    private val maxSpeed get() = 21f * d
     var ready = true
     var shots = 0
     var par = 5
@@ -1949,7 +1949,7 @@ class Game(val d: Float, private val sfx: Sfx?, private val prefs: android.conte
     private fun inWeed(x: Float, y: Float): Boolean =
         weeds.any { x > it.l && x < it.r && y > it.t && y < it.b }
 
-    private fun launchSpeed(now: Long): Float = 15f * d
+    private fun launchSpeed(now: Long): Float = 18f * d
 
     /** How far a shot of this power glides in still water (for the distance ring). */
     fun stillDistance(now: Long): Float {

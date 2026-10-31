@@ -408,8 +408,14 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (Yarn.loaded) {
-            c.drawRect(0f, 0f, w, h, seaP)      // knitted sea
-            c.drawRect(0f, 0f, w, h, bgTint)    // deeper toward the bottom
+            if (Yarn.drawReef(c, w, h)) {
+                p.style = Paint.Style.FILL
+                p.color = Color.argb(135, 6, 40, 70)   // darken so shells and walls stay readable
+                c.drawRect(0f, 0f, w, h, p)
+            } else {
+                c.drawRect(0f, 0f, w, h, seaP)      // knitted sea
+                c.drawRect(0f, 0f, w, h, bgTint)    // deeper toward the bottom
+            }
             drawWaterDecals(c, w, h, now)
         } else c.drawRect(0f, 0f, w, h, bg)
         if (!g.started) return
@@ -424,6 +430,7 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
         drawLightRays(c, w, h, now)
         drawFish(c)
+        drawCritters(c, w, h, now)
         drawBubbles(c)
         drawWater(c, now)
         drawWeeds(c, now)
@@ -660,10 +667,40 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         }
     }
 
+    /** Crochet friends drifting behind the play field. */
+    private fun drawCritters(c: Canvas, w: Float, h: Float, now: Long) {
+        if (!Yarn.loaded) return
+        val t = now / 1000.0
+        // jellyfish drifts up and down, pulsing
+        val jx = w * 0.22f + sin(t * 0.3).toFloat() * 18 * d
+        val jy = h * 0.5f + sin(t * 0.5).toFloat() * h * 0.12f
+        val pulse = sin(t * 3.0).toFloat()
+        Yarn.drawPal(c, 6, jx, jy, 64 * d, sin(t * 0.7).toFloat() * 5f, false, 1f - 0.05f * pulse, 1f + 0.08f * pulse, 150)
+        // seahorse bobs near the right
+        Yarn.drawPal(c, 1, w * 0.78f, h * 0.62f + sin(t * 1.1).toFloat() * 10 * d, 60 * d,
+            sin(t * 1.1).toFloat() * 6f, false, 1f, 1f, 150)
+        // crab scuttles along the bottom
+        val k = ((now % 30000L) / 30000f)
+        val tri = if (k < 0.5f) k * 2 else (1 - k) * 2
+        val cx = w * (0.1f + 0.8f * tri)
+        val wob = sin(now / 90.0).toFloat() * 3f
+        Yarn.drawPal(c, 3, cx, h - 22 * d, 38 * d, wob, k >= 0.5f, 1f, 1f, 190)
+        // dolphin leaps in an arc every so often
+        val per = 14000L
+        val dk = (now % per) / per.toFloat()
+        if (dk < 0.22f) {
+            val u = dk / 0.22f
+            val dx = w * (-0.1f + 1.2f * u)
+            val dy = h * 0.55f - sin(u * Math.PI).toFloat() * h * 0.38f
+            Yarn.drawPal(c, 5, dx, dy, 70 * d, (u - 0.5f) * 90f, false, 1f, 1f, 170)
+        }
+    }
+
     private fun drawFish(c: Canvas) {
         p.style = Paint.Style.FILL
         for (f in g.fish) {
             val dir = if (f.vx >= 0) 1f else -1f
+            if (Yarn.drawPal(c, 2, f.x, f.y, f.size * 2.4f, sin(f.x / (20 * d)) * 4f, dir < 0, 1f, 1f, 170)) continue
             p.color = Color.argb(150, Color.red(f.color), Color.green(f.color), Color.blue(f.color))
             c.drawOval(f.x - f.size, f.y - f.size * 0.5f, f.x + f.size, f.y + f.size * 0.5f, p)
             path.reset()
@@ -1516,7 +1553,9 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
         val oy = g.topInset + 16 * d
         val talking = g.octoText != null && now - g.octoAt < 1400L
         val speaking = g.octoText != null && now - g.octoAt < 2600L
-        Art.octo(c, p, path, ox, oy, 9.5f * d, now, talking, if (speaking) g.octoFace else -1)
+        val pulse = if (talking) 1f + 0.08f * sin(now / 70.0).toFloat() else 1f
+        if (!Yarn.drawPal(c, 0, ox, oy + sin(now / 400.0).toFloat() * 1.5f * d, 34 * d, sin(now / 700.0).toFloat() * 4f, false, pulse, pulse))
+            Art.octo(c, p, path, ox, oy, 9.5f * d, now, talking, if (speaking) g.octoFace else -1)
 
         val txt = g.octoText ?: return
         val age = now - g.octoAt
@@ -2113,6 +2152,8 @@ class GameView(ctx: Context, private val g: Game) : View(ctx) {
             val rad = (if (i == 1) 26 else 21) * d * sc
             val yy = y - (if (i == 1) 6 * d else 0f)
             p.style = Paint.Style.FILL
+            if (Yarn.drawPal(c, 4, x, yy, rad * 2.3f, (i - 1) * 8f + sin(now / 500.0 + i).toFloat() * 4f, false, 1f, 1f,
+                    if (i < g.stars) 255 else 70)) continue
             p.color = if (i < g.stars) Color.parseColor("#FFD600") else Color.argb(120, 60, 60, 80)
             star(c, x, yy, rad)
             p.style = Paint.Style.STROKE
